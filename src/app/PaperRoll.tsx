@@ -1,16 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { PackedBitmap } from '../model/bitmap'
 import { toPreviewImage, type PreviewMode } from '../render/preview'
-
-/** CSS pixels per inch, as assumed by every browser. Used for true-size display. */
-const CSS_DPI = 96
-const PRINTER_DPI = 203
-
-export type ZoomSetting = 'actual' | 1 | 2 | 4
-
-export function zoomFactor(zoom: ZoomSetting): number {
-  return zoom === 'actual' ? CSS_DPI / PRINTER_DPI : zoom
-}
+import { zoomFactor, type ZoomSetting } from './zoom'
 
 export function PaperRoll({
   bitmap,

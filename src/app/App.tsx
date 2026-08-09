@@ -6,7 +6,8 @@ import type { PreviewMode } from '../render/preview'
 import { VirtualPrinterDriver } from '../printer/drivers/VirtualPrinterDriver'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../printer/types'
-import { PaperRoll, type ZoomSetting } from './PaperRoll'
+import { PaperRoll } from './PaperRoll'
+import type { ZoomSetting } from './zoom'
 
 /** Roll widths the P50 family takes. The head is wider than most of them. */
 const WIDTH_PRESETS_MM = [12, 25, 40, 50] as const
