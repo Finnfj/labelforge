@@ -2,7 +2,7 @@ import { StaticCanvas, type FabricObject } from 'fabric'
 import { elementsInDrawOrder, isToneElement, type LabelDoc } from '../model/labelDoc'
 import { mmToDots } from '../model/units'
 import type { PackedBitmap } from '../model/bitmap'
-import { toFabricObject } from './toFabric'
+import { toFabricObject, type AssetResolver } from './toFabric'
 import { toAlphaMask, toLuminance } from './luminance'
 import { threshold } from './threshold'
 import { floydSteinberg } from './dither'
@@ -15,6 +15,8 @@ export interface RasterizeOptions {
   headWidthDots?: number
   align?: HeadAlign
   offsetDots?: number
+  /** Resolves image assets. Omit and image elements are skipped. */
+  resolveAsset?: AssetResolver
   /** Threshold for the crisp plane, 0–255. */
   thresholdLevel?: number
 }
@@ -48,7 +50,7 @@ export async function rasterize(
   const crispObjects: FabricObject[] = []
   const toneObjects: FabricObject[] = []
   for (const element of elementsInDrawOrder(doc)) {
-    const object = await toFabricObject(element)
+    const object = await toFabricObject(element, { resolveAsset: options.resolveAsset })
     if (!object) continue
     ;(isToneElement(element) ? toneObjects : crispObjects).push(object)
   }

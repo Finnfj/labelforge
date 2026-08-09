@@ -3,7 +3,7 @@ import { Canvas, type FabricObject } from 'fabric'
 import type { ElementPatch, LabelDoc, TextElement } from '../model/labelDoc'
 import { elementsInDrawOrder } from '../model/labelDoc'
 import { dotsToMm, dotsToPt, mmToDots, ptToDots } from '../model/units'
-import { toFabricObject } from '../render/toFabric'
+import { toFabricObject, type AssetResolver } from '../render/toFabric'
 
 /** Fabric objects carry the id of the document element they represent. */
 type TaggedObject = FabricObject & { elementId?: string }
@@ -14,9 +14,17 @@ export interface EditorCanvasProps {
   zoom: number
   onSelect(id: string | null): void
   onUpdate(id: string, patch: ElementPatch): void
+  resolveAsset?: AssetResolver
 }
 
-export function EditorCanvas({ doc, selectedId, zoom, onSelect, onUpdate }: EditorCanvasProps) {
+export function EditorCanvas({
+  doc,
+  selectedId,
+  zoom,
+  onSelect,
+  onUpdate,
+  resolveAsset,
+}: EditorCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<Canvas | null>(null)
   const [epoch, setEpoch] = useState(0)
@@ -105,7 +113,7 @@ export function EditorCanvas({ doc, selectedId, zoom, onSelect, onUpdate }: Edit
       for (const element of elementsInDrawOrder(doc)) {
         let object: TaggedObject | null = null
         try {
-          object = (await toFabricObject(element)) as TaggedObject | null
+          object = (await toFabricObject(element, { resolveAsset })) as TaggedObject | null
         } catch {
           // A code whose value cannot be encoded (half-typed EAN, bad check
           // digit) must not blank the whole canvas while the user is still
@@ -131,7 +139,7 @@ export function EditorCanvas({ doc, selectedId, zoom, onSelect, onUpdate }: Edit
     return () => {
       cancelled = true
     }
-  }, [doc, selectedId, epoch])
+  }, [doc, selectedId, epoch, resolveAsset])
 
   return (
     <div

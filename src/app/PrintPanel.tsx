@@ -9,6 +9,7 @@ import { VirtualPrinterDriver } from '../printer/drivers/VirtualPrinterDriver'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
 import { MAX_DENSITY, MIN_DENSITY } from '../printer/protocol/constants'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../printer/types'
+import { resolveAssetUrl } from '../storage/assets'
 import { PaperRoll } from './PaperRoll'
 import type { ZoomSetting } from './zoom'
 
@@ -45,7 +46,11 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
     const id = setTimeout(() => {
       void (async () => {
         try {
-          const result = await rasterize(doc, { headWidthDots: headWidth, align: 'left' })
+          const result = await rasterize(doc, {
+            headWidthDots: headWidth,
+            align: 'left',
+            resolveAsset: resolveAssetUrl,
+          })
           if (cancelled) return
           setBitmap(result.bitmap)
           setLabelWidthDots(result.labelWidthDots)

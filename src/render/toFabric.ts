@@ -2,12 +2,22 @@ import { Ellipse, FabricImage, Line, Rect, Textbox, type FabricObject } from 'fa
 import { mmToDots, ptToDots } from '../model/units'
 import type {
   BarcodeElement,
+  IconElement,
+  ImageElement,
   LabelElement,
   QrElement,
   ShapeElement,
   TextElement,
 } from '../model/labelDoc'
 import { renderCode } from './barcode'
+import { findIcon, iconToDataUrl } from './icons'
+
+/** Resolves an image asset id to a URL the browser can load. */
+export type AssetResolver = (assetId: string) => Promise<string>
+
+export interface RenderContext {
+  resolveAsset?: AssetResolver
+}
 
 /**
  * The single translation from document elements to Fabric objects.
@@ -30,7 +40,10 @@ export class UnsupportedElementError extends Error {
   }
 }
 
-export async function toFabricObject(element: LabelElement): Promise<FabricObject | null> {
+export async function toFabricObject(
+  element: LabelElement,
+  context: RenderContext = {},
+): Promise<FabricObject | null> {
   switch (element.kind) {
     case 'text':
       return textToFabric(element)
@@ -39,8 +52,112 @@ export async function toFabricObject(element: LabelElement): Promise<FabricObjec
     case 'barcode':
     case 'qr':
       return codeToFabric(element)
-    default:
-      return null
+    case 'icon':
+      return iconToFabric(element)
+    case 'image':
+      return imageToFabric(element, context)
+  }
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.crossOrigin = 'anonymous'
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Image could not be loaded.'))
+    image.src = src
+  })
+}
+
+async function iconToFabric(element: IconElement): Promise<FabricObject | null> {
+  const icon = findIcon(element.iconId)
+  if (!icon) return null
+  const width = mmToDots(element.widthMm)
+  const height = mmToDots(element.heightMm)
+  const size = Math.max(1, Math.min(width, height))
+  const image = await loadImage(iconToDataUrl(icon, size))
+  return new FabricImage(image, {
+    ...placement(element, width, height),
+    scaleX: 1,
+    scaleY: 1,
+  })
+}
+
+/**
+ * Images are drawn into an offscreen canvas at the exact dot size they will
+ * occupy, rather than handed to Fabric and scaled.
+ *
+ * Doing the fit ourselves keeps line art on whole-pixel boundaries, and lets
+ * each image carry its own threshold: line art is binarised right here, so by
+ * the time the crisp plane is thresholded the pixels are already pure black or
+ * white and the global setting cannot second-guess them. Photographs are left
+ * in greyscale for the dithering stage.
+ */
+async function imageToFabric(
+  element: ImageElement,
+  context: RenderContext,
+): Promise<FabricObject | null> {
+  if (!context.resolveAsset) return null
+  const source = await loadImage(await context.resolveAsset(element.assetId))
+
+  const width = mmToDots(element.widthMm)
+  const height = mmToDots(element.heightMm)
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  ctx.imageSmoothingEnabled = element.mode === 'photo'
+
+  const { dx, dy, dw, dh } = fitRect(source.width, source.height, width, height, element.fit)
+  ctx.drawImage(source, dx, dy, dw, dh)
+
+  const pixels = ctx.getImageData(0, 0, width, height)
+  applyImageTone(pixels.data, element)
+  ctx.putImageData(pixels, 0, 0)
+
+  return new FabricImage(canvas, {
+    ...placement(element, width, height),
+    scaleX: 1,
+    scaleY: 1,
+    imageSmoothing: false,
+  })
+}
+
+function fitRect(
+  sourceWidth: number,
+  sourceHeight: number,
+  boxWidth: number,
+  boxHeight: number,
+  fit: ImageElement['fit'],
+) {
+  if (fit === 'stretch') return { dx: 0, dy: 0, dw: boxWidth, dh: boxHeight }
+  const scale =
+    fit === 'cover'
+      ? Math.max(boxWidth / sourceWidth, boxHeight / sourceHeight)
+      : Math.min(boxWidth / sourceWidth, boxHeight / sourceHeight)
+  const dw = sourceWidth * scale
+  const dh = sourceHeight * scale
+  return { dx: (boxWidth - dw) / 2, dy: (boxHeight - dh) / 2, dw, dh }
+}
+
+function applyImageTone(data: Uint8ClampedArray, element: ImageElement): void {
+  const level = element.threshold ?? 128
+  for (let i = 0; i < data.length; i += 4) {
+    // Leave untouched area transparent. With `contain` the letterbox bars would
+    // otherwise become opaque white and mask out whatever sits beneath the
+    // image, which is not what "fit inside this box" should mean.
+    if (data[i + 3] === 0) continue
+    const alpha = data[i + 3] / 255
+    // Composite over white paper first, so transparency does not read as black.
+    let luma =
+      (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) * alpha + 255 * (1 - alpha)
+    if (element.invert) luma = 255 - luma
+    const value = element.mode === 'lineart' ? (luma <= level ? 0 : 255) : luma
+    data[i] = value
+    data[i + 1] = value
+    data[i + 2] = value
+    data[i + 3] = 255
   }
 }
 

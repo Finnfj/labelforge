@@ -5,6 +5,8 @@ import { Toolbar } from '../editor/panels/Toolbar'
 import { Inspector } from '../editor/panels/Inspector'
 import { useLabelEditor } from '../editor/useLabelEditor'
 import { PrintPanel } from './PrintPanel'
+import { TemplatesPanel } from './TemplatesPanel'
+import { resolveAssetUrl } from '../storage/assets'
 
 const EDIT_ZOOMS = [1, 1.5, 2, 3] as const
 
@@ -139,11 +141,14 @@ export default function App() {
               zoom={zoom}
               onSelect={editor.select}
               onUpdate={(id, patch) => editor.updateElement(id, patch)}
+              resolveAsset={resolveAssetUrl}
             />
           </div>
           <Inspector editor={editor} />
         </div>
       </section>
+
+      <TemplatesPanel doc={editor.doc} onLoad={editor.replaceDoc} />
 
       <PrintPanel doc={editor.doc} />
     </main>

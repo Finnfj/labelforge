@@ -1,10 +1,13 @@
 import { useMemo } from 'react'
 import type {
   BarcodeElement,
+  IconElement,
+  ImageElement,
   QrElement,
   ShapeElement,
   TextElement,
 } from '../../model/labelDoc'
+import { ICONS, iconToSvg } from '../../render/icons'
 import { mmToDots } from '../../model/units'
 import { checkCode } from '../../render/barcode'
 import type { LabelEditor } from '../useLabelEditor'
@@ -241,6 +244,78 @@ export function Inspector({ editor }: { editor: LabelEditor }) {
           </label>
           <CodeStatus element={element as QrElement} />
         </>
+      )}
+
+      {element.kind === 'image' && (
+        <>
+          <div className="grid2">
+            <label className="field">
+              <span>Render</span>
+              <select
+                value={(element as ImageElement).mode}
+                onChange={(e) =>
+                  set({ mode: e.target.value as ImageElement['mode'] } as Partial<ImageElement>)
+                }
+              >
+                <option value="lineart">Line art</option>
+                <option value="photo">Photo</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Fit</span>
+              <select
+                value={(element as ImageElement).fit}
+                onChange={(e) =>
+                  set({ fit: e.target.value as ImageElement['fit'] } as Partial<ImageElement>)
+                }
+              >
+                <option value="contain">Contain</option>
+                <option value="cover">Cover</option>
+                <option value="stretch">Stretch</option>
+              </select>
+            </label>
+            {(element as ImageElement).mode === 'lineart' && (
+              <NumberField
+                label="Threshold"
+                value={(element as ImageElement).threshold ?? 128}
+                step={8}
+                min={0}
+                onChange={(threshold) => set({ threshold } as Partial<ImageElement>)}
+              />
+            )}
+            <label className="field field--check">
+              <input
+                type="checkbox"
+                checked={Boolean((element as ImageElement).invert)}
+                onChange={(e) => set({ invert: e.target.checked } as Partial<ImageElement>)}
+              />
+              <span>Invert</span>
+            </label>
+          </div>
+          <p className="hint">
+            {(element as ImageElement).mode === 'photo'
+              ? 'Dithered for tone. Check the thermal preview — dithering can print muddy.'
+              : 'Thresholded for sharp edges. Raise the threshold to catch faint lines.'}
+          </p>
+        </>
+      )}
+
+      {element.kind === 'icon' && (
+        <div className="symbols symbols--inline">
+          {ICONS.map((icon) => (
+            <button
+              key={icon.id}
+              className={
+                'symbols__item' +
+                (icon.id === (element as IconElement).iconId ? ' symbols__item--active' : '')
+              }
+              title={icon.label}
+              onClick={() => set({ iconId: icon.id } as Partial<IconElement>)}
+              // Markup comes from our own icon table, not user input.
+              dangerouslySetInnerHTML={{ __html: iconToSvg(icon, 22) }}
+            />
+          ))}
+        </div>
       )}
 
       {element.kind === 'shape' && (

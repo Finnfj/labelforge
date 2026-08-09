@@ -318,3 +318,60 @@ button.primary:hover:not(:disabled) {
   margin: 0;
   line-height: 1.4;
 }
+
+/* ---- symbols and templates ---- */
+
+.symbols {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.4rem, 1fr));
+  gap: 0.3rem;
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  max-height: 12rem;
+  overflow: auto;
+}
+
+.symbols__item {
+  display: grid;
+  place-items: center;
+  padding: 0.3rem;
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.symbols__item svg {
+  display: block;
+}
+
+.symbols__item--active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.templates {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.templates li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.templates__load {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+  border-color: var(--line);
+}
