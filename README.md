@@ -8,10 +8,15 @@ over **Web Bluetooth**.
 
 ## Status
 
-The design and rasterising half is complete and testable without hardware. The
-Bluetooth driver and the on-device diagnostics page are the remaining work.
+Everything buildable without the printer is in place, including the Bluetooth
+driver. What remains is the diagnostics page and then the work that genuinely
+needs the hardware: confirming the command set is accepted, measuring the true
+head width, and calibrating density and gap detection.
 
 Working today:
+
+- Web Bluetooth connection, with identity and status queries, credit-based flow
+  control, chunked transfer, progress and cancellation
 
 - Label documents in millimetres, with stock presets and gap/continuous paper
 - Text, rectangles, ellipses and lines

@@ -5,6 +5,8 @@ import { Toolbar } from '../editor/panels/Toolbar'
 import { Inspector } from '../editor/panels/Inspector'
 import { useLabelEditor } from '../editor/useLabelEditor'
 import { PrintPanel } from './PrintPanel'
+import { ConnectionPanel } from './ConnectionPanel'
+import { usePrinter } from './usePrinter'
 import { TemplatesPanel } from './TemplatesPanel'
 import { resolveAssetUrl } from '../storage/assets'
 
@@ -12,6 +14,7 @@ const EDIT_ZOOMS = [1, 1.5, 2, 3] as const
 
 export default function App() {
   const editor = useLabelEditor()
+  const connection = usePrinter()
   const [zoom, setZoom] = useState<number>(2)
   // Dimensions are the preset's to define; "Custom…" hands them back to the user.
   const isPreset = editor.doc.size.presetId != null
@@ -159,7 +162,9 @@ export default function App() {
 
       <TemplatesPanel doc={editor.doc} onLoad={editor.replaceDoc} />
 
-      <PrintPanel doc={editor.doc} />
+      <ConnectionPanel connection={connection} />
+
+      <PrintPanel doc={editor.doc} connection={connection} />
     </main>
   )
 }

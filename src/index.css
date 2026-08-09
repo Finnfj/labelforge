@@ -416,3 +416,29 @@ select:disabled {
 label:has(input:disabled) {
   opacity: 0.7;
 }
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin-top: 0.8rem;
+}
+
+.facts__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.facts__label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.facts__value {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}

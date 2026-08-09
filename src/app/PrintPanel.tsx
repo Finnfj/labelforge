@@ -5,18 +5,22 @@ import { DEFAULT_HEAD_WIDTH_DOTS, dotsToMm, mmToDots } from '../model/units'
 import { rasterize } from '../render/rasterize'
 import { LabelTooWideError } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
-import { VirtualPrinterDriver } from '../printer/drivers/VirtualPrinterDriver'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
 import { MAX_DENSITY, MIN_DENSITY } from '../printer/protocol/constants'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../printer/types'
 import { resolveAssetUrl } from '../storage/assets'
 import { PaperRoll } from './PaperRoll'
 import type { ZoomSetting } from './zoom'
+import type { PrinterConnection } from './usePrinter'
 
-export function PrintPanel({ doc }: { doc: LabelDoc }) {
-  const printerRef = useRef<VirtualPrinterDriver | null>(null)
-  if (!printerRef.current) printerRef.current = new VirtualPrinterDriver()
-  const printer = printerRef.current
+export function PrintPanel({
+  doc,
+  connection,
+}: {
+  doc: LabelDoc
+  connection: PrinterConnection
+}) {
+  const printer = connection.driver
 
   const [settings, setSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS)
   const [bitmap, setBitmap] = useState<PackedBitmap | null>(null)
@@ -32,7 +36,7 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
   const [clipped, setClipped] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
-  const headWidth = printer.capabilities?.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
+  const headWidth = connection.capabilities?.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
 
   useEffect(() => {
     const offProgress = printer.on('progress', setProgress)
@@ -84,7 +88,9 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
       setError(null)
       setWireBytes(0)
       try {
-        if (!printer.capabilities) await printer.connect()
+        if (!printer.capabilities) {
+          throw new Error('Connect a printer first.')
+        }
         abortRef.current = new AbortController()
         await printer.print({ bitmap: target, settings }, { signal: abortRef.current.signal })
       } catch (e) {
@@ -98,7 +104,6 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
 
   const printPattern = useCallback(
     async (build: (head: number) => PackedBitmap) => {
-      if (!printer.capabilities) await printer.connect()
       const head = printer.capabilities?.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
       const pattern = build(head)
       setBitmap(pattern)
@@ -109,6 +114,7 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
   )
 
   const printing = progress != null && progress.phase !== 'done'
+  const connected = connection.capabilities != null
 
   return (
     <>
@@ -156,18 +162,18 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
         <div className="row" style={{ marginTop: '0.75rem' }}>
           <button
             className="primary"
-            disabled={printing || !bitmap}
+            disabled={printing || !bitmap || !connected}
             onClick={() => bitmap && send(bitmap)}
           >
             Print label
           </button>
-          <button disabled={printing} onClick={() => printPattern((h) => testStrip(h))}>
+          <button disabled={printing || !connected} onClick={() => printPattern((h) => testStrip(h))}>
             Test strip
           </button>
-          <button disabled={printing} onClick={() => printPattern((h) => rulerStrip(h))}>
+          <button disabled={printing || !connected} onClick={() => printPattern((h) => rulerStrip(h))}>
             Ruler strip
           </button>
-          <button disabled={printing} onClick={() => printPattern((h) => checkerboard(h, 96))}>
+          <button disabled={printing || !connected} onClick={() => printPattern((h) => checkerboard(h, 96))}>
             Checkerboard
           </button>
           {printing && (
@@ -178,8 +184,9 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
         </div>
 
         <p className="hint" style={{ marginTop: '0.6rem' }}>
-          Output goes to a <strong>virtual printer</strong> — no hardware is required. The
-          bitmap below is byte-for-byte what a real P50 would receive.
+          {connection.kind === 'virtual'
+            ? 'Output goes to a virtual printer — no hardware required. The bitmap below is byte-for-byte what a real P50 would receive.'
+            : 'Output goes to the connected printer. The bitmap below is exactly what it receives.'}
         </p>
 
         {progress && (
@@ -197,6 +204,10 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
               {progress.total} bytes encoded, {wireBytes} bytes on the wire
             </span>
           </div>
+        )}
+
+        {!connected && (
+          <p className="hint">Connect a printer above to enable printing.</p>
         )}
 
         {error && <p className="error">{error}</p>}
