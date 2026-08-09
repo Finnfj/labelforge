@@ -13,6 +13,8 @@ const EDIT_ZOOMS = [1, 1.5, 2, 3] as const
 export default function App() {
   const editor = useLabelEditor()
   const [zoom, setZoom] = useState<number>(2)
+  // Dimensions are the preset's to define; "Custom…" hands them back to the user.
+  const isPreset = editor.doc.size.presetId != null
 
   // Keyboard shortcuts. Deliberately skipped while a field has focus, so that
   // Delete in a text box removes a character rather than the whole element.
@@ -63,18 +65,23 @@ export default function App() {
             <select
               value={editor.doc.size.presetId ?? 'custom'}
               onChange={(e) => {
+                if (e.target.value === 'custom') {
+                  // Keep the current dimensions and just unlock them.
+                  editor.setSize(editor.doc.size.widthMm, editor.doc.size.heightMm, undefined)
+                  return
+                }
                 const preset = findPreset(e.target.value)
                 if (!preset) return
                 editor.setSize(preset.widthMm, preset.heightMm, preset.id)
                 editor.setPaper(preset.paper)
               }}
             >
-              {!editor.doc.size.presetId && <option value="custom">Custom</option>}
               {STOCK_PRESETS.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.label}
                 </option>
               ))}
+              <option value="custom">Custom…</option>
             </select>
           </label>
           <label className="field">
@@ -83,6 +90,7 @@ export default function App() {
               type="number"
               step={1}
               min={6}
+              disabled={isPreset}
               value={editor.doc.size.widthMm}
               onChange={(e) =>
                 editor.setSize(Number(e.target.value) || 1, editor.doc.size.heightMm)
@@ -96,6 +104,7 @@ export default function App() {
               type="number"
               step={1}
               min={6}
+              disabled={isPreset}
               value={editor.doc.size.heightMm}
               onChange={(e) =>
                 editor.setSize(editor.doc.size.widthMm, Number(e.target.value) || 1)
@@ -140,7 +149,7 @@ export default function App() {
               selectedId={editor.selectedId}
               zoom={zoom}
               onSelect={editor.select}
-              onUpdate={(id, patch) => editor.updateElement(id, patch)}
+              onUpdate={editor.updateElement}
               resolveAsset={resolveAssetUrl}
             />
           </div>

@@ -19,7 +19,24 @@ export interface RasterizeOptions {
   resolveAsset?: AssetResolver
   /** Threshold for the crisp plane, 0–255. */
   thresholdLevel?: number
+  /** Supersampling factor for the crisp plane. 1 disables it. */
+  supersample?: number
 }
+
+/**
+ * Render the crisp plane at 3× and average down before thresholding.
+ *
+ * Since ink is pure black, thresholding the white-composited luminance at 128 is
+ * really thresholding coverage at 50% — so the quality of the result depends
+ * entirely on how good the coverage estimate is. Rasterising a glyph at 3× and
+ * box-averaging gives a truer estimate than asking the browser for it at 203 dpi,
+ * where font hinting distorts stems to fit a pixel grid that has nothing to do
+ * with the print head.
+ *
+ * 3 rather than 2 or 4: it is odd, so a stem centred on a dot stays centred, and
+ * it costs 9× the pixels of a plane that is only a few hundred dots across.
+ */
+const CRISP_SUPERSAMPLE = 3
 
 export interface RasterizeResult {
   bitmap: PackedBitmap
@@ -55,8 +72,15 @@ export async function rasterize(
     ;(isToneElement(element) ? toneObjects : crispObjects).push(object)
   }
 
-  const crisp = renderPlane(crispObjects, widthDots, heightDots)
-  const tone = renderPlane(toneObjects, widthDots, heightDots)
+  const crisp = renderPlane(
+    crispObjects,
+    widthDots,
+    heightDots,
+    options.supersample ?? CRISP_SUPERSAMPLE,
+  )
+  // The tone plane gains nothing: error diffusion consumes the greyscale it is
+  // given, and a supersampled average is the same greyscale at more cost.
+  const tone = renderPlane(toneObjects, widthDots, heightDots, 1)
 
   const pixels = widthDots * heightDots
   const crispBits = threshold(toLuminance(crisp, pixels), options.thresholdLevel ?? 128)
@@ -75,21 +99,24 @@ export async function rasterize(
   return { bitmap, labelWidthDots: widthDots, labelHeightDots: heightDots }
 }
 
-/** Render objects to a transparent canvas at exactly one canvas unit per dot. */
+/** Render objects to a transparent canvas, optionally supersampled. */
 function renderPlane(
   objects: readonly object[],
   widthDots: number,
   heightDots: number,
+  supersample = 1,
 ): Uint8ClampedArray {
+  const scale = Math.max(1, Math.round(supersample))
   const canvas = new StaticCanvas(undefined, {
-    width: widthDots,
-    height: heightDots,
+    width: widthDots * scale,
+    height: heightDots * scale,
     renderOnAddRemove: false,
     // Device pixel ratio must not leak into the output buffer: on a HiDPI screen
     // Fabric would otherwise render at 2x and every dot coordinate would double.
     enableRetinaScaling: false,
     backgroundColor: undefined,
   })
+  if (scale !== 1) canvas.setZoom(scale)
 
   for (const object of objects) canvas.add(object as never)
   canvas.renderAll()
@@ -97,7 +124,54 @@ function renderPlane(
   const element = canvas.getElement()
   const ctx = element.getContext('2d')
   if (!ctx) throw new Error('2D canvas context unavailable')
-  const data = ctx.getImageData(0, 0, widthDots, heightDots).data
+  const data = ctx.getImageData(0, 0, widthDots * scale, heightDots * scale).data
   canvas.dispose()
-  return data
+
+  return scale === 1 ? data : boxDownsample(data, widthDots, heightDots, scale)
+}
+
+/**
+ * Average a supersampled plane back down to one sample per dot.
+ *
+ * Colour is averaged in premultiplied space and then un-premultiplied, so a dot
+ * that is mostly transparent does not have its colour dragged toward the black
+ * of a neighbouring covered sample.
+ */
+function boxDownsample(
+  src: Uint8ClampedArray,
+  width: number,
+  height: number,
+  scale: number,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(width * height * 4)
+  const srcWidth = width * scale
+  const samples = scale * scale
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let r = 0
+      let g = 0
+      let b = 0
+      let a = 0
+      for (let sy = 0; sy < scale; sy++) {
+        const row = (y * scale + sy) * srcWidth
+        for (let sx = 0; sx < scale; sx++) {
+          const i = (row + x * scale + sx) * 4
+          const alpha = src[i + 3]
+          r += src[i] * alpha
+          g += src[i + 1] * alpha
+          b += src[i + 2] * alpha
+          a += alpha
+        }
+      }
+      const o = (y * width + x) * 4
+      if (a > 0) {
+        out[o] = r / a
+        out[o + 1] = g / a
+        out[o + 2] = b / a
+      }
+      out[o + 3] = a / samples
+    }
+  }
+  return out
 }

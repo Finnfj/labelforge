@@ -8,11 +8,14 @@ export function PaperRoll({
   mode,
   zoom,
   labelWidthDots,
+  viewWidthDots,
 }: {
   bitmap: PackedBitmap | null
   mode: PreviewMode
   zoom: ZoomSetting
   labelWidthDots?: number
+  /** Columns to display. Defaults to the whole bitmap. */
+  viewWidthDots?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -28,15 +31,21 @@ export function PaperRoll({
       return
     }
 
-    const preview = toPreviewImage(bitmap, mode, labelWidthDots ?? bitmap.widthDots)
+    const preview = toPreviewImage(
+      bitmap,
+      mode,
+      labelWidthDots ?? bitmap.widthDots,
+      viewWidthDots ?? bitmap.widthDots,
+    )
     // The backing store is always 1 device dot per pixel; zoom is applied in CSS
     // so the browser cannot resample our carefully-computed dots away.
     canvas.width = preview.width
     canvas.height = preview.height
     ctx.putImageData(new ImageData(preview.data, preview.width, preview.height), 0, 0)
-  }, [bitmap, mode, labelWidthDots])
+  }, [bitmap, mode, labelWidthDots, viewWidthDots])
 
   const factor = zoomFactor(zoom)
+  const shownWidth = Math.min(viewWidthDots ?? bitmap?.widthDots ?? 0, bitmap?.widthDots ?? 0)
 
   return (
     <div className="roll">
@@ -45,7 +54,7 @@ export function PaperRoll({
           ref={canvasRef}
           className="roll__canvas"
           style={{
-            width: `${bitmap.widthDots * factor}px`,
+            width: `${shownWidth * factor}px`,
             height: `${bitmap.heightDots * factor}px`,
           }}
         />

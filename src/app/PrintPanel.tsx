@@ -24,7 +24,11 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
   const [progress, setProgress] = useState<PrintProgress | null>(null)
   const [wireBytes, setWireBytes] = useState(0)
   const [mode, setMode] = useState<PreviewMode>('crisp')
-  const [zoom, setZoom] = useState<ZoomSetting>(1)
+  // 2x by default so the preview reads at roughly the same size as the editor
+  // canvas; at 1x a 203 dpi label is tiny on a 96 dpi screen and every label
+  // looks coarser than it really is.
+  const [zoom, setZoom] = useState<ZoomSetting>(2)
+  const [showHeadArea, setShowHeadArea] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -227,10 +231,24 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
             </label>
           </div>
         </div>
-        <PaperRoll bitmap={bitmap} mode={mode} zoom={zoom} labelWidthDots={labelWidthDots} />
+        <PaperRoll
+          bitmap={bitmap}
+          mode={mode}
+          zoom={zoom}
+          labelWidthDots={labelWidthDots}
+          viewWidthDots={showHeadArea ? bitmap?.widthDots : labelWidthDots}
+        />
+        <label className="field" style={{ marginTop: '0.6rem' }}>
+          <input
+            type="checkbox"
+            checked={showHeadArea}
+            onChange={(e) => setShowHeadArea(e.target.checked)}
+          />
+          <span style={{ minWidth: 0 }}>Show full print head area</span>
+        </label>
         <p className="hint">
-          {labelWidthDots} of {headWidth} dots used ({dotsToMm(headWidth)} mm head). Tinted
-          area is under the head but off the edge of the stock.
+          {labelWidthDots} of {headWidth} dots used ({dotsToMm(headWidth)} mm head).
+          {showHeadArea && ' Tinted area is under the head but off the edge of the stock.'}
         </p>
       </section>
     </>

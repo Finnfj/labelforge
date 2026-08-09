@@ -23,8 +23,15 @@ export function toPreviewImage(
   bm: PackedBitmap,
   mode: PreviewMode = 'crisp',
   labelWidthDots = bm.widthDots,
+  /**
+   * Columns to show. The printer is always sent a full head-width raster, but
+   * showing all of it makes every label look like it has an unexplained blank
+   * strip down one side, so by default only the label itself is displayed.
+   */
+  viewWidthDots = bm.widthDots,
 ): PreviewImage {
-  const { widthDots: w, heightDots: h } = bm
+  const h = bm.heightDots
+  const w = Math.max(1, Math.min(viewWidthDots, bm.widthDots))
   const data = new Uint8ClampedArray(w * h * 4)
 
   const coverage = mode === 'thermal' ? thermalCoverage(bm) : null
@@ -32,12 +39,9 @@ export function toPreviewImage(
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4
-      let ink: number
-      if (coverage) {
-        ink = coverage[y * w + x]
-      } else {
-        ink = getDot(bm, x, y) ? 1 : 0
-      }
+      // The coverage map spans the full bitmap, so it is indexed by the bitmap's
+      // stride, not the (possibly narrower) view width.
+      const ink = coverage ? coverage[y * bm.widthDots + x] : getDot(bm, x, y) ? 1 : 0
 
       // Area outside the label itself is under the head but has no paper: tint it
       // so a misplaced or overflowing design is obvious.

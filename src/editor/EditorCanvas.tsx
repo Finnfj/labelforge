@@ -13,8 +13,10 @@ export interface EditorCanvasProps {
   selectedId: string | null
   zoom: number
   onSelect(id: string | null): void
-  onUpdate(id: string, patch: ElementPatch): void
+  onUpdate(id: string, patch: ElementPatch, options?: { transient?: boolean }): void
   resolveAsset?: AssetResolver
+  /** Called with the Fabric instance once it exists. Used by tests. */
+  onReady?(canvas: Canvas): void
 }
 
 export function EditorCanvas({
@@ -24,6 +26,7 @@ export function EditorCanvas({
   onSelect,
   onUpdate,
   resolveAsset,
+  onReady,
 }: EditorCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<Canvas | null>(null)
@@ -34,8 +37,8 @@ export function EditorCanvas({
    * them as effect dependencies would tear down and rebuild the canvas on every
    * render, which loses the selection and cancels any drag in progress.
    */
-  const handlers = useRef({ doc, onSelect, onUpdate })
-  handlers.current = { doc, onSelect, onUpdate }
+  const handlers = useRef({ doc, onSelect, onUpdate, onReady })
+  handlers.current = { doc, onSelect, onUpdate, onReady }
 
   /**
    * Set while a canvas-originated edit propagates into the document, so the
@@ -70,6 +73,7 @@ export function EditorCanvas({
     })
     canvasRef.current = canvas
     setEpoch((e) => e + 1)
+    handlers.current.onReady?.(canvas)
 
     const selectionChanged = () => {
       const active = canvas.getActiveObject() as TaggedObject | undefined
@@ -84,6 +88,23 @@ export function EditorCanvas({
       fromCanvas.current = true
       handlers.current.onUpdate(object.elementId, readGeometry(object, handlers.current.doc))
     })
+
+    // Editing text in place does not raise `object:modified` — Fabric reports it
+    // through the editing lifecycle instead. Without these the typed text lives
+    // only on the canvas and is discarded the next time the document rebuilds,
+    // so it looks like edits are silently lost unless made in the Inspector.
+    const readText = (event: { target?: unknown }, transient: boolean) => {
+      const object = event.target as (TaggedObject & { text?: string }) | undefined
+      if (!object?.elementId) return
+      fromCanvas.current = true
+      handlers.current.onUpdate(object.elementId, { text: object.text ?? '' } as ElementPatch, {
+        transient,
+      })
+    }
+    // Keystrokes are transient so a sentence is one undo step, not thirty; the
+    // commit happens when editing ends.
+    canvas.on('text:changed', (event) => readText(event, true))
+    canvas.on('text:editing:exited', (event) => readText(event, false))
 
     return () => {
       canvasRef.current = null

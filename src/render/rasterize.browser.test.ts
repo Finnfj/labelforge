@@ -143,6 +143,46 @@ describe('rasterize geometry', () => {
     for (let x = 320; x < 384; x++) expect(getDot(bitmap, x, 0)).toBe(false)
   })
 
+  it('supersampling does not move dot-aligned geometry', async () => {
+    // A rectangle on whole-dot boundaries must rasterise identically however
+    // finely it was sampled. If this drifts, supersampling is shifting edges and
+    // barcodes would be next.
+    const doc = docWith([
+      { kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, x: 5, y: 5, widthMm: 10, heightMm: 10 },
+    ])
+    const plain = await rasterize(doc, { supersample: 1 })
+    const fine = await rasterize(doc, { supersample: 3 })
+    expect(Array.from(fine.bitmap.data)).toEqual(Array.from(plain.bitmap.data))
+  })
+
+  it('supersampling keeps text weight in the same ballpark', async () => {
+    // Supersampling should sharpen glyph shapes, not thin them into fragments or
+    // fatten them into blobs.
+    const doc = docWith([
+      {
+        kind: 'text',
+        text: 'Handling 8.5',
+        fontFamily: 'sans-serif',
+        fontSizePt: 8,
+        align: 'left',
+        x: 2,
+        y: 2,
+        widthMm: 34,
+        heightMm: 6,
+      },
+    ])
+    const ink = async (supersample: number) => {
+      const { bitmap } = await rasterize(doc, { supersample })
+      return unpack1bpp(bitmap).reduce((n: number, v: number) => n + v, 0)
+    }
+    const plain = await ink(1)
+    const fine = await ink(3)
+    expect(plain).toBeGreaterThan(50)
+    expect(fine).toBeGreaterThan(50)
+    expect(fine / plain).toBeGreaterThan(0.75)
+    expect(fine / plain).toBeLessThan(1.35)
+  })
+
   it('honours draw order', async () => {
     // A later, larger white-free shape simply adds ink; order matters for images
     // but here we assert the sort is applied at all by checking both are present.

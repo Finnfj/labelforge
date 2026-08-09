@@ -1,6 +1,7 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import type { Canvas, Textbox } from 'fabric'
 import { act } from 'react'
 import { EditorCanvas } from './EditorCanvas'
 import { createEmptyDoc, type LabelDoc } from '../model/labelDoc'
@@ -17,6 +18,8 @@ import { createEmptyDoc, type LabelDoc } from '../model/labelDoc'
 
 let root: Root | null = null
 let host: HTMLDivElement | null = null
+let updates: Array<{ id: string; patch: Record<string, unknown>; transient?: boolean }> = []
+let canvas: Canvas | null = null
 
 afterEach(async () => {
   await act(async () => {
@@ -28,6 +31,8 @@ afterEach(async () => {
 })
 
 async function mount(doc: LabelDoc, zoom = 2) {
+  updates = []
+  canvas = null
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -39,7 +44,16 @@ async function mount(doc: LabelDoc, zoom = 2) {
           selectedId={null}
           zoom={zoom}
           onSelect={() => {}}
-          onUpdate={() => {}}
+          onUpdate={(id, patch, options) =>
+            updates.push({
+              id,
+              patch: patch as Record<string, unknown>,
+              transient: options?.transient,
+            })
+          }
+          onReady={(c) => {
+            canvas = c
+          }}
         />
       </StrictMode>,
     )
@@ -117,6 +131,47 @@ describe('EditorCanvas', () => {
     await mount(docWithText())
     const { dark } = tally(liveCanvas())
     expect(dark).toBeGreaterThan(100)
+  })
+
+  it('reports text typed directly on the canvas', async () => {
+    // The bug this guards: Fabric does not raise `object:modified` for in-place
+    // text editing, so without the editing-lifecycle handlers the typed text
+    // lived only on the canvas and was discarded on the next rebuild. It looked
+    // like edits were only saved when made in the Inspector.
+    //
+    // Typing is driven through the hidden textarea Fabric attaches while
+    // editing, which is the real keystroke path — `insertChars()` mutates the
+    // object without emitting anything, so testing through it would pass even
+    // with the handlers removed.
+    await mount(docWithText())
+    const textbox = canvas!.getObjects()[0] as Textbox
+    expect(textbox).toBeDefined()
+
+    await act(async () => {
+      textbox.enterEditing()
+    })
+    const textarea = document.querySelector('textarea')
+    expect(textarea, 'Fabric did not attach its editing textarea').not.toBeNull()
+
+    await act(async () => {
+      textarea!.value = 'HELLOX'
+      textarea!.selectionStart = textarea!.selectionEnd = 6
+      textarea!.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const typed = updates.filter((u) => 'text' in u.patch)
+    expect(typed.length, 'no text update reached the document').toBeGreaterThan(0)
+    expect(String(typed.at(-1)!.patch.text)).toContain('X')
+    // Keystrokes are transient so typing a word is a single undo step.
+    expect(typed.at(-1)!.transient).toBe(true)
+
+    await act(async () => {
+      textbox.exitEditing()
+    })
+
+    // Leaving the field commits, which is what makes it an undo boundary.
+    const committed = updates.filter((u) => 'text' in u.patch && !u.transient)
+    expect(committed.length, 'exiting the field did not commit').toBeGreaterThan(0)
   })
 
   it('clears ink when the element is removed', async () => {
