@@ -21,6 +21,22 @@ export function dotsToMm(dots: number): number {
 }
 
 /**
+ * Typographic points to printer dots.
+ *
+ * Font sizes are specified in points because that is what people know, but the
+ * canvas we rasterise on is measured in dots, so this is the bridge. A point is
+ * 1/72 inch, so at 203 dpi one point is ~2.82 dots — meaning 6 pt text is only
+ * about 17 dots tall and is close to the practical floor for this head.
+ */
+export function ptToDots(pt: number): number {
+  return (pt * DPI) / 72
+}
+
+export function dotsToPt(dots: number): number {
+  return (dots * 72) / DPI
+}
+
+/**
  * Head width in dots, until measured on real hardware.
  *
  * 384 dots = 48.0 mm, which is what the vendor SDK's example handler hard-codes.

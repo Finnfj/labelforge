@@ -13,6 +13,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "bwip-js": "^4.11.2",
+    "fabric": "^7.4.0",
     "idb-keyval": "^6.3.0",
     "pako": "^3.0.1",
     "react": "^19.2.8",
@@ -26,7 +28,10 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
+    "@vitest/browser": "^4.1.10",
+    "@vitest/browser-playwright": "^4.1.10",
     "oxlint": "^1.75.0",
+    "playwright": "^1.62.1",
     "prettier": "^3.9.6",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",

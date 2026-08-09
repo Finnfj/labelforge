@@ -1,188 +1,151 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DEFAULT_HEAD_WIDTH_DOTS, dotsToMm, mmToDots } from '../model/units'
-import type { PackedBitmap } from '../model/bitmap'
-import { padToHead } from '../render/padToHead'
-import type { PreviewMode } from '../render/preview'
-import { VirtualPrinterDriver } from '../printer/drivers/VirtualPrinterDriver'
-import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
-import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../printer/types'
-import { PaperRoll } from './PaperRoll'
-import type { ZoomSetting } from './zoom'
+import { useEffect, useState } from 'react'
+import { STOCK_PRESETS, findPreset } from '../model/presets'
+import { EditorCanvas } from '../editor/EditorCanvas'
+import { Toolbar } from '../editor/panels/Toolbar'
+import { Inspector } from '../editor/panels/Inspector'
+import { useLabelEditor } from '../editor/useLabelEditor'
+import { PrintPanel } from './PrintPanel'
 
-/** Roll widths the P50 family takes. The head is wider than most of them. */
-const WIDTH_PRESETS_MM = [12, 25, 40, 50] as const
+const EDIT_ZOOMS = [1, 1.5, 2, 3] as const
 
 export default function App() {
-  const printer = useMemo(() => new VirtualPrinterDriver(), [])
-  const [connected, setConnected] = useState(false)
-  const [progress, setProgress] = useState<PrintProgress | null>(null)
-  const [lastBitmap, setLastBitmap] = useState<PackedBitmap | null>(null)
-  const [wireBytes, setWireBytes] = useState(0)
-  const [mode, setMode] = useState<PreviewMode>('crisp')
-  const [zoom, setZoom] = useState<ZoomSetting>(1)
-  const [labelWidthMm, setLabelWidthMm] = useState<number>(40)
-  const [error, setError] = useState<string | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
+  const editor = useLabelEditor()
+  const [zoom, setZoom] = useState<number>(2)
 
-  const headWidth = printer.capabilities?.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
-  const labelWidthDots = Math.min(mmToDots(labelWidthMm), headWidth)
-
+  // Keyboard shortcuts. Deliberately skipped while a field has focus, so that
+  // Delete in a text box removes a character rather than the whole element.
   useEffect(() => {
-    const offState = printer.on('state', (s) => setConnected(s !== 'disconnected'))
-    const offProgress = printer.on('progress', setProgress)
-    const offWire = printer.on('wire', (w) => setWireBytes((n) => n + w.bytes.length))
-    return () => {
-      offState()
-      offProgress()
-      offWire()
-    }
-  }, [printer])
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
 
-  const run = useCallback(
-    async (build: (headWidthDots: number) => PackedBitmap) => {
-      setError(null)
-      try {
-        if (!printer.capabilities) await printer.connect()
-        const head = printer.capabilities?.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
-        const bitmap = build(head)
-        setLastBitmap(bitmap)
-        setWireBytes(0)
-        abortRef.current = new AbortController()
-        await printer.print(
-          { bitmap, settings: DEFAULT_PRINT_SETTINGS },
-          { signal: abortRef.current.signal },
-        )
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
-      } finally {
-        abortRef.current = null
+      const meta = event.ctrlKey || event.metaKey
+      if (meta && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) editor.redo()
+        else editor.undo()
+      } else if (meta && event.key.toLowerCase() === 'd') {
+        event.preventDefault()
+        editor.duplicateSelected()
+      } else if (event.key === 'Delete' || event.key === 'Backspace') {
+        if (editor.selectedId) {
+          event.preventDefault()
+          editor.deleteSelected()
+        }
+      } else if (event.key === 'Escape') {
+        editor.select(null)
       }
-    },
-    [printer],
-  )
-
-  const printing = progress != null && progress.phase !== 'done'
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [editor])
 
   return (
     <main className="app">
       <header className="app__header">
         <h1>LabelForge</h1>
         <p className="app__sub">
-          MarkLife P50 label printer, driven from the browser. Currently printing to a{' '}
-          <strong>virtual printer</strong> — the bitmap below is exactly the buffer a real
-          P50 would receive.
+          Design and print labels on a MarkLife P50 straight from the browser.
         </p>
       </header>
 
       <section className="panel">
         <h2>Label</h2>
         <div className="row">
-          <label>
-            Roll width
+          <label className="field">
+            <span>Name</span>
+            <input value={editor.doc.name} onChange={(e) => editor.rename(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>Stock</span>
             <select
-              value={labelWidthMm}
-              onChange={(e) => setLabelWidthMm(Number(e.target.value))}
+              value={editor.doc.size.presetId ?? 'custom'}
+              onChange={(e) => {
+                const preset = findPreset(e.target.value)
+                if (!preset) return
+                editor.setSize(preset.widthMm, preset.heightMm, preset.id)
+                editor.setPaper(preset.paper)
+              }}
             >
-              {WIDTH_PRESETS_MM.map((mm) => (
-                <option key={mm} value={mm}>
-                  {mm} mm
+              {!editor.doc.size.presetId && <option value="custom">Custom</option>}
+              {STOCK_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
                 </option>
               ))}
             </select>
           </label>
-          <span className="hint">
-            {labelWidthDots} dots of a {headWidth}-dot head ({dotsToMm(headWidth)} mm)
-          </span>
+          <label className="field">
+            <span>Width</span>
+            <input
+              type="number"
+              step={1}
+              min={6}
+              value={editor.doc.size.widthMm}
+              onChange={(e) =>
+                editor.setSize(Number(e.target.value) || 1, editor.doc.size.heightMm)
+              }
+            />
+            <em>mm</em>
+          </label>
+          <label className="field">
+            <span>Height</span>
+            <input
+              type="number"
+              step={1}
+              min={6}
+              value={editor.doc.size.heightMm}
+              onChange={(e) =>
+                editor.setSize(editor.doc.size.widthMm, Number(e.target.value) || 1)
+              }
+            />
+            <em>mm</em>
+          </label>
+          <label className="field">
+            <span>Paper</span>
+            <select
+              value={editor.doc.paper.type}
+              onChange={(e) => editor.setPaper(e.target.value as 'gap' | 'continuous')}
+            >
+              <option value="gap">Gap labels</option>
+              <option value="continuous">Continuous</option>
+            </select>
+          </label>
         </div>
-      </section>
-
-      <section className="panel">
-        <h2>Test prints</h2>
-        <div className="row">
-          <button
-            disabled={printing}
-            onClick={() =>
-              run((head) => padToHead(testStrip(labelWidthDots, 120), head, 'left'))
-            }
-          >
-            Test strip
-          </button>
-          <button disabled={printing} onClick={() => run((head) => rulerStrip(head))}>
-            Ruler strip
-          </button>
-          <button
-            disabled={printing}
-            onClick={() =>
-              run((head) => padToHead(checkerboard(labelWidthDots, 96), head, 'left'))
-            }
-          >
-            Checkerboard
-          </button>
-          {printing && (
-            <button className="danger" onClick={() => abortRef.current?.abort()}>
-              Cancel
-            </button>
-          )}
-        </div>
-
-        {progress && (
-          <div className="progress">
-            <div className="progress__bar">
-              <div
-                className="progress__fill"
-                style={{
-                  width: `${progress.total ? (progress.sent / progress.total) * 100 : 0}%`,
-                }}
-              />
-            </div>
-            <span className="hint">
-              {progress.phase} — {progress.sent}/{progress.total} bytes, {wireBytes} bytes on
-              the wire
-            </span>
-          </div>
-        )}
-
-        {error && <p className="error">{error}</p>}
-        {!connected && <p className="hint">Virtual printer connects on first print.</p>}
       </section>
 
       <section className="panel">
         <div className="row row--between">
-          <h2>Paper</h2>
-          <div className="row">
-            <label>
-              View
-              <select value={mode} onChange={(e) => setMode(e.target.value as PreviewMode)}>
-                <option value="crisp">Crisp dots</option>
-                <option value="thermal">Thermal simulation</option>
-              </select>
-            </label>
-            <label>
-              Zoom
-              <select
-                value={String(zoom)}
-                onChange={(e) =>
-                  setZoom(e.target.value === 'actual' ? 'actual' : (Number(e.target.value) as 1 | 2 | 4))
-                }
-              >
-                <option value="actual">True physical size</option>
-                <option value="1">1&times;</option>
-                <option value="2">2&times;</option>
-                <option value="4">4&times;</option>
-              </select>
-            </label>
-          </div>
+          <h2>Design</h2>
+          <label className="field">
+            <span>Zoom</span>
+            <select value={zoom} onChange={(e) => setZoom(Number(e.target.value))}>
+              {EDIT_ZOOMS.map((z) => (
+                <option key={z} value={z}>
+                  {z}&times;
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
-        <PaperRoll
-          bitmap={lastBitmap}
-          mode={mode}
-          zoom={zoom}
-          labelWidthDots={lastBitmap?.widthDots === headWidth ? labelWidthDots : undefined}
-        />
-        <p className="hint">
-          Tinted area is under the head but off the edge of the label stock.
-        </p>
+
+        <Toolbar editor={editor} />
+
+        <div className="editor">
+          <div className="editor__stage">
+            <EditorCanvas
+              doc={editor.doc}
+              selectedId={editor.selectedId}
+              zoom={zoom}
+              onSelect={editor.select}
+              onUpdate={(id, patch) => editor.updateElement(id, patch)}
+            />
+          </div>
+          <Inspector editor={editor} />
+        </div>
       </section>
+
+      <PrintPanel doc={editor.doc} />
     </main>
   )
 }
