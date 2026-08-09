@@ -76,6 +76,42 @@ export function Toolbar({ editor }: { editor: LabelEditor }) {
       </div>
 
       <div className="toolbar__group">
+        <button
+          onClick={() =>
+            add({
+              kind: 'barcode',
+              symbology: 'code128',
+              value: '12345678',
+              showText: true,
+              x: 2,
+              y: 2,
+              widthMm: 30,
+              heightMm: 12,
+              rotation: 0,
+            })
+          }
+        >
+          Barcode
+        </button>
+        <button
+          onClick={() =>
+            add({
+              kind: 'qr',
+              value: 'https://example.com',
+              ecLevel: 'M',
+              x: 2,
+              y: 2,
+              widthMm: 18,
+              heightMm: 18,
+              rotation: 0,
+            })
+          }
+        >
+          QR
+        </button>
+      </div>
+
+      <div className="toolbar__group">
         <button disabled={!editor.selected} onClick={editor.duplicateSelected}>
           Duplicate
         </button>

@@ -103,7 +103,15 @@ export function EditorCanvas({ doc, selectedId, zoom, onSelect, onUpdate }: Edit
     void (async () => {
       const built: TaggedObject[] = []
       for (const element of elementsInDrawOrder(doc)) {
-        const object = (await toFabricObject(element)) as TaggedObject | null
+        let object: TaggedObject | null = null
+        try {
+          object = (await toFabricObject(element)) as TaggedObject | null
+        } catch {
+          // A code whose value cannot be encoded (half-typed EAN, bad check
+          // digit) must not blank the whole canvas while the user is still
+          // typing. The Inspector reports the reason against that element.
+          continue
+        }
         if (!object) continue
         object.elementId = element.id
         object.set({ lockScalingFlip: true })
@@ -146,11 +154,15 @@ function readGeometry(object: TaggedObject, doc: LabelDoc): ElementPatch {
   const element = doc.elements.find((e) => e.id === object.elementId)
   const scaleY = object.scaleY ?? 1
 
+  // Objects are positioned by their centre (see `placement` in toFabric.ts), but
+  // the document stores the unrotated top-left, so convert back.
+  const width = object.getScaledWidth()
+  const height = object.getScaledHeight()
   const patch = {
-    x: dotsToMm(object.left ?? 0),
-    y: dotsToMm(object.top ?? 0),
-    widthMm: dotsToMm(object.getScaledWidth()),
-    heightMm: dotsToMm(object.getScaledHeight()),
+    x: dotsToMm((object.left ?? 0) - width / 2),
+    y: dotsToMm((object.top ?? 0) - height / 2),
+    widthMm: dotsToMm(width),
+    heightMm: dotsToMm(height),
     rotation: object.angle ?? 0,
   } as ElementPatch
 

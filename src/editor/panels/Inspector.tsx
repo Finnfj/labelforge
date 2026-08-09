@@ -1,5 +1,23 @@
-import type { ShapeElement, TextElement } from '../../model/labelDoc'
+import { useMemo } from 'react'
+import type {
+  BarcodeElement,
+  QrElement,
+  ShapeElement,
+  TextElement,
+} from '../../model/labelDoc'
+import { mmToDots } from '../../model/units'
+import { checkCode } from '../../render/barcode'
 import type { LabelEditor } from '../useLabelEditor'
+
+const SYMBOLOGIES: Array<{ value: BarcodeElement['symbology']; label: string }> = [
+  { value: 'code128', label: 'Code 128' },
+  { value: 'code39', label: 'Code 39' },
+  { value: 'ean13', label: 'EAN-13' },
+  { value: 'ean8', label: 'EAN-8' },
+  { value: 'itf14', label: 'ITF-14' },
+  { value: 'gs1-128', label: 'GS1-128' },
+  { value: 'datamatrix', label: 'Data Matrix' },
+]
 
 const FONTS = [
   { value: 'sans-serif', label: 'Sans' },
@@ -38,6 +56,16 @@ function NumberField({
       {suffix && <em>{suffix}</em>}
     </label>
   )
+}
+
+function CodeStatus({ element }: { element: BarcodeElement | QrElement }) {
+  const check = useMemo(
+    () => checkCode(element, mmToDots(element.widthMm), mmToDots(element.heightMm)),
+    [element],
+  )
+  if (check.error) return <p className="error">{check.error}</p>
+  if (check.warning) return <p className="warn">{check.warning}</p>
+  return <p className="hint">Modules {check.moduleDots} dots wide.</p>
 }
 
 export function Inspector({ editor }: { editor: LabelEditor }) {
@@ -144,6 +172,74 @@ export function Inspector({ editor }: { editor: LabelEditor }) {
               tends to smear shut. Check the thermal preview.
             </p>
           )}
+        </>
+      )}
+
+      {element.kind === 'barcode' && (
+        <>
+          <label className="field field--block">
+            <span>Value</span>
+            <input
+              value={(element as BarcodeElement).value}
+              onChange={(e) => set({ value: e.target.value } as Partial<BarcodeElement>)}
+            />
+          </label>
+          <div className="grid2">
+            <label className="field">
+              <span>Type</span>
+              <select
+                value={(element as BarcodeElement).symbology}
+                onChange={(e) =>
+                  set({
+                    symbology: e.target.value as BarcodeElement['symbology'],
+                  } as Partial<BarcodeElement>)
+                }
+              >
+                {SYMBOLOGIES.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field field--check">
+              <input
+                type="checkbox"
+                checked={(element as BarcodeElement).showText}
+                onChange={(e) => set({ showText: e.target.checked } as Partial<BarcodeElement>)}
+              />
+              <span>Show text</span>
+            </label>
+          </div>
+          <CodeStatus element={element as BarcodeElement} />
+        </>
+      )}
+
+      {element.kind === 'qr' && (
+        <>
+          <label className="field field--block">
+            <span>Value</span>
+            <textarea
+              rows={2}
+              value={(element as QrElement).value}
+              onChange={(e) => set({ value: e.target.value } as Partial<QrElement>)}
+            />
+          </label>
+          <label className="field">
+            <span>Correction</span>
+            <select
+              value={(element as QrElement).ecLevel}
+              onChange={(e) =>
+                set({ ecLevel: e.target.value as QrElement['ecLevel'] } as Partial<QrElement>)
+              }
+            >
+              <option value="L">L — 7%</option>
+              <option value="M">M — 15%</option>
+              <option value="Q">Q — 25%</option>
+              <option value="H">H — 30%</option>
+            </select>
+          </label>
+          <CodeStatus element={element as QrElement} />
         </>
       )}
 

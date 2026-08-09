@@ -8,6 +8,22 @@ export default defineConfig({
   // Safe because the app uses hash-based routing, so there are no server-side deep links.
   base: './',
   plugins: [react()],
+  build: {
+    // bwip-js is ~1 MB raw: it carries the encoder tables for every symbology it
+    // supports and offers no per-symbology entry point. Splitting it out means an
+    // app update does not invalidate it in the browser cache.
+    chunkSizeWarningLimit: 1200,
+    rolldownOptions: {
+      output: {
+        advancedChunks: {
+          groups: [
+            { name: 'barcode', test: /node_modules[\\/]bwip-js/ },
+            { name: 'canvas', test: /node_modules[\\/]fabric/ },
+          ],
+        },
+      },
+    },
+  },
   test: {
     projects: [
       {
