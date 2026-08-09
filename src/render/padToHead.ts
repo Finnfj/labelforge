@@ -23,8 +23,16 @@ export function padToHead(
   headWidthDots: number,
   align: HeadAlign = 'left',
   offsetDots = 0,
+  options: { clip?: boolean } = {},
 ): PackedBitmap {
-  if (src.widthDots > headWidthDots) throw new LabelTooWideError(src.widthDots, headWidthDots)
+  // Throwing is the right default for a print: silently cropping someone's
+  // label is worse than refusing. The preview opts into clipping so it can show
+  // what *would* print alongside a warning — which matters because the head
+  // width is an assumption until it has been measured on real hardware, and a
+  // 50 mm roll is 400 dots against an assumed 384.
+  if (src.widthDots > headWidthDots && !options.clip) {
+    throw new LabelTooWideError(src.widthDots, headWidthDots)
+  }
   if (src.widthDots === headWidthDots && offsetDots === 0) return src
 
   const slack = headWidthDots - src.widthDots

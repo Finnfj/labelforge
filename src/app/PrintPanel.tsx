@@ -24,12 +24,12 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
   const [progress, setProgress] = useState<PrintProgress | null>(null)
   const [wireBytes, setWireBytes] = useState(0)
   const [mode, setMode] = useState<PreviewMode>('crisp')
-  // 2x by default so the preview reads at roughly the same size as the editor
-  // canvas; at 1x a 203 dpi label is tiny on a 96 dpi screen and every label
-  // looks coarser than it really is.
-  const [zoom, setZoom] = useState<ZoomSetting>(2)
+  // Fit by default: it picks the largest whole-dot scale the panel can hold, so
+  // the preview is as large as possible without ever needing to scroll sideways.
+  const [zoom, setZoom] = useState<ZoomSetting>('fit')
   const [showHeadArea, setShowHeadArea] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [clipped, setClipped] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
   const headWidth = printer.capabilities?.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
@@ -54,10 +54,12 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
             headWidthDots: headWidth,
             align: 'left',
             resolveAsset: resolveAssetUrl,
+            clipToHead: true,
           })
           if (cancelled) return
           setBitmap(result.bitmap)
           setLabelWidthDots(result.labelWidthDots)
+          setClipped(result.clipped)
           setError(null)
         } catch (e) {
           if (cancelled) return
@@ -198,6 +200,14 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
         )}
 
         {error && <p className="error">{error}</p>}
+        {clipped && (
+          <p className="warn">
+            This label is {dotsToMm(labelWidthDots)} mm wide but the print head is assumed
+            to be {dotsToMm(headWidth)} mm. Anything past that edge will be cut off. The
+            head width is an assumption until you measure it with the ruler strip — the P50
+            may well be a true 50 mm head.
+          </p>
+        )}
       </section>
 
       <section className="panel">
@@ -215,14 +225,16 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
               <span>Zoom</span>
               <select
                 value={String(zoom)}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const next = e.target.value
                   setZoom(
-                    e.target.value === 'actual'
-                      ? 'actual'
-                      : (Number(e.target.value) as 1 | 2 | 4),
+                    next === 'fit' || next === 'actual'
+                      ? next
+                      : (Number(next) as 1 | 2 | 4),
                   )
-                }
+                }}
               >
+                <option value="fit">Fit</option>
                 <option value="actual">True size</option>
                 <option value="1">1&times;</option>
                 <option value="2">2&times;</option>
@@ -238,13 +250,13 @@ export function PrintPanel({ doc }: { doc: LabelDoc }) {
           labelWidthDots={labelWidthDots}
           viewWidthDots={showHeadArea ? bitmap?.widthDots : labelWidthDots}
         />
-        <label className="field" style={{ marginTop: '0.6rem' }}>
+        <label className="field field--check" style={{ marginTop: '0.6rem' }}>
           <input
             type="checkbox"
             checked={showHeadArea}
             onChange={(e) => setShowHeadArea(e.target.checked)}
           />
-          <span style={{ minWidth: 0 }}>Show full print head area</span>
+          <span>Show full print head area</span>
         </label>
         <p className="hint">
           {labelWidthDots} of {headWidth} dots used ({dotsToMm(headWidth)} mm head).

@@ -162,9 +162,16 @@ button.danger {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: auto;
-  max-height: 32rem;
-  display: flex;
-  justify-content: center;
+  /* Sized so a default label clears it outright. At exactly 32rem the canvas
+     plus padding came to 2px more than the content box, which raised a
+     scrollbar over nothing. */
+  max-height: 36rem;
+  /* Grid rather than flex centring: when the content is wider than the box,
+     flex `justify-content: center` overflows in both directions and the left
+     edge becomes unreachable by scrolling. */
+  display: grid;
+  place-items: center;
+  scrollbar-gutter: stable;
 }
 
 .roll__canvas {
@@ -196,7 +203,7 @@ button.danger {
 
 .editor {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 17rem;
+  grid-template-columns: minmax(0, 1fr) 15rem;
   gap: 1rem;
   align-items: start;
 }
@@ -246,13 +253,19 @@ button.danger {
   color: var(--muted);
 }
 
+/*
+ * One field per row. Two columns fitted in a 17rem panel only by squashing every
+ * input to a few characters, which made numbers unreadable and unclickable. A
+ * single column is taller but each field gets usable width.
+ *
+ * minmax(0, …) rather than a bare 1fr: a bare 1fr refuses to shrink below its
+ * content's min-content width, and an <input> reports a wide intrinsic minimum,
+ * which is what pushed these fields out past the edge of the panel.
+ */
 .grid2 {
   display: grid;
-  /* minmax(0, 1fr), not 1fr: a bare 1fr refuses to shrink below its content's
-     min-content width, and an <input> reports a wide intrinsic minimum. That is
-     what pushed these fields out past the edge of the panel. */
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem 0.6rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.45rem;
   min-width: 0;
 }
 
@@ -308,8 +321,15 @@ button.danger {
 }
 
 .field--check input {
-  flex: 0;
+  /* Without this the checkbox inherits `flex: 1` from `.field input` and
+     stretches across the row, leaving its label stranded far to the right. */
+  flex: 0 0 auto;
   width: auto;
+  min-width: 0;
+}
+
+.field--check > span {
+  min-width: 0;
 }
 
 button.primary {

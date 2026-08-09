@@ -3,6 +3,7 @@ import { rasterize } from './rasterize'
 import { getDot } from '../model/bitmap'
 import { createEmptyDoc, type LabelDoc, type LabelElement } from '../model/labelDoc'
 import { unpack1bpp } from './pack1bpp'
+import { LabelTooWideError } from './padToHead'
 
 /**
  * These run in a real Chromium via Playwright, not jsdom. Canvas text metrics and
@@ -141,6 +142,36 @@ describe('rasterize geometry', () => {
     expect(getDot(bitmap, 0, 0)).toBe(true)
     // Everything beyond the label edge must be blank.
     for (let x = 320; x < 384; x++) expect(getDot(bitmap, x, 0)).toBe(false)
+  })
+
+  it('reports a label wider than the head instead of failing, when clipping is allowed', async () => {
+    // A 50 mm roll is 400 dots against the assumed 384-dot head, so the shipped
+    // 50 mm presets hit this on every render. Refusing outright left the preview
+    // stale with no explanation.
+    const doc = docWith(
+      [{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, x: 0, y: 0, widthMm: 50, heightMm: 5 }],
+      50,
+      30,
+    )
+    const { bitmap, labelWidthDots, clipped } = await rasterize(doc, {
+      headWidthDots: 384,
+      clipToHead: true,
+    })
+    expect(labelWidthDots).toBe(400)
+    expect(bitmap.widthDots).toBe(384)
+    expect(clipped).toBe(true)
+    expect(getDot(bitmap, 383, 0)).toBe(true)
+  })
+
+  it('refuses an over-wide label by default, so a print is never silently cropped', async () => {
+    const doc = docWith([{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0 }], 50, 30)
+    await expect(rasterize(doc, { headWidthDots: 384 })).rejects.toThrow(LabelTooWideError)
+  })
+
+  it('is not marked clipped when the label fits', async () => {
+    const doc = docWith([{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0 }], 40, 30)
+    const { clipped } = await rasterize(doc, { headWidthDots: 384, clipToHead: true })
+    expect(clipped).toBe(false)
   })
 
   it('supersampling does not move dot-aligned geometry', async () => {

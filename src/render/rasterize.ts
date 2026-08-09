@@ -21,6 +21,8 @@ export interface RasterizeOptions {
   thresholdLevel?: number
   /** Supersampling factor for the crisp plane. 1 disables it. */
   supersample?: number
+  /** Crop rather than fail when the label is wider than the head. */
+  clipToHead?: boolean
 }
 
 /**
@@ -42,6 +44,8 @@ export interface RasterizeResult {
   bitmap: PackedBitmap
   labelWidthDots: number
   labelHeightDots: number
+  /** True when content was cropped because the label exceeds the head width. */
+  clipped: boolean
 }
 
 /**
@@ -92,11 +96,19 @@ export async function rasterize(
   const merged = composite(crispBits, crispMask, toneBits)
   let bitmap = pack1bpp(merged, widthDots, heightDots)
 
+  let clipped = false
   if (options.headWidthDots) {
-    bitmap = padToHead(bitmap, options.headWidthDots, options.align ?? 'left', options.offsetDots ?? 0)
+    clipped = widthDots > options.headWidthDots
+    bitmap = padToHead(
+      bitmap,
+      options.headWidthDots,
+      options.align ?? 'left',
+      options.offsetDots ?? 0,
+      { clip: options.clipToHead },
+    )
   }
 
-  return { bitmap, labelWidthDots: widthDots, labelHeightDots: heightDots }
+  return { bitmap, labelWidthDots: widthDots, labelHeightDots: heightDots, clipped }
 }
 
 /** Render objects to a transparent canvas, optionally supersampled. */
