@@ -1,0 +1,68 @@
+{
+  "note": "Golden outputs captured from marklife-label-printer-web-kit@1.1.4 processImageData(). Our encoder must reproduce these exactly.",
+  "fixtures": [
+    {
+      "name": "box-384x120",
+      "width": 384,
+      "height": 120,
+      "expectedBase64": "HxAAMAB4AAAAKyiR7coxEQAACASgb250nQzhCTMJp1Qv3/d93/d93/d937/zAXhpALtO64k=",
+      "expectedLength": 53
+    },
+    {
+      "name": "stride-383x40",
+      "width": 383,
+      "height": 40,
+      "expectedBase64": "HxAAMAAoAAAAGSiRm+SpMmkUjaJRNIpG0SgaRfRFAIV3fZ8=",
+      "expectedLength": 35
+    },
+    {
+      "name": "stride-385x40",
+      "width": 385,
+      "height": 40,
+      "expectedBase64": "HxAAMQAoAAAAIiiRm+SpMokU1ECS6lENoxpGNYxqGNUwqmFUAyUaAFPBkZ8=",
+      "expectedLength": 44
+    },
+    {
+      "name": "transparent-384x16",
+      "width": 384,
+      "height": 16,
+      "expectedBase64": "HxAAMAAQAAAADyiRY2AYBaNg5AIAAwAAAQ==",
+      "expectedLength": 25
+    },
+    {
+      "name": "grey-ramp-256x32",
+      "width": 256,
+      "height": 32,
+      "expectedBase64": "HxAAIAAgAAAAGiiR+/8fB2hgAANc0qPyo/Kj8kNfHgAHei0O",
+      "expectedLength": 36
+    },
+    {
+      "name": "checker-384x1200",
+      "width": 384,
+      "height": 1200,
+      "expectedBase64": "HxAAMASwAAABjyiR7c4xEQAACAAh+5fWGAzvUYDZeRAPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8TxQBwPxPFAHA/E8UAcD8QdhYUWEQ==",
+      "expectedLength": 409
+    },
+    {
+      "name": "threshold-edge-64x8",
+      "width": 64,
+      "height": 8,
+      "expectedBase64": "HxAACAAIAAAAESiRu5277TYI3SaTBgBewyoh",
+      "expectedLength": 27
+    },
+    {
+      "name": "solid-black-48x48",
+      "width": 48,
+      "height": 48,
+      "expectedBase64": "HxAABgAwAAAADSiR+/9/FOADAPf/HvA=",
+      "expectedLength": 23
+    },
+    {
+      "name": "solid-white-48x48",
+      "width": 48,
+      "height": 48,
+      "expectedBase64": "HxAABgAwAAAADSiRY2AYBfgAAAEgAAE=",
+      "expectedLength": 23
+    }
+  ]
+}
