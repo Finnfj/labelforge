@@ -28,3 +28,7 @@ dist-ssr
 
 # Bluetooth HCI snoop captures (large, and contain unrelated device traffic)
 captures/
+
+# Vitest browser-mode failure artifacts
+.vitest-attachments/
+__screenshots__/
