@@ -4,7 +4,7 @@ import * as cmd from '../printer/protocol/commands'
 import { PaperType } from '../printer/protocol/constants'
 import { densityPatch, rulerStrip } from '../printer/diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS } from '../printer/types'
-import { toHex } from '../printer/protocol/responses'
+import { decodeText, toHex } from '../printer/protocol/responses'
 import type { PrinterConnection, WireEntry } from './usePrinter'
 
 /** Densities to walk when finding a good darkness. One label each. */
@@ -19,6 +19,7 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
   const [wrapInJob, setWrapInJob] = useState(true)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  const [replies, setReplies] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
   const connected = connection.capabilities != null
@@ -62,6 +63,25 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
       await driver.sendCommand(cmd.stopPrintJob(), 'stopPrintJob')
     })
 
+  /**
+   * Send a read-only command and show whatever comes back.
+   *
+   * This exists because several `1f`-prefixed commands are inert on P50S
+   * firmware V2.0.00 while the `10 ff` family answers fine, and guessing further
+   * at opcodes was not converging. Seeing which queries reply, and with what,
+   * maps out what the firmware actually implements.
+   */
+  const probe = (label: string, bytes: Uint8Array) =>
+    run(label, async () => {
+      const reply = await connection.driver.query(bytes, label)
+      setReplies((current) => ({
+        ...current,
+        [label]: reply
+          ? `${toHex(reply)}${decodeText(reply) ? `   “${decodeText(reply)}”` : ''}`
+          : 'no reply',
+      }))
+    })
+
   const parsedRaw = useMemo(() => parseHex(rawHex), [rawHex])
 
   if (!open) {
@@ -87,6 +107,40 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
       </div>
 
       {!connected && <p className="hint">Connect a printer to use these.</p>}
+
+      <h3 className="subhead">Read-only probes</h3>
+      <div className="row">
+        {(
+          [
+            ['Paper type', cmd.getPaperType()],
+            ['Density', cmd.getDensity()],
+            ['Speed', cmd.getSpeed()],
+            ['Status', cmd.printerStatus()],
+            ['Temperature', cmd.getSensor(cmd.Sensor.Temperature)],
+            ['Voltage', cmd.getSensor(cmd.Sensor.Voltage)],
+            ['Gap sensor', cmd.getSensor(cmd.Sensor.Opto)],
+            ['Shutdown time', cmd.getShutdownMinutes()],
+          ] as Array<[string, Uint8Array]>
+        ).map(([label, bytes]) => (
+          <button key={label} disabled={!connected || busy} onClick={() => probe(label, bytes)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {Object.keys(replies).length > 0 && (
+        <pre className="log" style={{ maxHeight: '9rem' }}>
+          {Object.entries(replies)
+            .map(([label, value]) => `${label.padEnd(16)} ${value}`)
+            .join('\n')}
+        </pre>
+      )}
+      <p className="hint">
+        All of these only read. They are here to find out what the firmware actually
+        implements: on a P50S the <code>10 ff</code> queries answer, while several
+        <code>1f</code> commands are silent. A reply from &ldquo;Density&rdquo; would also
+        confirm that setting density takes effect at all, and &ldquo;Gap sensor&rdquo; is the
+        raw material for calibrating label detection.
+      </p>
 
       <h3 className="subhead">Paper and calibration</h3>
       <div className="row">
@@ -135,12 +189,12 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         />
         <span>Wrap maintenance commands in a print job</span>
       </label>
-      <p className="hint">
-        &ldquo;Learn paper&rdquo; makes the printer measure its own label gap, and is the
-        first thing to try if prints land across the gap rather than on the label. These four
-        commands do nothing at all when sent bare on a P50S, so by default they are bracketed
-        by start/stop-print-job — the only context in which any command has been seen to take
-        effect. Untick the box to send them raw and compare.
+      <p className="warn">
+        On a P50S (firmware V2.0.00) <strong>none of these four has any observed
+        effect</strong>, bare or wrapped in a print job — the printer acknowledges the write
+        and does nothing. They are kept because they come from the vendor SDK and may work on
+        other models in the family, but do not rely on them. Printing itself does not need
+        them. The job wrapper is left as a toggle so the assumption can be re-tested.
       </p>
 
       <h3 className="subhead">Head width</h3>

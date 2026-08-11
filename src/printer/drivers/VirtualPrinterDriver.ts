@@ -184,6 +184,13 @@ export class VirtualPrinterDriver implements PrinterDriver {
     this.#emitter.emit('wire', { dir: 'out', bytes, at: Date.now(), note })
   }
 
+  async query(bytes: Uint8Array, note?: string): Promise<Uint8Array | null> {
+    await this.sendCommand(bytes, note)
+    // A virtual printer has nothing to report; the point of this path is the
+    // real one.
+    return null
+  }
+
   async disconnect(): Promise<void> {
     this.#capabilities = null
     this.#setState('disconnected')

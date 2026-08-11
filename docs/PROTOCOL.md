@@ -73,12 +73,23 @@ in dots, `0x11` backward in mm.
 
 ### Maintenance and status
 
-**Commands appear to act only inside a print job.** On a P50S, `1f 40`
-(self test), `1f 30 60` (learn paper) and `1f 12 20 00` (locate gap) each did
-nothing whatsoever when sent bare, and `1f 11 50` (feed) did nothing bare while
-working reliably inside a print. Every command observed to take effect was
-bracketed by `1f c0 01 00` … `1f c0 01 01`. Wrap maintenance commands
-accordingly.
+**Several of these are inert on a P50S (firmware V2.0.00).** `1f 40` (self test),
+`1f 30 60` (learn paper), `1f 12 20 00` (locate gap) and `1f 11 50` (feed) each
+produced no observable effect — the printer accepts the write, grants a credit,
+and does nothing. Wrapping them in `1f c0 01 00` … `1f c0 01 01` makes no
+difference; that was tried and refuted.
+
+They are kept in the command table because they come from the vendor SDK and may
+be implemented on other models in the family, but nothing should depend on them.
+**Printing does not need any of them.**
+
+A caution about how this was nearly mis-concluded: `1f 11 50` seemed to "work
+inside a print", but printing a raster advances the paper by itself, so the feed
+could not be attributed to the command. Only commands whose effect is
+distinguishable from the raster print should be treated as confirmed.
+
+Confirmed working, by contrast: `1f c0` (job control), `1f 10` (raster) and the
+`10 ff` information queries.
 
 | Purpose | Bytes |
 | --- | --- |

@@ -100,6 +100,14 @@ export interface PrinterDriver {
    * firmware they are the difference between debugging and guessing.
    */
   sendCommand(bytes: Uint8Array, note?: string): Promise<void>
+  /**
+   * Send a command and return the reply, or null if none arrives.
+   *
+   * There is no request id in this protocol — replies are unsolicited
+   * notifications — so this simply takes the next frame. That is only sound for
+   * one query at a time, which is what the diagnostics panel does.
+   */
+  query(bytes: Uint8Array, note?: string): Promise<Uint8Array | null>
   disconnect(): Promise<void>
 
   on<E extends keyof PrinterEvents>(
