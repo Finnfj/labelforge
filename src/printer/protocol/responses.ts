@@ -44,29 +44,59 @@ export function decodeBattery(bytes: Uint8Array): number | null {
   return Math.max(0, Math.min(100, Math.round(percent)))
 }
 
+export interface StatusFlags {
+  printing: boolean
+  coverOpen: boolean
+  outOfPaper: boolean
+  lowBattery: boolean
+  overheated: boolean
+  /** The raw byte, so an unrecognised bit is still visible in diagnostics. */
+  raw: number
+}
+
 /**
- * Fault flags from a status reply.
+ * Decode the status reply to `10 FF 40`.
  *
- * A decompile of the vendor Android app documents status notifications as
- * `[0xFF, code]`, which is the mapping used here.
+ * The archived original SDK documents this as a **bit field**, not an enum:
+ * zero means healthy, and bits 0–4 are printing, cover open, out of paper, low
+ * battery and head overheating respectively.
+ *
+ * An earlier version of this file guessed at `[0xFF, code]` from a third-party
+ * decompile, and paired it with the tidied facade's `1F 20 00` — a command that
+ * does not exist in the vendor SDK at all and is silent on real hardware. Both
+ * were wrong.
  */
-export function decodeFault(bytes: Uint8Array): PrinterFault {
-  if (bytes.length < 2) return 'unknown'
-  if (bytes[0] !== 0xff) return 'unknown'
-  switch (bytes[1]) {
-    case 0x00:
-      return 'none'
-    case 0x01:
-      return 'no-paper'
-    case 0x02:
-      return 'cover-open'
-    case 0x03:
-      return 'overheat'
-    case 0x04:
-      return 'low-battery'
-    default:
-      return 'unknown'
+export function decodeStatusFlags(bytes: Uint8Array): StatusFlags | null {
+  if (bytes.length === 0) return null
+  // Replies observed so far put the payload last; take the final byte.
+  const raw = bytes[bytes.length - 1]
+  return {
+    printing: (raw & 0b0000_0001) !== 0,
+    coverOpen: (raw & 0b0000_0010) !== 0,
+    outOfPaper: (raw & 0b0000_0100) !== 0,
+    lowBattery: (raw & 0b0000_1000) !== 0,
+    overheated: (raw & 0b0001_0000) !== 0,
+    raw,
   }
+}
+
+/** The single most important fault, for a one-line summary. */
+export function faultFromFlags(flags: StatusFlags | null): PrinterFault {
+  if (!flags) return 'unknown'
+  if (flags.outOfPaper) return 'no-paper'
+  if (flags.coverOpen) return 'cover-open'
+  if (flags.overheated) return 'overheat'
+  if (flags.lowBattery) return 'low-battery'
+  return 'none'
+}
+
+/** Label height in dots from a `10 FF 50 F2` reply, big-endian. */
+export function decodeLabelHeight(bytes: Uint8Array): number | null {
+  if (bytes.length < 2) return null
+  const tail = bytes.subarray(bytes.length - 2)
+  const height = (tail[0] << 8) | tail[1]
+  // A plausible label is between 2 mm and 400 mm at 8 dots/mm.
+  return height >= 16 && height <= 3200 ? height : null
 }
 
 /** Acknowledgement bytes the firmware is known to use for "command accepted". */

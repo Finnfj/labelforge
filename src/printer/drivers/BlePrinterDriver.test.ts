@@ -255,3 +255,45 @@ describe('CreditWindow', () => {
     await expect(pending).rejects.toBeDefined()
   })
 })
+
+describe('gap calibration', () => {
+  it('locates three times before asking for the height, as the vendor SDK requires', async () => {
+    // The vendor's own comment: ask for the height before locating a few labels
+    // and the value comes back inaccurate.
+    const transport = new MockTransport({
+      autoRespond: (bytes) => {
+        const key = hex(bytes)
+        if (key === '1d 0c') return Uint8Array.of(0x4f, 0x4b) // OK
+        if (key === '10 ff 50 f2') return Uint8Array.of(0x00, 0xf0) // 240 dots
+        return identityResponder()(bytes)
+      },
+    })
+    const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 50 })
+    await driver.connect()
+    transport.reset()
+
+    const passes: number[] = []
+    const result = await driver.calibrateLabelGap({ onPass: (pass) => passes.push(pass) })
+
+    const sent = transport.writes.map(hex)
+    expect(sent.filter((b) => b === '1d 0c')).toHaveLength(3)
+    expect(passes).toEqual([1, 2, 3])
+    // The height query must come after the last locate, not before.
+    expect(sent.lastIndexOf('1d 0c')).toBeLessThan(sent.indexOf('10 ff 50 f2'))
+    expect(result.labelHeightDots).toBe(240)
+  })
+
+  it('reports no height rather than a wrong one when the printer stays silent', async () => {
+    const transport = new MockTransport()
+    const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20 })
+    await driver.connect()
+    const result = await driver.calibrateLabelGap({ passes: 2 })
+    expect(result.labelHeightDots).toBeNull()
+    expect(result.passes).toEqual([null, null])
+  })
+
+  it('refuses to calibrate while disconnected', async () => {
+    const driver = new BlePrinterDriver(new MockTransport())
+    await expect(driver.calibrateLabelGap()).rejects.toThrow(/not connected/i)
+  })
+})

@@ -81,6 +81,74 @@ export function setShutdownMinutes(minutes: number): Uint8Array {
 }
 export const getShutdownMinutes = () => cmd(0x10, 0xff, 0x13)
 
+// ==========================================================================
+// Commands recovered from the vendor SDK's *archived original*
+// (lib/archive/original_interface_chinese.js), which the published, tidied-up
+// facade either omits or contradicts.
+//
+// This matters because the tidied version turned out to be unreliable. Its
+// `1F`-prefixed getters — `1F 80 00`, `1F 70 00`, `1F 60 00`, `1F 20 00`,
+// `1F 30 xx` — do not exist anywhere in the original, and every one of them is
+// silent on a real P50S. The `10 FF` family below is the one the vendor actually
+// uses, and the members of it we have tried do answer.
+//
+// Byte sequences here are transcribed from the original's DataView writes.
+// ==========================================================================
+
+/**
+ * Locate the next label (ESC/POS `GS FF`, a form feed).
+ *
+ * This is the gap-alignment primitive. The original SDK's own guidance is to
+ * issue it about three times, waiting for an `OK` after each, before trusting
+ * {@link getLabelHeight} — otherwise the height comes back inaccurate.
+ *
+ * Not to be confused with the tidied facade's `printerLocationAuto`, which
+ * claims a bare `0C`; the original sends `1D 0C`.
+ */
+export const locateLabel = () => cmd(0x1d, 0x0c)
+
+/** Feed n dot lines (ESC/POS `ESC J`). 8 lines is 1 mm at 203 dpi. */
+export function feedDotLines(lines: number): Uint8Array {
+  return cmd(0x1b, 0x4a, Math.max(0, Math.min(255, Math.round(lines))))
+}
+
+/** Ask the printer to learn the label gap. */
+export const learnLabelGap = () => cmd(0x10, 0xff, 0x03)
+
+/**
+ * Measured label height. Only meaningful after locating a few labels first.
+ *
+ * Same `10 FF 50` family as the battery query, which does answer on a P50S.
+ */
+export const getLabelHeight = () => cmd(0x10, 0xff, 0x50, 0xf2)
+
+/** Printer status as a bit field. See {@link decodeStatusFlags}. */
+export const getStatusFlags = () => cmd(0x10, 0xff, 0x40)
+
+/** Undocumented aggregate information query. */
+export const getPrinterInfo = () => cmd(0x10, 0xff, 0x70)
+
+/** Bluetooth advertised name. The tidied facade uses this for the MAC by mistake. */
+export const getBluetoothName = () => cmd(0x10, 0xff, 0x30, 0x11)
+
+/** Bluetooth MAC — `30 12`, not the `30 11` the tidied facade sends. */
+export const getBluetoothMac = () => cmd(0x10, 0xff, 0x30, 0x12)
+
+/** Bluetooth module firmware version. */
+export const getBluetoothVersion = () => cmd(0x10, 0xff, 0x30, 0x10)
+
+/**
+ * Density in the legacy dialect.
+ *
+ * The original writes `10 FF 10 00 <level>`; the tidied facade sends
+ * `1F 70 01 <level>` instead. Which the P50S honours is unknown — nothing reads
+ * density back — so both are offered in diagnostics rather than guessed at.
+ */
+export function setDensityLegacy(level: number): Uint8Array {
+  const safe = Math.max(MIN_DENSITY, Math.min(MAX_DENSITY, Math.round(level)))
+  return cmd(0x10, 0xff, 0x10, 0x00, safe)
+}
+
 /**
  * Destructive commands. Deliberately grouped and named so they cannot be reached
  * by accident — these must never be wired to ordinary UI, only to the diagnostics

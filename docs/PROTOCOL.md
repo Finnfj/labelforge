@@ -71,6 +71,39 @@ in dots, `0x11` backward in mm.
 | Set speed | `1F 60 01 <0 low \| 1 med \| 2 high>` |
 | Get speed | `1F 60 00` |
 
+### Commands from the SDK's archived original — prefer these
+
+The published SDK ships a tidied-up facade **and** the original it was derived
+from, in `lib/archive/original_interface_chinese.js`. Where they disagree, trust
+the original: several of the facade's commands appear nowhere in the vendor's own
+code and are silent on real hardware.
+
+| Purpose | Original | Tidied facade | Notes |
+| --- | --- | --- | --- |
+| Locate next label | `1D 0C` | `0C` / `1F 12 <m> 00` | ESC/POS `GS FF`. The gap-alignment primitive. |
+| Feed n dot lines | `1B 4A <n>` | *absent* | ESC/POS `ESC J`. 8 lines = 1 mm. |
+| Learn label gap | `10 FF 03` | `1F 30 60` | |
+| Label height | `10 FF 50 F2` | *absent* | Same family as battery, which answers. |
+| Status (bit field) | `10 FF 40` | `1F 20 00` | See below. |
+| Printer info | `10 FF 70` | *absent* | |
+| Bluetooth name | `10 FF 30 11` | used as *MAC* | |
+| Bluetooth MAC | `10 FF 30 12` | *absent* | |
+| BT module version | `10 FF 30 10` | *absent* | |
+| Density | `10 FF 10 00 <n>` | `1F 70 01 <n>` | Which the P50S honours is unknown. |
+| Set BT type | `1F B2 11` | `1F B2 00` | The facade's value works in practice. |
+| Job start / stop | `10 FF FE 01` / `10 FF FE 45` | `1F C0 01 00` / `01 01` | **The facade's is correct here** — printing works with `1F C0`. |
+
+**Status is a bit field, not an enum.** Zero means healthy; bit 0 printing,
+bit 1 cover open, bit 2 out of paper, bit 3 low battery, bit 4 head overheating.
+
+**Gap alignment procedure**, from the original's own comment on `getLabelHeight`:
+issue `1D 0C` about three times, waiting for an `OK` after each, and only then
+read `10 FF 50 F2`. Asking earlier returns an inaccurate height.
+
+**`setPaperType` takes two arguments** in the original — `1F 80 <model> <type>`,
+where model `0x01` makes the printer reply `OK`/`ER` and `0x02` is silent. The
+facade hardcodes `0x01`, which is why an `OK` shows up during a print.
+
 ### Maintenance and status
 
 **Several of these are inert on a P50S (firmware V2.0.00).** `1f 40` (self test),
@@ -159,10 +192,13 @@ a query takes the next frame.
 | battery `10 FF 50 F1` | `00 64` | `0x64` = 100 (percent) |
 | print complete | `4f 4b` | ASCII `OK` |
 
-**Silent queries.** Model `10 FF 20 F0`, MAC `10 FF 30 11` and status `1F 20 00`
-produced no reply at all on this unit — only the usual credit frames. The model
-is recoverable from the advertised BLE name (`P50S_nnnn_BLE`) instead; there is
-currently no known way to read the MAC or a fault code.
+**Silent queries.** Model `10 FF 20 F0` and `10 FF 30 11` produced no reply on
+this unit, and neither did any of the tidied facade's `1F` getters — the latter
+because those commands do not exist in the vendor SDK at all. The model is
+recoverable from the advertised BLE name (`P50S_nnnn_BLE`) instead.
+
+`10 FF 30 11` is the Bluetooth *name* in the original, not the MAC; the MAC is
+`10 FF 30 12`, untested. Status via the correct `10 FF 40` is likewise untested.
 
 ## Print sequence
 

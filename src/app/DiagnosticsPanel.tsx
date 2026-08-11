@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react'
-import { dotsToMm } from '../model/units'
+import { DOTS_PER_MM, dotsToMm } from '../model/units'
 import * as cmd from '../printer/protocol/commands'
 import { PaperType } from '../printer/protocol/constants'
 import { densityPatch, edgeFrame, rulerStrip } from '../printer/diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS } from '../printer/types'
 import { decodeText, toHex } from '../printer/protocol/responses'
+import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import type { PrinterConnection, WireEntry } from './usePrinter'
 
 /** Densities to walk when finding a good darkness. One label each. */
@@ -111,14 +112,14 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
       <div className="row">
         {(
           [
-            ['Paper type', cmd.getPaperType()],
-            ['Density', cmd.getDensity()],
-            ['Speed', cmd.getSpeed()],
-            ['Status', cmd.printerStatus()],
-            ['Temperature', cmd.getSensor(cmd.Sensor.Temperature)],
-            ['Voltage', cmd.getSensor(cmd.Sensor.Voltage)],
-            ['Gap sensor', cmd.getSensor(cmd.Sensor.Opto)],
+            ['Status flags', cmd.getStatusFlags()],
+            ['Label height', cmd.getLabelHeight()],
+            ['Printer info', cmd.getPrinterInfo()],
+            ['Bluetooth name', cmd.getBluetoothName()],
+            ['MAC', cmd.getBluetoothMac()],
+            ['BT version', cmd.getBluetoothVersion()],
             ['Shutdown time', cmd.getShutdownMinutes()],
+            ['Model', cmd.getPrinterModel()],
           ] as Array<[string, Uint8Array]>
         ).map(([label, bytes]) => (
           <button key={label} disabled={!connected || busy} onClick={() => probe(label, bytes)}>
@@ -134,14 +135,80 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         </pre>
       )}
       <p className="hint">
-        All of these only read. They are here to find out what the firmware actually
-        implements: on a P50S the <code>10 ff</code> queries answer, while several
-        <code>1f</code> commands are silent. A reply from &ldquo;Density&rdquo; would also
-        confirm that setting density takes effect at all, and &ldquo;Gap sensor&rdquo; is the
-        raw material for calibrating label detection.
+        All of these only read, and all are from the vendor SDK&rsquo;s{' '}
+        <em>archived original</em>. The tidied-up version of that SDK invented a set of{' '}
+        <code>1f</code> getters that appear nowhere in the vendor&rsquo;s own code — those
+        were what this panel asked for previously, which is why every one came back empty.
+        The <code>10 ff</code> family below is what the vendor actually uses, and the members
+        already tried do answer.
       </p>
 
-      <h3 className="subhead">Paper and calibration</h3>
+      <h3 className="subhead">Label gap</h3>
+      <div className="row">
+        <button
+          className="primary"
+          disabled={!connected || busy}
+          onClick={() =>
+            run('Calibrate label gap', async () => {
+              const driver = connection.driver
+              if (!(driver instanceof BlePrinterDriver)) {
+                throw new Error('Calibration needs a real printer, not the virtual one.')
+              }
+              const result = await driver.calibrateLabelGap({
+                passes: 3,
+                onPass: (pass, reply) =>
+                  setReplies((current) => ({
+                    ...current,
+                    [`Locate pass ${pass}`]: reply ? toHex(reply) : 'no reply',
+                  })),
+              })
+              setReplies((current) => ({
+                ...current,
+                'Label height': result.labelHeightDots
+                  ? `${result.labelHeightDots} dots = ${dotsToMm(result.labelHeightDots)} mm`
+                  : 'not reported',
+              }))
+            })
+          }
+        >
+          Calibrate label gap
+        </button>
+        <button
+          disabled={!connected || busy}
+          onClick={() => send('Locate label', cmd.locateLabel())}
+        >
+          Locate one label
+        </button>
+        <button
+          disabled={!connected || busy}
+          onClick={() => send('Learn label gap', cmd.learnLabelGap())}
+        >
+          Learn gap
+        </button>
+        <button
+          disabled={!connected || busy}
+          onClick={() => send('Feed 1 mm', cmd.feedDotLines(DOTS_PER_MM))}
+        >
+          Feed 1 mm
+        </button>
+        <button
+          disabled={!connected || busy}
+          onClick={() => send('Feed 5 mm', cmd.feedDotLines(DOTS_PER_MM * 5))}
+        >
+          Feed 5 mm
+        </button>
+      </div>
+      <p className="hint">
+        <strong>Calibrate label gap</strong> runs the vendor SDK&rsquo;s own documented
+        sequence: locate the next label three times, waiting for an acknowledgement each
+        time, then read the measured height. Its comment is explicit that asking for the
+        height any earlier returns a wrong answer. Results appear in the panel above.
+        &ldquo;Locate one label&rdquo; is <code>1d 0c</code>, an ESC/POS form feed, and is
+        the primitive the rest is built on; the feed buttons move a known distance instead,
+        for when the gap sensor will not cooperate.
+      </p>
+
+      <h3 className="subhead">Superseded commands</h3>
       <div className="row">
         <button
           disabled={!connected || busy}

@@ -3,7 +3,13 @@ import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import * as cmd from '../protocol/commands'
 import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
 import { CreditWindow } from '../protocol/CreditWindow'
-import { decodeBattery, decodeFault, decodeText } from '../protocol/responses'
+import {
+  decodeBattery,
+  decodeLabelHeight,
+  decodeStatusFlags,
+  decodeText,
+  faultFromFlags,
+} from '../protocol/responses'
 import { encodeImage } from '../protocol/encodeImage'
 import type {
   PrintJob,
@@ -150,15 +156,44 @@ export class BlePrinterDriver implements PrinterDriver {
 
   async getStatus(): Promise<PrinterStatus> {
     const battery = await this.#query(cmd.getPrinterBattery(), decodeBattery)
-    const statusBytes = await this.#request(cmd.printerStatus())
+    // `10 FF 40`, from the vendor SDK's archived original. The tidied facade's
+    // `1F 20 00` does not exist in the vendor code and never answers.
+    const flags = await this.#query(cmd.getStatusFlags(), decodeStatusFlags)
+    const labelHeight = await this.#query(cmd.getLabelHeight(), decodeLabelHeight)
 
     return {
       online: this.#state !== 'disconnected',
       batteryPercent: battery,
       paperType: null,
       density: null,
-      labelHeightDots: null,
-      fault: statusBytes ? decodeFault(statusBytes) : 'unknown',
+      labelHeightDots: labelHeight,
+      fault: faultFromFlags(flags),
+    }
+  }
+
+  /**
+   * Locate the label gap, then read back the measured label height.
+   *
+   * The sequence is the vendor SDK's own: issue the locate command several times,
+   * waiting for an acknowledgement each time, and only then ask for the height —
+   * its comment is explicit that asking earlier returns an inaccurate value.
+   */
+  async calibrateLabelGap(
+    options: { passes?: number; onPass?: (pass: number, reply: Uint8Array | null) => void } = {},
+  ): Promise<{ labelHeightDots: number | null; passes: Array<Uint8Array | null> }> {
+    if (this.#state === 'disconnected') throw new Error('Not connected to a printer.')
+    const passes: Array<Uint8Array | null> = []
+    const total = options.passes ?? 3
+
+    for (let pass = 1; pass <= total; pass++) {
+      const reply = await this.#request(cmd.locateLabel())
+      passes.push(reply)
+      options.onPass?.(pass, reply)
+    }
+
+    return {
+      labelHeightDots: await this.#query(cmd.getLabelHeight(), decodeLabelHeight),
+      passes,
     }
   }
 
