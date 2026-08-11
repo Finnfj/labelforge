@@ -36,7 +36,7 @@ export function PrintPanel({
   const [clipped, setClipped] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
-  const { headWidthDots: headWidth, align, offsetDots } = connection.geometry
+  const { headWidthDots: headWidth, align, offsetDots, feedAfterDots } = connection.geometry
 
   useEffect(() => {
     const offProgress = printer.on('progress', setProgress)
@@ -60,6 +60,7 @@ export function PrintPanel({
             offsetDots,
             resolveAsset: resolveAssetUrl,
             clipToHead: true,
+            feedAfterDots,
           })
           if (cancelled) return
           setBitmap(result.bitmap)
@@ -82,7 +83,7 @@ export function PrintPanel({
       cancelled = true
       clearTimeout(id)
     }
-  }, [doc, headWidth, align, offsetDots])
+  }, [doc, headWidth, align, offsetDots, feedAfterDots])
 
   const send = useCallback(
     async (target: PackedBitmap) => {

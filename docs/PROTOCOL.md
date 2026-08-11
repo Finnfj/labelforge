@@ -225,9 +225,25 @@ then ignored. The documented three-locates-then-read-height calibration therefor
 cannot run: the locates do nothing and the height query is unimplemented.
 
 What does move paper is a **print job**. So to feed a known distance, print an
-all-white raster of that height: the head advances the rows, fires no dots, and
-the job's own gap handling still applies. That is the only reliable feed
-primitive on this printer, and it is what the app uses.
+all-white raster of that height: the head advances the rows and fires no dots.
+Confirmed working on hardware; every alternative was confirmed not to.
+
+### Keeping successive labels aligned
+
+The printer stops dead at the end of the raster. The vendor app instead advances
+into the gap — roughly to its middle — which is what leaves the *next* label
+correctly positioned.
+
+Since a label pitch is height + gap, printing only the height leaves each label
+one gap further back than the last: the second print is slightly out and the
+third twice as far. It is a cumulative open-loop error, not a one-off
+misalignment, and no closed-loop option exists here because gap detection is
+unimplemented.
+
+The fix is to append `gap` blank rows to every raster, so each print advances a
+full pitch. The gap has to be measured for the stock in use — the app exposes it
+as a setting with a millimetre nudge, and it converges in one correction: if
+successive labels creep backwards by *n* mm, add *n* mm.
 
 ## Print sequence
 

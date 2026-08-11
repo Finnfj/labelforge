@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { toPreviewImage } from './preview'
 import { headOriginDots, padToHead } from './padToHead'
+import { appendBlankRows, getDot } from '../model/bitmap'
 import { pack1bpp } from './pack1bpp'
 
 /** A label-width bitmap with ink in its first and last column. */
@@ -120,5 +121,36 @@ describe('toPreviewImage windowing', () => {
     expect(view.width).toBe(64)
     expect(inked(view, 0)).toBe(true)
     expect(inked(view, 63)).toBe(true)
+  })
+})
+
+describe('appendBlankRows', () => {
+  it('adds exactly the requested rows and leaves them blank', () => {
+    const bm = labelWithEdges(LABEL, 10)
+    const fed = appendBlankRows(bm, 16)
+    expect(fed.heightDots).toBe(26)
+    expect(fed.rowBytes).toBe(bm.rowBytes)
+    // Original content is untouched...
+    expect(getDot(fed, 0, 0)).toBe(true)
+    expect(getDot(fed, 0, 9)).toBe(true)
+    // ...and everything below it is blank, so the feed prints nothing.
+    for (let y = 10; y < 26; y++) {
+      for (let x = 0; x < LABEL; x++) expect(getDot(fed, x, y)).toBe(false)
+    }
+  })
+
+  it('returns the same bitmap when there is nothing to feed', () => {
+    const bm = labelWithEdges(64, 4)
+    expect(appendBlankRows(bm, 0)).toBe(bm)
+    expect(appendBlankRows(bm, -5)).toBe(bm)
+  })
+
+  it('makes each print advance a full label pitch', () => {
+    // 30 mm label + 2 mm gap = 32 mm of travel per print. Without the feed the
+    // printer falls 2 mm behind every label, which is the drift this fixes.
+    const labelDots = 30 * 8
+    const gapDots = 2 * 8
+    const bm = labelWithEdges(LABEL, labelDots)
+    expect(appendBlankRows(bm, gapDots).heightDots).toBe(32 * 8)
   })
 })

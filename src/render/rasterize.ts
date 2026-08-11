@@ -1,7 +1,7 @@
 import { StaticCanvas, type FabricObject } from 'fabric'
 import { elementsInDrawOrder, isToneElement, type LabelDoc } from '../model/labelDoc'
 import { mmToDots } from '../model/units'
-import type { PackedBitmap } from '../model/bitmap'
+import { appendBlankRows, type PackedBitmap } from '../model/bitmap'
 import { toFabricObject, type AssetResolver } from './toFabric'
 import { toAlphaMask, toLuminance } from './luminance'
 import { threshold } from './threshold'
@@ -23,6 +23,13 @@ export interface RasterizeOptions {
   supersample?: number
   /** Crop rather than fail when the label is wider than the head. */
   clipToHead?: boolean
+  /**
+   * Blank rows appended below the label, to advance into the inter-label gap.
+   *
+   * Applied here rather than at send time so the preview shows the whole raster
+   * the printer receives, feed strip included.
+   */
+  feedAfterDots?: number
 }
 
 /**
@@ -107,6 +114,8 @@ export async function rasterize(
       { clip: options.clipToHead },
     )
   }
+
+  bitmap = appendBlankRows(bitmap, options.feedAfterDots ?? 0)
 
   return { bitmap, labelWidthDots: widthDots, labelHeightDots: heightDots, clipped }
 }

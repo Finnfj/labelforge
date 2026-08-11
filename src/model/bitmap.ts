@@ -32,6 +32,28 @@ export function getDot(bm: PackedBitmap, x: number, y: number): boolean {
   return (bm.data[y * bm.rowBytes + (x >> 3)] & (128 >> (x & 7))) !== 0
 }
 
+/**
+ * Add blank rows below the image.
+ *
+ * This is how the inter-label gap gets fed. The printer stops exactly at the end
+ * of the raster and no motion command works on it, so the only way to advance
+ * into the gap is to make the raster taller — the head walks the extra rows and
+ * fires nothing.
+ *
+ * It has to happen for every print, not once: a label pitch is height + gap, so
+ * printing only the height leaves each label one gap further behind than the
+ * last. That is a cumulative error, which is why the second print is slightly
+ * off and the third is twice as bad.
+ */
+export function appendBlankRows(bm: PackedBitmap, rows: number): PackedBitmap {
+  const extra = Math.max(0, Math.round(rows))
+  if (extra === 0) return bm
+  const heightDots = bm.heightDots + extra
+  const data = new Uint8Array(bm.rowBytes * heightDots)
+  data.set(bm.data, 0)
+  return { widthDots: bm.widthDots, heightDots, rowBytes: bm.rowBytes, data }
+}
+
 /** Set or clear the dot at (x, y). Out-of-bounds writes are ignored. */
 export function setDot(bm: PackedBitmap, x: number, y: number, black: boolean): void {
   if (x < 0 || y < 0 || x >= bm.widthDots || y >= bm.heightDots) return

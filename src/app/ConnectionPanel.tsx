@@ -184,6 +184,59 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
         width is right. Then draw a rectangle on the label&rsquo;s exact bounds, print it, and
         nudge the offset by however many millimetres it sits out. Saved for next time.
       </p>
+
+      <h3 className="subhead">Inter-label gap</h3>
+      <div className="row">
+        <label className="field">
+          <span style={{ minWidth: '5rem' }}>Feed after</span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={connection.geometry.feedAfterDots}
+            onChange={(e) =>
+              connection.setGeometry({
+                feedAfterDots: Math.max(0, Number(e.target.value) || 0),
+              })
+            }
+          />
+          <em>dots</em>
+        </label>
+        <button
+          onClick={() =>
+            connection.setGeometry({
+              feedAfterDots: Math.max(0, connection.geometry.feedAfterDots - DOTS_PER_MM),
+            })
+          }
+        >
+          &minus;1 mm
+        </button>
+        <button
+          onClick={() =>
+            connection.setGeometry({
+              feedAfterDots: connection.geometry.feedAfterDots + DOTS_PER_MM,
+            })
+          }
+        >
+          +1 mm
+        </button>
+        <span className="hint">
+          {(connection.geometry.feedAfterDots / DOTS_PER_MM).toFixed(2)} mm of blank fed after
+          each label
+        </span>
+      </div>
+      <p className="hint">
+        A label pitch is its height <em>plus</em> the gap, so every print has to advance the
+        whole pitch or each label lands a little further back than the last — the second print
+        slightly out, the third twice as far. This printer ignores every feed command, so the
+        gap is crossed by appending blank rows to the raster instead; you can see the strip at
+        the bottom of the preview.
+        <br />
+        <strong>To tune it:</strong> print the same label three times. If each one creeps{' '}
+        <em>backwards</em> by some amount, add that many millimetres here; if they creep
+        forwards, subtract. One correction should settle it. Set it to 0 for continuous tape,
+        which has no gap.
+      </p>
     </section>
   )
 }

@@ -26,6 +26,14 @@ export interface HeadGeometry {
   align: 'left' | 'center' | 'right'
   /** Fine adjustment in dots; 8 dots is 1 mm. May be negative. */
   offsetDots: number
+  /**
+   * Blank rows fed after each label, to cross the inter-label gap.
+   *
+   * A label pitch is height + gap. The printer stops at the end of the raster and
+   * every motion command is inert, so unless each print advances a full pitch the
+   * error accumulates: second label slightly off, third twice as far.
+   */
+  feedAfterDots: number
 }
 
 const GEOMETRY_KEY = 'labelforge.geometry.v1'
@@ -43,6 +51,10 @@ export const DEFAULT_GEOMETRY: HeadGeometry = {
   headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
   align: 'right',
   offsetDots: 0,
+  // 2 mm, a common die-cut gap. It has to be measured for the actual stock, but
+  // starting from a plausible value converges in one correction, whereas
+  // starting from zero looks like the drift bug this exists to fix.
+  feedAfterDots: 16,
 }
 
 /**
@@ -71,6 +83,10 @@ function loadGeometry(): HeadGeometry {
           ? parsed.align
           : 'left',
       offsetDots: Number.isFinite(parsed.offsetDots) ? Math.round(parsed.offsetDots!) : 0,
+      // Absent in settings saved before the gap feed existed.
+      feedAfterDots: Number.isFinite(parsed.feedAfterDots)
+        ? Math.max(0, Math.round(parsed.feedAfterDots!))
+        : DEFAULT_GEOMETRY.feedAfterDots,
     }
   } catch {
     return DEFAULT_GEOMETRY

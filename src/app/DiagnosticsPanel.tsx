@@ -179,24 +179,6 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         >
           Calibrate label gap
         </button>
-        <button
-          disabled={!connected || busy}
-          onClick={() => send('Locate label', cmd.locateLabel())}
-        >
-          Locate one label
-        </button>
-        <button
-          disabled={!connected || busy}
-          onClick={() => send('Learn label gap', cmd.learnLabelGap())}
-        >
-          Learn gap
-        </button>
-        <button
-          disabled={!connected || busy}
-          onClick={() => send('Feed dot lines', cmd.feedDotLines(DOTS_PER_MM * feedMm))}
-        >
-          Feed via ESC J
-        </button>
       </div>
 
       <div className="row" style={{ marginTop: '0.6rem' }}>
@@ -234,17 +216,14 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         sequence does, which is more than the calibration commands manage. Use it to step the
         paper until the gap sits where you want it, then read the millimetres off.
       </p>
-      <p className="hint">
-        <strong>Calibrate label gap</strong> runs the vendor SDK&rsquo;s own documented
-        sequence: locate the next label three times, waiting for an acknowledgement each
-        time, then read the measured height. Its comment is explicit that asking for the
-        height any earlier returns a wrong answer. Results appear in the panel above.
-        &ldquo;Locate one label&rdquo; is <code>1d 0c</code>, an ESC/POS form feed, and is
-        the primitive the rest is built on; the feed buttons move a known distance instead,
-        for when the gap sensor will not cooperate.
+      <p className="warn">
+        <strong>Calibrate label gap does not work on a P50S.</strong> It runs the vendor
+        SDK&rsquo;s own documented sequence — locate three times, then read the height — but
+        this firmware ignores the locate command and does not implement the height query, so
+        there is nothing to read. Kept only in case another model in the family answers.
       </p>
 
-      <h3 className="subhead">Superseded commands</h3>
+      <h3 className="subhead">Commands with no effect on a P50S</h3>
       <div className="row">
         <button
           disabled={!connected || busy}
@@ -291,12 +270,33 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         />
         <span>Wrap maintenance commands in a print job</span>
       </label>
+      <div className="row" style={{ marginTop: '0.5rem' }}>
+        <button
+          disabled={!connected || busy}
+          onClick={() => sendInJob('Locate label', cmd.locateLabel())}
+        >
+          Locate label
+        </button>
+        <button
+          disabled={!connected || busy}
+          onClick={() => sendInJob('Learn label gap', cmd.learnLabelGap())}
+        >
+          Learn gap
+        </button>
+        <button
+          disabled={!connected || busy}
+          onClick={() => sendInJob('Feed via ESC J', cmd.feedDotLines(DOTS_PER_MM * feedMm))}
+        >
+          Feed via ESC J
+        </button>
+      </div>
       <p className="warn">
-        On a P50S (firmware V2.0.00) <strong>none of these four has any observed
-        effect</strong>, bare or wrapped in a print job — the printer acknowledges the write
-        and does nothing. They are kept because they come from the vendor SDK and may work on
-        other models in the family, but do not rely on them. Printing itself does not need
-        them. The job wrapper is left as a toggle so the assumption can be re-tested.
+        Every command in this group has been tested against a P50S (V2.0.00) and{' '}
+        <strong>none of them does anything</strong> — bare or wrapped in a print job. The
+        printer acknowledges the write with a credit and ignores it. That includes the ESC/POS
+        feed, which is why the gap is crossed by printing blank instead. They are kept because
+        they come from the vendor SDK and may be implemented on other models, but nothing here
+        should be relied on, and printing needs none of it.
       </p>
 
       <h3 className="subhead">Head width</h3>
