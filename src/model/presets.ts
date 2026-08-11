@@ -38,10 +38,9 @@ export function findPreset(id: string): StockPreset | undefined {
 /**
  * Widest label the head can physically cover, in mm.
  *
- * Presets deliberately include 50 mm even though the assumed 384-dot head is
- * only 48 mm: the P50 is sold as a 50 mm printer, and which of the two is true
- * is exactly what the diagnostics ruler strip settles. Until then the editor
- * warns rather than silently clipping.
+ * With the measured 400-dot head this is 50 mm, so the 50 mm presets fit exactly
+ * rather than triggering the clip warning they used to under the vendor SDK's
+ * mistaken 384.
  */
 export function maxLabelWidthMm(headWidthDots = DEFAULT_HEAD_WIDTH_DOTS): number {
   return dotsToMm(headWidthDots)

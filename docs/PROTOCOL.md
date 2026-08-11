@@ -177,10 +177,16 @@ alignPaperEnd              (1F 11 50)
 
 ## Geometry
 
-203 dpi = **8 dots/mm** exactly. A 384-dot head is 48.0 mm, a 400-dot head 50.0 mm.
+203 dpi = **8 dots/mm** exactly.
 
-Head width is still **[unconfirmed]**. A P50S accepted and acknowledged a
-400-dot-wide raster (`1f 10 00 32 …`, 50 bytes per row) without complaint, which
-rules out a head narrower than that *only if* the printed strip actually reaches
-its right-hand edge — the firmware may equally be clipping silently. Measure the
-ruler strip; do not infer head width from a successful print.
+**Head width on a P50S is 400 dots = 50.0 mm — measured.** The vendor SDK
+hard-codes 384 (48 mm) and that is wrong for this model. The evidence: a label
+right-aligned against an assumed 384-dot head printed 16 dots too far left, and
+400 − 384 = 16 exactly. The printer is a genuine 50 mm device.
+
+Stock narrower than the head sits against the **right-hand** end on this unit, so
+a 40 mm label belongs at dots 80–399.
+
+None of this is queryable, so it stays per-printer configuration. The `edgeFrame`
+pattern is the check: it inks the outermost dots of the raster, so all four sides
+landing on the paper means head width, alignment and offset are all correct.

@@ -112,6 +112,33 @@ export function rulerStrip(widthDots: number): PackedBitmap {
   return bm
 }
 
+/**
+ * A frame drawn on the outermost dots of the raster.
+ *
+ * The definitive geometry check, and the one to reach for first. If both vertical
+ * lines appear on the paper with none of the frame lost, the raster maps exactly
+ * onto the printable area and head width, alignment and offset are all correct.
+ * If a side is missing the raster is wider than the paper; if there is a margin
+ * before a line, it is narrower or offset.
+ *
+ * It answers in one label what the ruler strip only narrows down, because it does
+ * not require reading a scale — you are just looking for four lines.
+ */
+export function edgeFrame(widthDots: number, heightDots = 80, thickness = 2): PackedBitmap {
+  const bm = createPackedBitmap(widthDots, heightDots)
+  fillRect(bm, 0, 0, thickness, heightDots)
+  fillRect(bm, widthDots - thickness, 0, thickness, heightDots)
+  fillRect(bm, 0, 0, widthDots, thickness)
+  fillRect(bm, 0, heightDots - thickness, widthDots, thickness)
+
+  // Inward-pointing corner ticks, so a frame clipped on one side is instantly
+  // distinguishable from one that simply printed faintly.
+  const tick = Math.min(24, Math.floor(widthDots / 6))
+  fillRect(bm, 0, heightDots / 2 - 1, tick, 2)
+  fillRect(bm, widthDots - tick, heightDots / 2 - 1, tick, 2)
+  return bm
+}
+
 /** Checkerboard — verifies bit order and polarity at a glance. */
 export function checkerboard(widthDots: number, heightDots: number, cell = 8): PackedBitmap {
   const bm = createPackedBitmap(widthDots, heightDots)

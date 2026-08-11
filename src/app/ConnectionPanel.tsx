@@ -121,7 +121,8 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
       <h3 className="subhead">Print head geometry</h3>
       <div className="row">
         <label className="field">
-          <span>Width</span>
+          {/* Not just "Width": the label size panel has one of those too, in mm. */}
+          <span style={{ minWidth: '5rem' }}>Head width</span>
           <input
             type="number"
             min={8}

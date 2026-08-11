@@ -37,11 +37,14 @@ export function dotsToPt(dots: number): number {
 }
 
 /**
- * Head width in dots, until measured on real hardware.
+ * Head width in dots.
  *
- * 384 dots = 48.0 mm, which is what the vendor SDK's example handler hard-codes.
- * The P50 is advertised as printing up to 50 mm, so this may well be 400. It is
- * deliberately a default rather than a constant: the diagnostics ruler strip
- * measures the real value and it is then stored per printer.
+ * 400 dots = 50.0 mm, measured on a P50S rather than assumed. The vendor SDK's
+ * example handler hard-codes 384 (48 mm), and following it produced a label
+ * right-aligned 16 dots — exactly 400 − 384 — too far left. The printer is a
+ * genuine 50 mm device and the SDK's figure is wrong for it.
+ *
+ * Still a default rather than a constant: it is stored per printer, because
+ * nothing in the protocol reports it and other models in the family differ.
  */
-export const DEFAULT_HEAD_WIDTH_DOTS = 384
+export const DEFAULT_HEAD_WIDTH_DOTS = 400

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkerboard, densityPatch, rulerStrip, testStrip } from './testPatterns'
+import { checkerboard, densityPatch, edgeFrame, rulerStrip, testStrip } from './testPatterns'
 import { getDot } from '../../model/bitmap'
 import { DOTS_PER_MM } from '../../model/units'
 
@@ -108,5 +108,29 @@ describe('other patterns', () => {
     const cells = 16 * 32
     expect(inked).toBeGreaterThan(cells * 0.3)
     expect(inked).toBeLessThan(cells * 0.7)
+  })
+})
+
+describe('edgeFrame', () => {
+  it('inks the outermost dots on all four sides', () => {
+    const bm = edgeFrame(400, 80)
+    expect(getDot(bm, 0, 40)).toBe(true)
+    expect(getDot(bm, 399, 40)).toBe(true)
+    expect(getDot(bm, 200, 0)).toBe(true)
+    expect(getDot(bm, 200, 79)).toBe(true)
+  })
+
+  it('leaves the middle empty, so a missing side is obvious', () => {
+    const bm = edgeFrame(400, 80)
+    expect(getDot(bm, 200, 20)).toBe(false)
+    expect(getDot(bm, 200, 60)).toBe(false)
+  })
+
+  it('never draws outside the raster', () => {
+    for (const width of [96, 320, 384, 400]) {
+      const bm = edgeFrame(width)
+      expect(bm.widthDots).toBe(width)
+      expect(getDot(bm, width - 1, 0)).toBe(true)
+    }
   })
 })

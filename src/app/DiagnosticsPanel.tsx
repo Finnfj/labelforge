@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { dotsToMm } from '../model/units'
 import * as cmd from '../printer/protocol/commands'
 import { PaperType } from '../printer/protocol/constants'
-import { densityPatch, rulerStrip } from '../printer/diagnostics/testPatterns'
+import { densityPatch, edgeFrame, rulerStrip } from '../printer/diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS } from '../printer/types'
 import { decodeText, toHex } from '../printer/protocol/responses'
 import type { PrinterConnection, WireEntry } from './usePrinter'
@@ -45,11 +45,10 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
   /**
    * Send a command inside a print job.
    *
-   * On a real P50S, self test, learn paper and locate did nothing at all when
-   * sent bare, while the very same motion command (`1f 11 50`) worked reliably
-   * inside a print. Every command observed to take effect was bracketed by
-   * `startPrintJob`/`stopPrintJob`, so the firmware appears to act only within a
-   * job. Wrapping is therefore the default; the toggle exists to re-test that.
+   * This was a theory — that these commands only act within a job — and it was
+   * tested and refuted: self test does nothing bare and nothing wrapped. The
+   * wrapping is kept behind a toggle only so the experiment can be repeated on
+   * other firmware, not because it is known to help.
    */
   const sendInJob = (label: string, bytes: Uint8Array) =>
     run(label, async () => {
@@ -199,6 +198,20 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
 
       <h3 className="subhead">Head width</h3>
       <div className="row">
+        <button
+          className="primary"
+          disabled={!connected || busy}
+          onClick={() =>
+            run('Edge frame', () =>
+              connection.driver.print({
+                bitmap: edgeFrame(headWidth),
+                settings: DEFAULT_PRINT_SETTINGS,
+              }),
+            )
+          }
+        >
+          Edge frame
+        </button>
         {HEAD_WIDTH_CANDIDATES.map((width) => (
           <button
             key={width}
@@ -217,10 +230,13 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         ))}
       </div>
       <p className="hint">
-        Print one and measure it. The long ticks are 10 mm apart, so {headWidth} dots should
-        span exactly {dotsToMm(headWidth)} mm. If the right-hand edge column is missing the
-        head is narrower than that; if the block at the left is clipped, the origin is offset.
-        Nothing reports head width, so measuring is the only way to know it.
+        <strong>Start with the edge frame.</strong> It draws on the outermost dots of a{' '}
+        {headWidth}-dot raster, so if all four sides land on the paper the geometry above is
+        right. A missing side means the raster is wider than the paper; a margin before a side
+        means it is narrower or offset — adjust the width, then the offset, and reprint.
+        The ruler strips are for measuring how far out it is: long ticks are 10 mm apart, so{' '}
+        {headWidth} dots should span exactly {dotsToMm(headWidth)} mm. Nothing reports any of
+        this, so printing is the only way to find out.
       </p>
 
       <h3 className="subhead">Density</h3>

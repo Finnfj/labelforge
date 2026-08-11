@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { VirtualPrinterDriver } from '../printer/drivers/VirtualPrinterDriver'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import { WebBluetoothTransport } from '../printer/transport/WebBluetoothTransport'
+import { DEFAULT_HEAD_WIDTH_DOTS } from '../model/units'
 import type {
   PrinterCapabilities,
   PrinterDriver,
@@ -30,21 +31,32 @@ export interface HeadGeometry {
 const GEOMETRY_KEY = 'labelforge.geometry.v1'
 
 /**
- * 384 dots (48 mm) is the vendor SDK's hardcoded width, and a P50S was observed
- * printing a 384-dot strip in full while a 400-dot one overflowed — so it is a
- * measured default rather than a guess, but still per-printer configuration.
+ * 400 dots (50 mm), measured rather than assumed — see DEFAULT_HEAD_WIDTH_DOTS.
+ *
+ * Right alignment is the default because on the P50S the stock sits against the
+ * right-hand end of the head, so a label narrower than 50 mm belongs there.
  */
 export const DEFAULT_GEOMETRY: HeadGeometry = {
-  headWidthDots: 384,
-  align: 'left',
+  headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
+  align: 'right',
   offsetDots: 0,
 }
+
+/**
+ * Bumped when a stored default would now be wrong.
+ *
+ * Head width moved from the vendor SDK's 384 to a measured 400, and anyone who
+ * had already connected has 384 saved. Silently keeping it would leave every
+ * label 2 mm off with no indication why, so the stored value is discarded once.
+ */
+const GEOMETRY_VERSION = 2
 
 function loadGeometry(): HeadGeometry {
   try {
     const raw = localStorage.getItem(GEOMETRY_KEY)
     if (!raw) return DEFAULT_GEOMETRY
-    const parsed = JSON.parse(raw) as Partial<HeadGeometry>
+    const parsed = JSON.parse(raw) as Partial<HeadGeometry> & { version?: number }
+    if (parsed.version !== GEOMETRY_VERSION) return DEFAULT_GEOMETRY
     return {
       headWidthDots:
         Number.isFinite(parsed.headWidthDots) && parsed.headWidthDots! > 0
@@ -104,7 +116,7 @@ export function usePrinter(): PrinterConnection {
     setGeometryState((current) => {
       const next = { ...current, ...patch }
       try {
-        localStorage.setItem(GEOMETRY_KEY, JSON.stringify(next))
+        localStorage.setItem(GEOMETRY_KEY, JSON.stringify({ ...next, version: GEOMETRY_VERSION }))
       } catch {
         // Private-mode storage refusal must not break printing.
       }
