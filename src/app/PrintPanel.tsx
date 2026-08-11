@@ -3,7 +3,7 @@ import type { LabelDoc } from '../model/labelDoc'
 import type { PackedBitmap } from '../model/bitmap'
 import { dotsToMm, mmToDots } from '../model/units'
 import { rasterize } from '../render/rasterize'
-import { LabelTooWideError } from '../render/padToHead'
+import { LabelTooWideError, headOriginDots } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
 import { MAX_DENSITY, MIN_DENSITY } from '../printer/protocol/constants'
@@ -115,6 +115,14 @@ export function PrintPanel({
 
   const printing = progress != null && progress.phase !== 'done'
   const connected = connection.capabilities != null
+
+  // Where the paper sits within the raster. Test patterns are built at head
+  // width and are not padded, so for those the label is the whole raster.
+  const rasterIsHeadWidth = (bitmap?.widthDots ?? 0) > labelWidthDots
+  const labelStart = rasterIsHeadWidth
+    ? headOriginDots(labelWidthDots, bitmap!.widthDots, align, offsetDots)
+    : 0
+  const labelSpan = rasterIsHeadWidth ? labelWidthDots : (bitmap?.widthDots ?? 0)
 
   return (
     <>
@@ -258,8 +266,10 @@ export function PrintPanel({
           bitmap={bitmap}
           mode={mode}
           zoom={zoom}
-          labelWidthDots={labelWidthDots}
-          viewWidthDots={showHeadArea ? bitmap?.widthDots : labelWidthDots}
+          labelStartDots={labelStart}
+          labelWidthDots={labelSpan}
+          viewOriginDots={showHeadArea ? 0 : labelStart}
+          viewWidthDots={showHeadArea ? bitmap?.widthDots : labelSpan}
         />
         <label className="field field--check" style={{ marginTop: '0.6rem' }}>
           <input

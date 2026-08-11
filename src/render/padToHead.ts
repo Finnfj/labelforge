@@ -18,6 +18,25 @@ export class LabelTooWideError extends Error {
  * fine-tuning offset are per-printer settings established with the diagnostics
  * ruler strip. Default is left, which is how gap stock is usually fed.
  */
+/**
+ * Where the label's left edge sits within the head-width raster.
+ *
+ * Exported because the preview needs the same answer: it has to crop to where
+ * the label actually is, not to the first N columns. Those were separate
+ * calculations once, and the preview showed a right-aligned label cut in half
+ * while the printed result was perfect.
+ */
+export function headOriginDots(
+  labelWidthDots: number,
+  headWidthDots: number,
+  align: HeadAlign = 'left',
+  offsetDots = 0,
+): number {
+  const slack = headWidthDots - labelWidthDots
+  const base = align === 'left' ? 0 : align === 'right' ? slack : slack >> 1
+  return base + offsetDots
+}
+
 export function padToHead(
   src: PackedBitmap,
   headWidthDots: number,
@@ -35,9 +54,7 @@ export function padToHead(
   }
   if (src.widthDots === headWidthDots && offsetDots === 0) return src
 
-  const slack = headWidthDots - src.widthDots
-  const base = align === 'left' ? 0 : align === 'right' ? slack : (slack >> 1)
-  const originX = base + offsetDots
+  const originX = headOriginDots(src.widthDots, headWidthDots, align, offsetDots)
 
   const out = createPackedBitmap(headWidthDots, src.heightDots)
   for (let y = 0; y < src.heightDots; y++) {

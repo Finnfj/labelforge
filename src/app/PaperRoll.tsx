@@ -7,14 +7,19 @@ export function PaperRoll({
   bitmap,
   mode,
   zoom,
+  labelStartDots,
   labelWidthDots,
+  viewOriginDots,
   viewWidthDots,
 }: {
   bitmap: PackedBitmap | null
   mode: PreviewMode
   zoom: ZoomSetting
+  /** Left edge of the paper within the raster. */
+  labelStartDots?: number
   labelWidthDots?: number
-  /** Columns to display. Defaults to the whole bitmap. */
+  /** Window to display, in raster coordinates. Defaults to the whole bitmap. */
+  viewOriginDots?: number
   viewWidthDots?: number
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -47,18 +52,19 @@ export function PaperRoll({
       return
     }
 
-    const preview = toPreviewImage(
-      bitmap,
+    const preview = toPreviewImage(bitmap, {
       mode,
-      labelWidthDots ?? bitmap.widthDots,
-      viewWidthDots ?? bitmap.widthDots,
-    )
+      labelStartDots: labelStartDots ?? 0,
+      labelWidthDots: labelWidthDots ?? bitmap.widthDots,
+      viewOriginDots: viewOriginDots ?? 0,
+      viewWidthDots: viewWidthDots ?? bitmap.widthDots,
+    })
     // The backing store is always 1 device dot per pixel; zoom is applied in CSS
     // so the browser cannot resample our carefully-computed dots away.
     canvas.width = preview.width
     canvas.height = preview.height
     ctx.putImageData(new ImageData(preview.data, preview.width, preview.height), 0, 0)
-  }, [bitmap, mode, labelWidthDots, viewWidthDots])
+  }, [bitmap, mode, labelStartDots, labelWidthDots, viewOriginDots, viewWidthDots])
 
   const shownWidth = Math.min(viewWidthDots ?? bitmap?.widthDots ?? 0, bitmap?.widthDots ?? 0)
   const factor =
