@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { checkerboard, densityPatch, edgeFrame, rulerStrip, testStrip } from './testPatterns'
+import {
+  blankLabel,
+  checkerboard,
+  densityPatch,
+  edgeFrame,
+  rulerStrip,
+  testStrip,
+} from './testPatterns'
 import { getDot } from '../../model/bitmap'
 import { DOTS_PER_MM } from '../../model/units'
 
@@ -132,5 +139,19 @@ describe('edgeFrame', () => {
       expect(bm.widthDots).toBe(width)
       expect(getDot(bm, width - 1, 0)).toBe(true)
     }
+  })
+})
+
+describe('blankLabel', () => {
+  it('is entirely blank, so it feeds without using ink', () => {
+    const bm = blankLabel(384, 40)
+    expect(bm.data.every((byte) => byte === 0)).toBe(true)
+  })
+
+  it('is exactly the requested height, since that is the feed distance', () => {
+    expect(blankLabel(384, DOTS_PER_MM * 5).heightDots).toBe(40)
+    expect(blankLabel(384, 1).heightDots).toBe(1)
+    // A zero-height raster would be rejected by the printer rather than feeding.
+    expect(blankLabel(384, 0).heightDots).toBe(1)
   })
 })

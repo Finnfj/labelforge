@@ -192,13 +192,42 @@ a query takes the next frame.
 | battery `10 FF 50 F1` | `00 64` | `0x64` = 100 (percent) |
 | print complete | `4f 4b` | ASCII `OK` |
 
-**Silent queries.** Model `10 FF 20 F0` and `10 FF 30 11` produced no reply on
-this unit, and neither did any of the tidied facade's `1F` getters — the latter
-because those commands do not exist in the vendor SDK at all. The model is
-recoverable from the advertised BLE name (`P50S_nnnn_BLE`) instead.
+### What a P50S (V2.0.00) actually implements
 
-`10 FF 30 11` is the Bluetooth *name* in the original, not the MAC; the MAC is
-`10 FF 30 12`, untested. Status via the correct `10 FF 40` is likewise untested.
+Tested one at a time, each waiting out a 1.2 s timeout. Replies land ~330 ms
+after the request.
+
+| Query | Result |
+| --- | --- |
+| `10 FF 20 F1` firmware | ✅ `V2.0.00` |
+| `10 FF 20 F2` serial | ✅ ASCII digits, NUL-terminated |
+| `10 FF 50 F1` battery | ✅ `00 53` → 83 % |
+| `10 FF 13` shutdown time | ✅ `0f` → 15 minutes |
+| `10 FF 20 F0` model | ❌ silent |
+| `10 FF 40` status flags | ❌ silent |
+| `10 FF 50 F2` label height | ❌ silent |
+| `10 FF 70` printer info | ❌ silent |
+| `10 FF 30 10/11/12` BT version / name / MAC | ❌ silent |
+| `10 FF 03` learn label gap | ❌ silent |
+| every `1F` getter from the tidied facade | ❌ silent — they do not exist in the vendor SDK |
+
+So the archived original's byte sequences are transcribed correctly, but this
+firmware implements only a subset. The model is taken from the advertised BLE
+name instead; observed forms are `P50S-F871-BLE` and `P50_2950_BLE`, so split on
+either separator.
+
+### Paper motion: only printing moves paper
+
+**Every dedicated motion command is inert on this firmware.** `1D 0C` (locate
+label), `1B 4A n` (ESC/POS feed dot lines), `1F 30 60` (learn paper), `1F 40`
+(self test) and `1F 11 5x` sent on its own are all acknowledged with a credit and
+then ignored. The documented three-locates-then-read-height calibration therefore
+cannot run: the locates do nothing and the height query is unimplemented.
+
+What does move paper is a **print job**. So to feed a known distance, print an
+all-white raster of that height: the head advances the rows, fires no dots, and
+the job's own gap handling still applies. That is the only reliable feed
+primitive on this printer, and it is what the app uses.
 
 ## Print sequence
 

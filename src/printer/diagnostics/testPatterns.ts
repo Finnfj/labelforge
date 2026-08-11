@@ -139,6 +139,22 @@ export function edgeFrame(widthDots: number, heightDots = 80, thickness = 2): Pa
   return bm
 }
 
+/**
+ * An all-white raster, used to advance the paper.
+ *
+ * On a P50S every dedicated motion command is inert — `1D 0C` (locate),
+ * `1B 4A n` (feed dot lines) and `1F 11 5x` (align) all get acknowledged and do
+ * nothing. The one path that demonstrably moves paper is a print job, so the way
+ * to feed a known distance is to print a blank image of that height: the head
+ * advances the rows and fires no dots, costing motion but no ink.
+ *
+ * It also rides on whatever gap handling the print sequence performs, which is
+ * more than any of the calibration commands manage.
+ */
+export function blankLabel(widthDots: number, heightDots: number): PackedBitmap {
+  return createPackedBitmap(widthDots, Math.max(1, Math.round(heightDots)))
+}
+
 /** Checkerboard — verifies bit order and polarity at a glance. */
 export function checkerboard(widthDots: number, heightDots: number, cell = 8): PackedBitmap {
   const bm = createPackedBitmap(widthDots, heightDots)

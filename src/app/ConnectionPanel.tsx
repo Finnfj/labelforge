@@ -90,10 +90,12 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
                 : '—'
             }
           />
-          <Fact
-            label="State"
-            value={FAULT_TEXT[connection.status?.fault ?? 'unknown'] ?? 'Unknown'}
-          />
+          {/* Only shown when the printer actually answered. A P50S does not
+              implement the status query, and captioning that "Unknown" reads as
+              a fault rather than an absent feature. */}
+          {connection.status && connection.status.fault !== 'unknown' && (
+            <Fact label="State" value={FAULT_TEXT[connection.status.fault] ?? 'Unknown'} />
+          )}
         </div>
       )}
 

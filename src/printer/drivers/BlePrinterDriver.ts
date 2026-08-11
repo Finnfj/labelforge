@@ -136,12 +136,12 @@ export class BlePrinterDriver implements PrinterDriver {
     const serial = await this.#query(cmd.getPrinterSerial(), decodeText)
     const mac = await this.#query(cmd.getPrinterMac(), decodeText)
 
-    // A real P50S answers the firmware and serial queries but stays silent on
-    // model and MAC. The advertised BLE name carries the model anyway — it looks
-    // like `P50S_2950_BLE` — so use it rather than reporting "Unknown" for
-    // something we plainly know.
+    // A real P50S answers firmware and serial but stays silent on model. The
+    // advertised BLE name carries it anyway. Observed forms use either separator
+    // — `P50S-F871-BLE` and `P50_2950_BLE` — so split on both; splitting on the
+    // underscore alone left the whole string as the "model".
     const advertised = this.#transport.device?.name
-    const modelFromName = advertised ? advertised.split('_')[0] : null
+    const modelFromName = advertised ? advertised.split(/[-_]/)[0] : null
 
     return {
       model: model ?? modelFromName ?? 'Unknown',

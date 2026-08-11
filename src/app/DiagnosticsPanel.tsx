@@ -2,7 +2,12 @@ import { useMemo, useState } from 'react'
 import { DOTS_PER_MM, dotsToMm } from '../model/units'
 import * as cmd from '../printer/protocol/commands'
 import { PaperType } from '../printer/protocol/constants'
-import { densityPatch, edgeFrame, rulerStrip } from '../printer/diagnostics/testPatterns'
+import {
+  blankLabel,
+  densityPatch,
+  edgeFrame,
+  rulerStrip,
+} from '../printer/diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS } from '../printer/types'
 import { decodeText, toHex } from '../printer/protocol/responses'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
@@ -17,6 +22,7 @@ const HEAD_WIDTH_CANDIDATES = [320, 384, 400, 576]
 export function DiagnosticsPanel({ connection }: { connection: PrinterConnection }) {
   const [open, setOpen] = useState(false)
   const [rawHex, setRawHex] = useState('')
+  const [feedMm, setFeedMm] = useState(5)
   const [wrapInJob, setWrapInJob] = useState(true)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
@@ -187,17 +193,47 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         </button>
         <button
           disabled={!connected || busy}
-          onClick={() => send('Feed 1 mm', cmd.feedDotLines(DOTS_PER_MM))}
+          onClick={() => send('Feed dot lines', cmd.feedDotLines(DOTS_PER_MM * feedMm))}
         >
-          Feed 1 mm
-        </button>
-        <button
-          disabled={!connected || busy}
-          onClick={() => send('Feed 5 mm', cmd.feedDotLines(DOTS_PER_MM * 5))}
-        >
-          Feed 5 mm
+          Feed via ESC J
         </button>
       </div>
+
+      <div className="row" style={{ marginTop: '0.6rem' }}>
+        <label className="field">
+          <span style={{ minWidth: '4rem' }}>Feed</span>
+          <input
+            type="number"
+            min={1}
+            max={200}
+            value={feedMm}
+            onChange={(e) => setFeedMm(Math.max(1, Math.min(200, Number(e.target.value) || 1)))}
+          />
+          <em>mm</em>
+        </label>
+        <button
+          className="primary"
+          disabled={!connected || busy}
+          onClick={() =>
+            run(`Feed ${feedMm} mm by printing blank`, () =>
+              connection.driver.print({
+                bitmap: blankLabel(headWidth, DOTS_PER_MM * feedMm),
+                settings: DEFAULT_PRINT_SETTINGS,
+              }),
+            )
+          }
+        >
+          Feed by printing blank
+        </button>
+      </div>
+      <p className="hint">
+        <strong>Feed by printing blank</strong> is the one that works. Every dedicated motion
+        command on this firmware is acknowledged and then ignored, but a print job does move
+        paper — so an all-white raster of the requested height advances the paper by exactly
+        that much and fires no dots. It also goes through whatever gap handling the print
+        sequence does, which is more than the calibration commands manage. Use it to step the
+        paper until the gap sits where you want it, then read the millimetres off.
+      </p>
       <p className="hint">
         <strong>Calibrate label gap</strong> runs the vendor SDK&rsquo;s own documented
         sequence: locate the next label three times, waiting for an acknowledgement each
