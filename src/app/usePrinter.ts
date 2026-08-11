@@ -31,10 +31,13 @@ export interface HeadGeometry {
 const GEOMETRY_KEY = 'labelforge.geometry.v1'
 
 /**
- * 400 dots (50 mm), measured rather than assumed — see DEFAULT_HEAD_WIDTH_DOTS.
+ * 384 dots (48 mm), established with the edge-frame pattern — see
+ * DEFAULT_HEAD_WIDTH_DOTS.
  *
- * Right alignment is the default because on the P50S the stock sits against the
- * right-hand end of the head, so a label narrower than 50 mm belongs there.
+ * Right alignment is the default because on the P50S the stock sits towards the
+ * right-hand end of the head, so a narrower label belongs there. Where exactly it
+ * sits is what the offset is for; the edge frame plus a single measurement settles
+ * it, and guessing costs a label each time.
  */
 export const DEFAULT_GEOMETRY: HeadGeometry = {
   headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
@@ -45,9 +48,10 @@ export const DEFAULT_GEOMETRY: HeadGeometry = {
 /**
  * Bumped when a stored default would now be wrong.
  *
- * Head width moved from the vendor SDK's 384 to a measured 400, and anyone who
- * had already connected has 384 saved. Silently keeping it would leave every
- * label 2 mm off with no indication why, so the stored value is discarded once.
+ * Version 2 discarded pre-geometry settings. The head-width default has since
+ * moved 384 -> 400 -> 384 as the evidence improved, but a stored value is the
+ * user's own measurement and outranks any default, so that churn deliberately
+ * did *not* bump this.
  */
 const GEOMETRY_VERSION = 2
 

@@ -179,14 +179,20 @@ alignPaperEnd              (1F 11 50)
 
 203 dpi = **8 dots/mm** exactly.
 
-**Head width on a P50S is 400 dots = 50.0 mm — measured.** The vendor SDK
-hard-codes 384 (48 mm) and that is wrong for this model. The evidence: a label
-right-aligned against an assumed 384-dot head printed 16 dots too far left, and
-400 − 384 = 16 exactly. The printer is a genuine 50 mm device.
+**Head width on a P50S is 384 dots = 48.0 mm**, agreeing with the vendor SDK.
+Established with the `edgeFrame` pattern, which inks the outermost dots of the
+raster: at 384 all four sides print; at 400 the edge is lost.
 
-Stock narrower than the head sits against the **right-hand** end on this unit, so
-a 40 mm label belongs at dots 80–399.
+This was briefly recorded here as 400 on weaker evidence — a label right-aligned
+against 384 landed 16 dots too far left, and 400 − 384 = 16 looked conclusive.
+It was not. That inference assumed the printable label was exactly 320 dots wide,
+and a horizontal *placement* error cannot distinguish a wider head from paper
+sitting further right. Prefer the test that measures the thing directly.
 
-None of this is queryable, so it stays per-printer configuration. The `edgeFrame`
-pattern is the check: it inks the outermost dots of the raster, so all four sides
-landing on the paper means head width, alignment and offset are all correct.
+**Unresolved:** with a 40 mm roll and a 384-dot head, a rectangle drawn on the
+label bounds still lands left of them, which implies the paper sits further right
+than `align: right` puts it — i.e. the printable stock is wider than the die-cut
+label, or narrower than 320 dots. This is what the offset is for; it is a
+per-stock measurement, not a protocol fact.
+
+None of this is queryable, so it stays per-printer configuration.

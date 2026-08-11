@@ -39,12 +39,17 @@ export function dotsToPt(dots: number): number {
 /**
  * Head width in dots.
  *
- * 400 dots = 50.0 mm, measured on a P50S rather than assumed. The vendor SDK's
- * example handler hard-codes 384 (48 mm), and following it produced a label
- * right-aligned 16 dots — exactly 400 − 384 — too far left. The printer is a
- * genuine 50 mm device and the SDK's figure is wrong for it.
+ * 384 dots = 48.0 mm on a P50S, which agrees with the vendor SDK. Established by
+ * the edge-frame pattern: at 384 all four sides of the frame print, and at 400
+ * the edge is lost.
  *
- * Still a default rather than a constant: it is stored per printer, because
- * nothing in the protocol reports it and other models in the family differ.
+ * This was briefly set to 400 on weaker evidence — a label right-aligned against
+ * 384 landed 16 dots too far left, and 400 − 384 = 16 looked conclusive. It was
+ * not: that inference assumed the printable label was exactly 320 dots wide, and
+ * a horizontal *placement* error cannot distinguish a wider head from paper that
+ * sits further right. The edge frame tests the thing directly, so it wins.
+ *
+ * Still a default rather than a constant: nothing in the protocol reports it, and
+ * other models in the family differ.
  */
-export const DEFAULT_HEAD_WIDTH_DOTS = 400
+export const DEFAULT_HEAD_WIDTH_DOTS = 384

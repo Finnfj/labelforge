@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { dotsToMm } from '../model/units'
+import { DOTS_PER_MM, dotsToMm } from '../model/units'
 import type { PrinterConnection } from './usePrinter'
 
 const FAULT_TEXT: Record<string, string> = {
@@ -94,21 +94,15 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
             label="State"
             value={FAULT_TEXT[connection.status?.fault ?? 'unknown'] ?? 'Unknown'}
           />
-          <Fact
-            label="Head width"
-            value={`${connection.capabilities.headWidthDots} dots (${dotsToMm(
-              connection.capabilities.headWidthDots,
-            )} mm)`}
-          />
         </div>
       )}
 
       {connected && connection.kind === 'ble' && (
         <p className="warn">
-          Model, firmware and battery are decoded from reply formats that were inferred, not
-          documented — no vendor code parses replies, so nothing here has been confirmed
-          against real hardware. Treat them as provisional. Head width is an assumption too,
-          until the ruler strip measures it.
+          Model, firmware and battery are decoded from reply formats that were inferred rather
+          than documented — no vendor code parses replies. Firmware, serial and battery have
+          since been confirmed against a P50S; model is taken from the advertised Bluetooth
+          name because the printer does not answer that query at all.
         </p>
       )}
 
@@ -160,17 +154,33 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
           />
           <em>dots</em>
         </label>
+        {/* Nudges in whole millimetres: measuring an error off a printed label
+            gives millimetres, and converting by hand each time invites slips. */}
+        <button
+          onClick={() =>
+            connection.setGeometry({ offsetDots: connection.geometry.offsetDots - DOTS_PER_MM })
+          }
+        >
+          &minus;1 mm
+        </button>
+        <button
+          onClick={() =>
+            connection.setGeometry({ offsetDots: connection.geometry.offsetDots + DOTS_PER_MM })
+          }
+        >
+          +1 mm
+        </button>
         <span className="hint">
           {connection.geometry.offsetDots === 0
-            ? '8 dots = 1 mm'
-            : `${(connection.geometry.offsetDots / 8).toFixed(2)} mm`}
+            ? '8 dots = 1 mm; positive moves right'
+            : `${(connection.geometry.offsetDots / DOTS_PER_MM).toFixed(2)} mm`}
         </span>
       </div>
       <p className="hint">
-        Nothing reports any of this, so it is measured rather than queried — print a ruler
-        strip from Diagnostics and read it. Where the label is narrower than the head, these
-        settings decide which part of the head it sits under; if labels come out shifted
-        sideways, this is what to correct. Saved for next time.
+        None of this is reported by the printer, so it is measured. Print{' '}
+        <strong>Edge frame</strong> from Diagnostics: if all four sides land on the paper the
+        width is right. Then draw a rectangle on the label&rsquo;s exact bounds, print it, and
+        nudge the offset by however many millimetres it sits out. Saved for next time.
       </p>
     </section>
   )
