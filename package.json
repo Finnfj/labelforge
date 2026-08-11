@@ -10,7 +10,8 @@
     "check:layering": "node scripts/check-layering.mjs",
     "test": "vitest",
     "format": "prettier --write .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "snoop": "node scripts/parse-btsnoop.mjs"
   },
   "dependencies": {
     "bwip-js": "^4.11.2",

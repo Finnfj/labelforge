@@ -310,16 +310,50 @@ That is what this app now does. So the feature may already be equivalent, and th
 
 ### Capturing the ground truth
 
-If the question needs settling, capture what the vendor app really sends:
+If the question needs settling, capture what the vendor app really sends.
 
-1. On Android, enable **Developer options → Enable Bluetooth HCI snoop log**.
-2. Reboot, so the log starts clean.
-3. Open the MarkLife app, connect, print one label, and let it feed.
-4. Take a bug report (`adb bugreport`, or Developer options → Bug report). The
-   capture is inside it as `btsnoop_hci.log`.
-5. Open it in Wireshark and filter on `btatt`. Writes to the `ff02` handle are the
-   host-to-printer commands, in order.
+**On the phone**
+
+1. Enable **Developer options → Enable Bluetooth HCI snoop log**.
+2. Reboot, so the log starts clean and is as short as possible.
+3. Turn off other Bluetooth devices first — earbuds, watch, car. The log records
+   *all* Bluetooth traffic, so this is both less noise and less private data.
+4. Open the MarkLife app, connect, print **the same label three times**, and let it
+   feed after each. Three prints is what distinguishes a one-off from a per-print
+   feed, which is the whole question.
+5. Note the label size you told the app, and that it was three prints.
+
+**Getting the log off the phone**
+
+The log lives at `/data/misc/bluetooth/logs/btsnoop_hci.log`, which needs root, so
+the practical route is a bug report:
+
+```
+adb bugreport snoop.zip
+```
+
+Inside that zip, the capture is at
+`FS/data/misc/bluetooth/logs/btsnoop_hci.log`. Extract just that one file — the zip
+itself is large and full of unrelated diagnostics. Without `adb`, **Developer
+options → Bug report** produces the same zip and can be shared off the phone.
+
+**Decoding it**
+
+```
+node scripts/parse-btsnoop.mjs captures/btsnoop_hci.log
+```
+
+`scripts/parse-btsnoop.mjs` parses the btsnoop container, reassembles L2CAP,
+decodes ATT, resolves handles to characteristic UUIDs from whatever GATT discovery
+the capture contains, and prints two things: a timeline, and the concatenated
+command stream with every byte matched against the table above. Unrecognised bytes
+are marked `?` — those are the interesting ones. It reports other devices as packet
+counts only and decodes the printer's connection alone, so a capture can be shared
+without handing over unrelated Bluetooth traffic.
 
 Compare that sequence against `1F C0 01 00` / `1F 10 …` / `1F C0 01 01`. Anything
 present there and absent here is the answer, and it is a fact rather than an
 inference — which everything in this section otherwise is not.
+
+Wireshark remains a fine alternative (filter `btatt`); the script exists so that
+settling this needs no extra tooling installed.

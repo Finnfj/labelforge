@@ -25,3 +25,6 @@ dist-ssr
 
 # Local tooling (contains machine-specific paths)
 .claude/
+
+# Bluetooth HCI snoop captures (large, and contain unrelated device traffic)
+captures/
