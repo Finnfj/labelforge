@@ -1,10 +1,10 @@
 import { describe, expect, it, afterEach } from 'vitest'
-import { StrictMode } from 'react'
+import { StrictMode, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Canvas, Textbox } from 'fabric'
 import { act } from 'react'
 import { EditorCanvas } from './EditorCanvas'
-import { createEmptyDoc, type LabelDoc } from '../model/labelDoc'
+import { createEmptyDoc, type LabelDoc, type LabelElement } from '../model/labelDoc'
 
 /**
  * Renders the editor in a real browser, deliberately inside StrictMode.
@@ -82,6 +82,84 @@ function tally(canvas: HTMLCanvasElement) {
     else if (d[i] < 80) dark++
   }
   return { white, dark, transparent }
+}
+
+/** Two frames, which is what Fabric needs to have painted. */
+async function settle() {
+  await act(async () => {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
+  })
+}
+
+/**
+ * Mount the editor wired to real document state, the way the app wires it.
+ *
+ * `mount` above holds the document fixed, so it cannot see anything that depends on
+ * an edit flowing out to the document and back — which is where the resize bug
+ * lived. Here `onUpdate` patches state and re-renders, closing the loop.
+ */
+async function mountLive(initial: LabelDoc, zoom = 2) {
+  updates = []
+  canvas = null
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  root = createRoot(host)
+
+  function LiveEditor() {
+    const [doc, setDoc] = useState(initial)
+    const [selectedId, setSelectedId] = useState<string | null>(initial.elements[0]?.id ?? null)
+    return (
+      <EditorCanvas
+        doc={doc}
+        selectedId={selectedId}
+        zoom={zoom}
+        onSelect={setSelectedId}
+        onUpdate={(id, patch) => {
+          updates.push({ id, patch: patch as Record<string, unknown> })
+          // Same merge as useLabelEditor's updateElement, cast included: spreading
+          // a patch over a discriminated union widens `kind` past the union.
+          setDoc((d) => ({
+            ...d,
+            elements: d.elements.map((e) =>
+              e.id === id ? ({ ...e, ...patch } as LabelElement) : e,
+            ),
+          }))
+        }}
+        onReady={(c) => {
+          canvas = c
+        }}
+      />
+    )
+  }
+
+  await act(async () => {
+    root!.render(
+      <StrictMode>
+        <LiveEditor />
+      </StrictMode>,
+    )
+  })
+  await settle()
+}
+
+function docWithRect(): LabelDoc {
+  const doc = createEmptyDoc(40, 30)
+  doc.elements = [
+    {
+      id: 'r1',
+      kind: 'shape',
+      shape: 'rect',
+      filled: true,
+      strokeMm: 0,
+      x: 5,
+      y: 5,
+      widthMm: 10,
+      heightMm: 10,
+      rotation: 0,
+      z: 1,
+    },
+  ]
+  return doc
 }
 
 function docWithText(): LabelDoc {
@@ -172,6 +250,39 @@ describe('EditorCanvas', () => {
     // Leaving the field commits, which is what makes it an undo boundary.
     const committed = updates.filter((u) => 'text' in u.patch && !u.transient)
     expect(committed.length, 'exiting the field did not commit').toBeGreaterThan(0)
+  })
+
+  it('keeps a resize on the canvas instead of springing back', async () => {
+    // The bug: Fabric reports a resize as a scale factor, `readGeometry` folded it
+    // into widthMm/heightMm and reset the scale, and the rebuild that would have
+    // redrawn the object at its new intrinsic size was suppressed as a
+    // canvas-originated echo. The document was right and the canvas was wrong, so
+    // the object visibly snapped back to its old size and only corrected itself
+    // once some unrelated change forced a rebuild — clicking away, typically.
+    await mountLive(docWithRect())
+    const before = canvas!.getObjects()[0]
+    const widthBefore = before.getScaledWidth()
+    expect(widthBefore).toBeGreaterThan(0)
+
+    // Exactly what dragging a corner handle produces: a scale factor, then
+    // `object:modified` on mouse up.
+    await act(async () => {
+      before.set({ scaleX: 2, scaleY: 2 })
+      canvas!.fire('object:modified', { target: before })
+    })
+    await settle()
+
+    const patch = updates.at(-1)!.patch
+    expect(patch.widthMm, 'the resize never reached the document').toBeCloseTo(20, 1)
+
+    const after = canvas!.getObjects()[0]
+    expect(after.getScaledWidth(), 'canvas disagrees with the document').toBeCloseTo(
+      widthBefore * 2,
+      0,
+    )
+    // The rebuild must not cost the user their selection, which is why it was
+    // being suppressed in the first place.
+    expect((canvas!.getActiveObject() as { elementId?: string } | null)?.elementId).toBe('r1')
   })
 
   it('clears ink when the element is removed', async () => {

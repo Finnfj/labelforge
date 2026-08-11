@@ -41,11 +41,21 @@ export function EditorCanvas({
   handlers.current = { doc, onSelect, onUpdate, onReady }
 
   /**
-   * Set while a canvas-originated edit propagates into the document, so the
-   * rebuild effect can skip that round trip — the canvas already shows the
-   * result, and rebuilding mid-gesture would drop the user's selection.
+   * Set while an *in-progress text edit* propagates into the document, so the
+   * rebuild effect skips that round trip.
+   *
+   * Narrowly scoped on purpose. Rebuilding while Fabric has a live editing session
+   * open would tear the textarea out from under the caret, so keystrokes must not
+   * trigger one. Everything else — moves, resizes, rotations — *must* rebuild, so
+   * that what is on the canvas is always what is in the document.
+   *
+   * This used to cover geometry too, and that was the resize bug: `readGeometry`
+   * folds Fabric's scale factor into an intrinsic size and resets the scale, so
+   * suppressing the rebuild left the object drawn at its pre-resize size while the
+   * document already held the new one. It sprang back, then corrected itself as
+   * soon as any unrelated change forced a rebuild.
    */
-  const fromCanvas = useRef(false)
+  const editingText = useRef(false)
 
   const widthDots = mmToDots(doc.size.widthMm)
   const heightDots = mmToDots(doc.size.heightMm)
@@ -82,10 +92,12 @@ export function EditorCanvas({
     canvas.on('selection:created', selectionChanged)
     canvas.on('selection:updated', selectionChanged)
     canvas.on('selection:cleared', () => handlers.current.onSelect(null))
+    // Deliberately does not set `editingText`: the rebuild that follows is what
+    // makes the resize stick. Fabric raises this on gesture end, and the rebuild
+    // restores the active object, so nothing is interrupted and no selection lost.
     canvas.on('object:modified', (event) => {
       const object = event.target as TaggedObject | undefined
       if (!object?.elementId) return
-      fromCanvas.current = true
       handlers.current.onUpdate(object.elementId, readGeometry(object, handlers.current.doc))
     })
 
@@ -96,7 +108,7 @@ export function EditorCanvas({
     const readText = (event: { target?: unknown }, transient: boolean) => {
       const object = event.target as (TaggedObject & { text?: string }) | undefined
       if (!object?.elementId) return
-      fromCanvas.current = true
+      editingText.current = true
       handlers.current.onUpdate(object.elementId, { text: object.text ?? '' } as ElementPatch, {
         transient,
       })
@@ -121,8 +133,8 @@ export function EditorCanvas({
   }, [widthDots, heightDots, zoom, epoch])
 
   useEffect(() => {
-    if (fromCanvas.current) {
-      fromCanvas.current = false
+    if (editingText.current) {
+      editingText.current = false
       return
     }
     const canvas = canvasRef.current
@@ -200,6 +212,11 @@ function readGeometry(object: TaggedObject, doc: LabelDoc): ElementPatch {
     ;(patch as Partial<TextElement>).fontSizePt = dotsToPt(ptToDots(current) * scaleY)
   }
 
-  object.set({ scaleX: 1, scaleY: 1 })
+  // The scale is deliberately *not* reset here. This object is about to be replaced
+  // by a fresh one built from the patched document, so resetting achieves nothing —
+  // and if a rebuild is ever skipped, an object at scale 1 with its old intrinsic
+  // size is drawn at the pre-resize size, which is the spring-back this had caused.
+  // Sizing also cannot be reset uniformly: an Ellipse carries rx/ry, a Line its
+  // points, and an image has no size but its scale.
   return patch
 }
