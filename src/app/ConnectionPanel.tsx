@@ -117,6 +117,60 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
           <button onClick={() => void connection.refreshStatus()}>Refresh status</button>
         </div>
       )}
+
+      <h3 className="subhead">Print head geometry</h3>
+      <div className="row">
+        <label className="field">
+          <span>Width</span>
+          <input
+            type="number"
+            min={8}
+            step={8}
+            value={connection.geometry.headWidthDots}
+            onChange={(e) =>
+              connection.setGeometry({ headWidthDots: Math.max(8, Number(e.target.value) || 8) })
+            }
+          />
+          <em>dots</em>
+        </label>
+        <span className="hint">= {dotsToMm(connection.geometry.headWidthDots)} mm</span>
+        <label className="field">
+          <span>Align</span>
+          <select
+            value={connection.geometry.align}
+            onChange={(e) =>
+              connection.setGeometry({
+                align: e.target.value as 'left' | 'center' | 'right',
+              })
+            }
+          >
+            <option value="left">Left</option>
+            <option value="center">Centre</option>
+            <option value="right">Right</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>Offset</span>
+          <input
+            type="number"
+            step={1}
+            value={connection.geometry.offsetDots}
+            onChange={(e) => connection.setGeometry({ offsetDots: Number(e.target.value) || 0 })}
+          />
+          <em>dots</em>
+        </label>
+        <span className="hint">
+          {connection.geometry.offsetDots === 0
+            ? '8 dots = 1 mm'
+            : `${(connection.geometry.offsetDots / 8).toFixed(2)} mm`}
+        </span>
+      </div>
+      <p className="hint">
+        Nothing reports any of this, so it is measured rather than queried — print a ruler
+        strip from Diagnostics and read it. Where the label is narrower than the head, these
+        settings decide which part of the head it sits under; if labels come out shifted
+        sideways, this is what to correct. Saved for next time.
+      </p>
     </section>
   )
 }

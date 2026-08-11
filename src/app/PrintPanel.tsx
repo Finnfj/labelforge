@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LabelDoc } from '../model/labelDoc'
 import type { PackedBitmap } from '../model/bitmap'
-import { DEFAULT_HEAD_WIDTH_DOTS, dotsToMm, mmToDots } from '../model/units'
+import { dotsToMm, mmToDots } from '../model/units'
 import { rasterize } from '../render/rasterize'
 import { LabelTooWideError } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
@@ -36,7 +36,7 @@ export function PrintPanel({
   const [clipped, setClipped] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
-  const headWidth = connection.capabilities?.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
+  const { headWidthDots: headWidth, align, offsetDots } = connection.geometry
 
   useEffect(() => {
     const offProgress = printer.on('progress', setProgress)
@@ -56,7 +56,8 @@ export function PrintPanel({
         try {
           const result = await rasterize(doc, {
             headWidthDots: headWidth,
-            align: 'left',
+            align,
+            offsetDots,
             resolveAsset: resolveAssetUrl,
             clipToHead: true,
           })
@@ -81,7 +82,7 @@ export function PrintPanel({
       cancelled = true
       clearTimeout(id)
     }
-  }, [doc, headWidth])
+  }, [doc, headWidth, align, offsetDots])
 
   const send = useCallback(
     async (target: PackedBitmap) => {
@@ -104,13 +105,12 @@ export function PrintPanel({
 
   const printPattern = useCallback(
     async (build: (head: number) => PackedBitmap) => {
-      const head = printer.capabilities?.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
-      const pattern = build(head)
+      const pattern = build(headWidth)
       setBitmap(pattern)
       setLabelWidthDots(pattern.widthDots)
       await send(pattern)
     },
-    [printer, send],
+    [headWidth, send],
   )
 
   const printing = progress != null && progress.phase !== 'done'

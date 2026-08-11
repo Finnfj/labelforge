@@ -22,7 +22,7 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
   const [error, setError] = useState<string | null>(null)
 
   const connected = connection.capabilities != null
-  const headWidth = connection.capabilities?.headWidthDots ?? 384
+  const headWidth = connection.geometry.headWidthDots
 
   const run = async (label: string, action: () => Promise<void>) => {
     setBusy(true)
