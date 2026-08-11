@@ -277,3 +277,49 @@ label, or narrower than 320 dots. This is what the offset is for; it is a
 per-stock measurement, not a protocol fact.
 
 None of this is queryable, so it stays per-printer configuration.
+
+## What is left, and how to find it
+
+### The SDK is exhausted
+
+All forty functions in `lib/archive/original_interface_chinese.js` have been
+enumerated and every byte sequence transcribed. **It contains no motion or gap
+command beyond the ones already shown to be inert.** The `feed()` call inside its
+`printP80` path references a function that does not exist in the file.
+
+The P80 model in the same SDK speaks CPCL — `PAGE-WIDTH`, `FORM`, `PRINT` as ASCII
+text — which is a different protocol entirely and not what the P50 raster path
+uses. Mentioned only so nobody re-reads it hoping for a P50 command.
+
+So anything further is not in this SDK. The vendor's Android app
+(`com.feioou.deliprint.yxq`) is a separate and much larger codebase, and that is
+where a gap-seek command would live if one exists.
+
+### Does a gap-seek command exist at all?
+
+Possibly not, and the observed behaviour argues against it.
+
+With the vendor app, the **first** print after loading a roll is misaligned and
+every one after it is correct. A sensor-driven seek would fix the first print too,
+because it would locate before printing. What actually fits is open-loop: print,
+then feed a known distance into the gap, leaving the *next* label registered. The
+app knows the distance because it asks the user for the label size.
+
+That is what this app now does. So the feature may already be equivalent, and the
+"missing command" may simply not be missing.
+
+### Capturing the ground truth
+
+If the question needs settling, capture what the vendor app really sends:
+
+1. On Android, enable **Developer options → Enable Bluetooth HCI snoop log**.
+2. Reboot, so the log starts clean.
+3. Open the MarkLife app, connect, print one label, and let it feed.
+4. Take a bug report (`adb bugreport`, or Developer options → Bug report). The
+   capture is inside it as `btsnoop_hci.log`.
+5. Open it in Wireshark and filter on `btatt`. Writes to the `ff02` handle are the
+   host-to-printer commands, in order.
+
+Compare that sequence against `1F C0 01 00` / `1F 10 …` / `1F C0 01 01`. Anything
+present there and absent here is the answer, and it is a fact rather than an
+inference — which everything in this section otherwise is not.

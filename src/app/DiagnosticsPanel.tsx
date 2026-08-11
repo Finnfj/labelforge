@@ -223,6 +223,26 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         there is nothing to read. Kept only in case another model in the family answers.
       </p>
 
+      <h3 className="subhead">Untried candidates</h3>
+      <div className="row">
+        {cmd.CANDIDATES.map((candidate) => (
+          <button
+            key={candidate.label}
+            disabled={!connected || busy}
+            title={candidate.why}
+            onClick={() => sendInJob(candidate.label, candidate.bytes)}
+          >
+            {candidate.label}
+          </button>
+        ))}
+      </div>
+      <p className="hint">
+        Guesses, not vendor commands — the SDK is exhausted, so anything further has to come
+        from the conventions this firmware borrows. All are read-only or idempotent. Hover for
+        the reasoning behind each. Watch the paper, not the log: these will not reply either
+        way, so the only signal is whether anything moves.
+      </p>
+
       <h3 className="subhead">Commands with no effect on a P50S</h3>
       <div className="row">
         <button

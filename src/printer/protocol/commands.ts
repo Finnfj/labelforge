@@ -150,6 +150,45 @@ export function setDensityLegacy(level: number): Uint8Array {
 }
 
 /**
+ * Speculative commands — not from the vendor SDK at all.
+ *
+ * The SDK has been exhausted: all forty of its functions are enumerated and every
+ * byte sequence transcribed, and it contains no motion or gap command beyond the
+ * ones already shown to be inert. So anything further has to be guessed from the
+ * conventions this firmware plainly borrows from.
+ *
+ * All of these are read-only or idempotent. None is anywhere near the destructive
+ * range below.
+ */
+export const CANDIDATES: Array<{ label: string; bytes: Uint8Array; why: string }> = [
+  {
+    label: 'Bare form feed',
+    bytes: cmd(0x0c),
+    why: 'ESC/POS FF. The tidied facade claims this for "locate auto"; the original sends 1D 0C. Only the latter has been tried.',
+  },
+  {
+    label: 'Paper type, silent variant',
+    bytes: cmd(0x1f, 0x80, 0x02, 0x20),
+    why: 'The original documents mode 0x02 as "set paper type, no reply". Only 0x01 has been sent. If gap mode has simply never taken effect, this is why.',
+  },
+  {
+    label: 'Locate black mark',
+    bytes: cmd(0x1f, 0x12, 0x30, 0x00),
+    why: 'Only the gap mode (0x20) of this command was tried.',
+  },
+  {
+    label: 'CPCL FORM',
+    bytes: Uint8Array.from('FORM\r\n', (c) => c.charCodeAt(0)),
+    why: 'The P80 in the same SDK speaks CPCL, where FORM advances to the next label. A long shot, but shared firmware lineage makes it cheap to test.',
+  },
+  {
+    label: 'ESC @ initialise',
+    bytes: cmd(0x1b, 0x40),
+    why: 'ESC/POS reset. Worth knowing whether the firmware responds to plain ESC/POS at all, given it ignored ESC J.',
+  },
+]
+
+/**
  * Destructive commands. Deliberately grouped and named so they cannot be reached
  * by accident — these must never be wired to ordinary UI, only to the diagnostics
  * raw-hex box where the user types the bytes themselves.
