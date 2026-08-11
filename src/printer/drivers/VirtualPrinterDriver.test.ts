@@ -86,9 +86,12 @@ describe('VirtualPrinterDriver', () => {
       if (x.phase === 'transfer' && x.sent > 0) controller.abort()
     })
     await expect(
-      p.print({ bitmap: checkerboard(384, 400), settings: DEFAULT_PRINT_SETTINGS }, {
-        signal: controller.signal,
-      }),
+      p.print(
+        { bitmap: checkerboard(384, 400), settings: DEFAULT_PRINT_SETTINGS },
+        {
+          signal: controller.signal,
+        },
+      ),
     ).rejects.toThrow()
     expect(p.printouts).toHaveLength(0)
     // An aborted job must leave the printer usable, not stuck in "printing".

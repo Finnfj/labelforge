@@ -79,6 +79,7 @@ const KNOWN = [
   ['1f8002', 'setPaperType (silent variant)'],
   ['1f7001', 'setDensity'],
   ['1f7000', 'getDensity'],
+  ['1f7002', 'setPrintParams (vendor: density + 6 zero bytes)'],
   ['1f6001', 'setSpeed'],
   ['1f6000', 'getSpeed'],
   ['1f40', 'selfCheck'],
@@ -522,10 +523,19 @@ function matchLength(restHex) {
   return 1
 }
 
-/** Trailing argument bytes for commands whose parameters follow the opcode. */
+/**
+ * Trailing argument bytes for commands whose parameters follow the opcode.
+ *
+ * Getting these right is what keeps the stream in step: one mis-sized command
+ * desynchronises everything after it, the raster header is then missed, and its
+ * compressed payload gets scanned as though it were commands — throwing off false
+ * matches. That is exactly what happened on the first real capture until `1f7002`
+ * was added here.
+ */
 function argLength(prefix) {
   if (prefix === '1f1100' || prefix === '1f1101' || prefix === '1f1110' || prefix === '1f1111')
     return 2
+  if (prefix === '1f7002') return 7
   if (prefix === '1f8001' || prefix === '1f8002' || prefix === '1f7001' || prefix === '1f6001')
     return 1
   if (prefix === '10ff12') return 2

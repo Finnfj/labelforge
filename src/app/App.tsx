@@ -110,9 +110,7 @@ export default function App() {
               min={6}
               disabled={isPreset}
               value={editor.doc.size.heightMm}
-              onChange={(e) =>
-                editor.setSize(editor.doc.size.widthMm, Number(e.target.value) || 1)
-              }
+              onChange={(e) => editor.setSize(editor.doc.size.widthMm, Number(e.target.value) || 1)}
             />
             <em>mm</em>
           </label>

@@ -10,7 +10,12 @@ import jsQR from 'jsqr'
 import { rasterize } from './rasterize'
 import { unpack1bpp } from './pack1bpp'
 import { renderCode, MIN_RELIABLE_MODULE_DOTS, BarcodeError } from './barcode'
-import { createEmptyDoc, type BarcodeElement, type LabelDoc, type QrElement } from '../model/labelDoc'
+import {
+  createEmptyDoc,
+  type BarcodeElement,
+  type LabelDoc,
+  type QrElement,
+} from '../model/labelDoc'
 import type { PackedBitmap } from '../model/bitmap'
 
 /**
@@ -49,11 +54,7 @@ function decodeLinear(bitmap: PackedBitmap): string | null {
   const hints = new Map()
   hints.set(DecodeHintType.TRY_HARDER, true)
   reader.setHints(hints)
-  const source = new RGBLuminanceSource(
-    toLuminance(bitmap),
-    bitmap.widthDots,
-    bitmap.heightDots,
-  )
+  const source = new RGBLuminanceSource(toLuminance(bitmap), bitmap.widthDots, bitmap.heightDots)
   try {
     return reader.decode(new BinaryBitmap(new HybridBinarizer(source))).getText()
   } catch {
@@ -111,7 +112,11 @@ describe('linear barcodes survive the full render pipeline', () => {
   ]
 
   it.each(cases)('%s round-trips', async (_name, element, widthMm, heightMm) => {
-    const doc = docWith({ ...element, widthMm: widthMm - 2, heightMm: heightMm - 2 }, widthMm, heightMm)
+    const doc = docWith(
+      { ...element, widthMm: widthMm - 2, heightMm: heightMm - 2 },
+      widthMm,
+      heightMm,
+    )
     const { bitmap } = await rasterize(doc)
     const decoded = decodeLinear(bitmap)
     // EAN encodes the value without its check digit in some readers; compare the
@@ -204,8 +209,8 @@ describe('module geometry', () => {
   })
 
   it('reports unencodable content as a typed error', () => {
-    expect(() => renderCode(barcode({ symbology: 'ean13', value: 'not-numeric' }), 300, 80)).toThrow(
-      BarcodeError,
-    )
+    expect(() =>
+      renderCode(barcode({ symbology: 'ean13', value: 'not-numeric' }), 300, 80),
+    ).toThrow(BarcodeError)
   })
 })

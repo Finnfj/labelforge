@@ -11,13 +11,7 @@ import {
   type StoredTemplate,
 } from '../storage/templates'
 
-export function TemplatesPanel({
-  doc,
-  onLoad,
-}: {
-  doc: LabelDoc
-  onLoad(doc: LabelDoc): void
-}) {
+export function TemplatesPanel({ doc, onLoad }: { doc: LabelDoc; onLoad(doc: LabelDoc): void }) {
   const [templates, setTemplates] = useState<StoredTemplate[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -107,8 +101,8 @@ export function TemplatesPanel({
 
       {templates.length === 0 ? (
         <p className="hint">
-          No saved templates yet. &ldquo;Save as template&rdquo; keeps a copy of the current
-          label, including its images.
+          No saved templates yet. &ldquo;Save as template&rdquo; keeps a copy of the current label,
+          including its images.
         </p>
       ) : (
         <ul className="templates">

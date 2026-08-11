@@ -171,8 +171,8 @@ export function Inspector({ editor }: { editor: LabelEditor }) {
           </div>
           {(element as TextElement).fontSizePt < 6 && (
             <p className="warn">
-              Below about 6 pt, glyph stems fall under one dot at 203 dpi and the text
-              tends to smear shut. Check the thermal preview.
+              Below about 6 pt, glyph stems fall under one dot at 203 dpi and the text tends to
+              smear shut. Check the thermal preview.
             </p>
           )}
         </>

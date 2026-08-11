@@ -13,13 +13,7 @@ import { PaperRoll } from './PaperRoll'
 import type { ZoomSetting } from './zoom'
 import type { PrinterConnection } from './usePrinter'
 
-export function PrintPanel({
-  doc,
-  connection,
-}: {
-  doc: LabelDoc
-  connection: PrinterConnection
-}) {
+export function PrintPanel({ doc, connection }: { doc: LabelDoc; connection: PrinterConnection }) {
   const printer = connection.driver
 
   const [settings, setSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS)
@@ -36,7 +30,13 @@ export function PrintPanel({
   const [clipped, setClipped] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
-  const { headWidthDots: headWidth, align, offsetDots, feedAfterDots } = connection.geometry
+  const {
+    headWidthDots: headWidth,
+    padToHead,
+    align,
+    offsetDots,
+    feedAfterDots,
+  } = connection.geometry
 
   useEffect(() => {
     const offProgress = printer.on('progress', setProgress)
@@ -55,7 +55,11 @@ export function PrintPanel({
       void (async () => {
         try {
           const result = await rasterize(doc, {
-            headWidthDots: headWidth,
+            // Omitting the head width is what stops the raster being padded, which
+            // is how the vendor app sends it. The head width is still needed as a
+            // limit, so it goes in either way via maxWidthDots.
+            headWidthDots: padToHead ? headWidth : undefined,
+            maxWidthDots: headWidth,
             align,
             offsetDots,
             resolveAsset: resolveAssetUrl,
@@ -83,7 +87,7 @@ export function PrintPanel({
       cancelled = true
       clearTimeout(id)
     }
-  }, [doc, headWidth, align, offsetDots, feedAfterDots])
+  }, [doc, headWidth, padToHead, align, offsetDots, feedAfterDots])
 
   const send = useCallback(
     async (target: PackedBitmap) => {
@@ -176,13 +180,22 @@ export function PrintPanel({
           >
             Print label
           </button>
-          <button disabled={printing || !connected} onClick={() => printPattern((h) => testStrip(h))}>
+          <button
+            disabled={printing || !connected}
+            onClick={() => printPattern((h) => testStrip(h))}
+          >
             Test strip
           </button>
-          <button disabled={printing || !connected} onClick={() => printPattern((h) => rulerStrip(h))}>
+          <button
+            disabled={printing || !connected}
+            onClick={() => printPattern((h) => rulerStrip(h))}
+          >
             Ruler strip
           </button>
-          <button disabled={printing || !connected} onClick={() => printPattern((h) => checkerboard(h, 96))}>
+          <button
+            disabled={printing || !connected}
+            onClick={() => printPattern((h) => checkerboard(h, 96))}
+          >
             Checkerboard
           </button>
           {printing && (
@@ -215,17 +228,15 @@ export function PrintPanel({
           </div>
         )}
 
-        {!connected && (
-          <p className="hint">Connect a printer above to enable printing.</p>
-        )}
+        {!connected && <p className="hint">Connect a printer above to enable printing.</p>}
 
         {error && <p className="error">{error}</p>}
         {clipped && (
           <p className="warn">
-            This label is {dotsToMm(labelWidthDots)} mm wide but the print head is assumed
-            to be {dotsToMm(headWidth)} mm. Anything past that edge will be cut off. The
-            head width is an assumption until you measure it with the ruler strip — the P50
-            may well be a true 50 mm head.
+            This label is {dotsToMm(labelWidthDots)} mm wide but the print head is assumed to be{' '}
+            {dotsToMm(headWidth)} mm. Anything past that edge will be cut off. The head width is an
+            assumption until you measure it with the ruler strip — the P50 may well be a true 50 mm
+            head.
           </p>
         )}
       </section>
@@ -247,11 +258,7 @@ export function PrintPanel({
                 value={String(zoom)}
                 onChange={(e) => {
                   const next = e.target.value
-                  setZoom(
-                    next === 'fit' || next === 'actual'
-                      ? next
-                      : (Number(next) as 1 | 2 | 4),
-                  )
+                  setZoom(next === 'fit' || next === 'actual' ? next : (Number(next) as 1 | 2 | 4))
                 }}
               >
                 <option value="fit">Fit</option>

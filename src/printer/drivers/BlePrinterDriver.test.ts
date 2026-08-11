@@ -23,6 +23,26 @@ function identityResponder() {
   }
 }
 
+/**
+ * Split a job's writes into framing commands and raster chunks.
+ *
+ * The raster is everything between `alignPaperStart` and the gap seek. Telling them
+ * apart by length used to work and no longer does — `setPrintParams` is 10 bytes,
+ * longer than a chunk of a tiny label — and prefix-matching fails too, because the
+ * first raster chunk begins with the `1f 10` image opcode. Bracketing by position is
+ * both exact and a free assertion that the boundaries are where they should be.
+ */
+function splitJob(writes: Uint8Array[]) {
+  const start = writes.findIndex((b) => hex(b) === '1f 11 51')
+  const end = writes.findIndex((b) => hex(b) === '1f 12 20 00')
+  expect(start, 'alignPaperStart missing').toBeGreaterThanOrEqual(0)
+  expect(end, 'gap seek missing or before the raster').toBeGreaterThan(start)
+  return {
+    raster: writes.slice(start + 1, end),
+    framing: [...writes.slice(0, start + 1), ...writes.slice(end)],
+  }
+}
+
 async function connected(options?: { credits?: number }) {
   const transport = new MockTransport({ autoRespond: identityResponder() })
   if (options?.credits) transport.creditsPerWrite = options.credits
@@ -59,19 +79,23 @@ describe('BlePrinterDriver', () => {
     expect(driver.state).toBe('connected')
   })
 
-  it('emits the documented print sequence', async () => {
+  it('emits the vendor app print sequence, gap seek included', async () => {
     const { transport, driver } = await connected()
     await driver.print({ bitmap: checkerboard(384, 32), settings: DEFAULT_PRINT_SETTINGS })
 
-    const framing = transport.writes.filter((b) => b.length <= 5).map(hex)
-    expect(framing).toEqual([
-      '1f 80 01 20', // setPaperType(gap)
-      '1f 70 01 08', // setDensity(8)
-      '1f 60 01 01', // setSpeed(medium)
-      '1f c0 01 00', // startPrintJob
-      '1f 11 51', //    alignPaperStart
-      '1f c0 01 01', // stopPrintJob
-      '1f 11 50', //    alignPaperEnd
+    // Transcribed from an HCI capture of the vendor Android app — see
+    // docs/PROTOCOL.md. The `1f 12 20 00` between the raster and stopPrintJob is
+    // the sensor gap seek, and its position in the stream is load-bearing: sent
+    // standalone the same command does nothing at all.
+    expect(splitJob(transport.writes).framing.map(hex)).toEqual([
+      '1f 80 02 20', //                      setPaperTypeSilent(gap)
+      '1f 70 02 08 00 00 00 00 00 00', //    setPrintParams(density 8)
+      '1f 60 01 01', //                      setSpeed(medium) — not sent by the app
+      '1f c0 01 00', //                      startPrintJob
+      '1f 11 51', //                         alignPaperStart
+      '1f 12 20 00', //                      locate(gap)
+      '1f c0 01 01', //                      stopPrintJob
+      '1f 11 50', //                         alignPaperEnd
     ])
   })
 
@@ -80,7 +104,7 @@ describe('BlePrinterDriver', () => {
     const bitmap = checkerboard(384, 64)
     await driver.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
 
-    const chunks = transport.writes.filter((b) => b.length > 5)
+    const chunks = splitJob(transport.writes).raster
     for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(90)
 
     const joined = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
@@ -92,13 +116,46 @@ describe('BlePrinterDriver', () => {
     expect(Array.from(joined)).toEqual(Array.from(encodeImage(bitmap)))
   })
 
-  it('repeats the job framing per copy', async () => {
-    const { transport, driver } = await connected()
+  it('repeats the job framing, and the gap seek, per copy', async () => {
+    // A silent printer must not stall a multi-copy run, so the wait for the
+    // end-of-job "OK" is cut short here rather than being skipped: that keeps the
+    // timeout path itself under test.
+    const transport = new MockTransport({ autoRespond: identityResponder() })
+    const driver = new BlePrinterDriver(transport, { doneTimeoutMs: 5 })
+    await driver.connect()
+    transport.reset()
+
     await driver.print({
       bitmap: checkerboard(64, 16),
       settings: { ...DEFAULT_PRINT_SETTINGS, copies: 3 },
     })
     expect(transport.writes.filter((b) => hex(b) === '1f c0 01 00')).toHaveLength(3)
+    // Each copy has to seek, or only the first lands on a label.
+    expect(transport.writes.filter((b) => hex(b) === '1f 12 20 00')).toHaveLength(3)
+  })
+
+  it('carries on to the next copy when the printer sends its end-of-job OK', async () => {
+    const transport = new MockTransport({ autoRespond: identityResponder() })
+    // Long enough that a timeout would fail the test: only a real "OK" can let
+    // the second copy start.
+    const driver = new BlePrinterDriver(transport, { doneTimeoutMs: 60_000 })
+    await driver.connect()
+    transport.reset()
+
+    // Deferred rather than sent from autoRespond: that fires while the write is
+    // still in flight, so the driver would not yet be listening and would sit out
+    // the whole timeout — which is the bug this test exists to catch.
+    transport.on('wire', (event) => {
+      if (event.direction === 'out' && hex(event.bytes) === '1f 11 50') {
+        setTimeout(() => transport.emit('status', Uint8Array.of(0x4f, 0x4b)), 0)
+      }
+    })
+
+    await driver.print({
+      bitmap: checkerboard(64, 16),
+      settings: { ...DEFAULT_PRINT_SETTINGS, copies: 2 },
+    })
+    expect(transport.writes.filter((b) => hex(b) === '1f c0 01 00')).toHaveLength(2)
   })
 
   it('reports progress that ends complete and never overshoots', async () => {

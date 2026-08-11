@@ -24,11 +24,22 @@ import type { ConnectOptions, Transport } from '../transport/Transport'
 /** How long to wait for a reply before giving up on a query. */
 const QUERY_TIMEOUT_MS = 1200
 
+/**
+ * ASCII "OK" — what the printer sends on the status channel when a job finishes.
+ * Observed roughly 300 ms after `alignPaperEnd` in a capture of the vendor app.
+ */
+const DONE_REPLY = 'OK'
+
+/** Long enough for the gap seek to finish; a quiet printer is not an error. */
+const DONE_TIMEOUT_MS = 5000
+
 export interface BlePrinterOptions {
   chunkSize?: number
   headWidthDots?: number
   /** Reply timeout. Shortened in tests so a silent printer is cheap to assert. */
   queryTimeoutMs?: number
+  /** How long to wait for the end-of-job "OK" between copies. */
+  doneTimeoutMs?: number
 }
 
 /**
@@ -49,9 +60,12 @@ export class BlePrinterDriver implements PrinterDriver {
   #chunkSize: number
   #headWidthDots: number
   #queryTimeoutMs: number
+  #doneTimeoutMs: number
   #unsubscribe: Array<() => void> = []
   /** Replies arrive as unsolicited notifications, so queries take the next one. */
   #pendingReply: ((bytes: Uint8Array) => void) | null = null
+  /** Resolved by an end-of-job "OK" on the status channel. */
+  #doneWaiter: (() => void) | null = null
   #lastStatusBytes: Uint8Array | null = null
 
   constructor(transport: Transport, options: BlePrinterOptions = {}) {
@@ -59,13 +73,16 @@ export class BlePrinterDriver implements PrinterDriver {
     this.#chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE
     this.#headWidthDots = options.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
     this.#queryTimeoutMs = options.queryTimeoutMs ?? QUERY_TIMEOUT_MS
+    this.#doneTimeoutMs = options.doneTimeoutMs ?? DONE_TIMEOUT_MS
 
-    transport.on('wire', (event) => this.#emitter.emit('wire', {
-      dir: event.direction,
-      bytes: event.bytes,
-      at: event.at,
-      note: event.note,
-    }))
+    transport.on('wire', (event) =>
+      this.#emitter.emit('wire', {
+        dir: event.direction,
+        bytes: event.bytes,
+        at: event.at,
+        note: event.note,
+      }),
+    )
     transport.on('disconnected', ({ reason }) => {
       this.#capabilities = null
       this.#credits.reset()
@@ -102,6 +119,11 @@ export class BlePrinterDriver implements PrinterDriver {
       this.#unsubscribe.push(
         await this.#transport.subscribe('status', (bytes) => {
           this.#lastStatusBytes = bytes
+          if (decodeText(bytes) === DONE_REPLY) {
+            const done = this.#doneWaiter
+            this.#doneWaiter = null
+            done?.()
+          }
           const pending = this.#pendingReply
           this.#pendingReply = null
           pending?.(bytes)
@@ -216,13 +238,19 @@ export class BlePrinterDriver implements PrinterDriver {
         })
 
       progress('prepare', 0)
-      await this.#transport.write(cmd.setPaperType(job.settings.paperType))
-      await this.#transport.write(cmd.setDensity(job.settings.density))
-      await this.#transport.write(cmd.setSpeed(job.settings.speed))
 
       for (let copy = 1; copy <= job.settings.copies; copy++) {
         opts.signal?.throwIfAborted()
         progress('handshake', copy)
+
+        // Configuration is re-sent per copy, inside the job, exactly as the vendor
+        // app does it. See cmd.VENDOR_PRINT_SEQUENCE and docs/PROTOCOL.md.
+        await this.#transport.write(cmd.setPaperTypeSilent(job.settings.paperType))
+        await this.#transport.write(cmd.setPrintParams(job.settings.density))
+        // The vendor app never sends this one. Kept because it is a user-facing
+        // setting and has been harmless in practice, but if speed hides in one of
+        // setPrintParams' six unidentified bytes, this is the thing to drop first.
+        await this.#transport.write(cmd.setSpeed(job.settings.speed))
         await this.#transport.write(cmd.startPrintJob())
         await this.#transport.write(cmd.alignPaperStart())
 
@@ -240,8 +268,19 @@ export class BlePrinterDriver implements PrinterDriver {
         }
 
         progress('feed', copy)
+        // The alignment fix, and the reason labels no longer drift: seek the next
+        // gap with the optical sensor once the raster is in. It must come after the
+        // payload and before stopPrintJob — issued standalone it does nothing,
+        // which is why it looked inert for so long.
+        await this.#transport.write(cmd.locate(cmd.LocateMode.Gap))
         await this.#transport.write(cmd.stopPrintJob())
         await this.#transport.write(cmd.alignPaperEnd())
+
+        // The printer answers "OK" on the status channel a fraction of a second
+        // after the job ends. Waiting for it keeps a multi-copy run from stacking
+        // jobs on top of each other; a printer that stays quiet is not an error,
+        // so a timeout just carries on.
+        if (copy < job.settings.copies) await this.#waitForDone(opts.signal)
       }
 
       sent = total
@@ -277,6 +316,28 @@ export class BlePrinterDriver implements PrinterDriver {
   /** Most recent status notification, whether solicited or not. */
   get lastStatusBytes(): Uint8Array | null {
     return this.#lastStatusBytes
+  }
+
+  /**
+   * Wait for the end-of-job acknowledgement.
+   *
+   * Resolves `false` on timeout rather than throwing: not every unit need send it,
+   * and refusing to print a second copy because an undocumented notification did
+   * not arrive would be worse than pressing on.
+   */
+  async #waitForDone(signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted()
+    return new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.#doneWaiter === finish) this.#doneWaiter = null
+        resolve(false)
+      }, this.#doneTimeoutMs)
+      const finish = () => {
+        clearTimeout(timer)
+        resolve(true)
+      }
+      this.#doneWaiter = finish
+    })
   }
 
   /** Write a command and wait for the next status notification, if any. */

@@ -132,9 +132,7 @@ describe('images', () => {
       docWith({ kind: 'image', assetId: 'ramp', mode: 'lineart', fit: 'stretch', threshold: 220 }),
       { resolveAsset },
     )
-    expect(inkCount(unpack1bpp(light.bitmap))).toBeGreaterThan(
-      inkCount(unpack1bpp(dark.bitmap)),
-    )
+    expect(inkCount(unpack1bpp(light.bitmap))).toBeGreaterThan(inkCount(unpack1bpp(dark.bitmap)))
   })
 
   it('inverts on request', async () => {

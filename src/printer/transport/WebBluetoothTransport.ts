@@ -128,9 +128,7 @@ export class WebBluetoothTransport implements Transport {
     this.#write = await this.#queue.run('getCharacteristic(write)', () =>
       service.getCharacteristic(CHAR_WRITE),
     )
-    this.#canWriteWithoutResponse = Boolean(
-      this.#write.properties?.writeWithoutResponse,
-    )
+    this.#canWriteWithoutResponse = Boolean(this.#write.properties?.writeWithoutResponse)
 
     // Both notify channels must be live before any print starts: without the
     // status channel there is no acknowledgement, and without credits the job
@@ -167,7 +165,9 @@ export class WebBluetoothTransport implements Transport {
       const target = event.target as BluetoothRemoteGATTCharacteristic
       const value = target.value
       if (!value) return
-      const bytes = new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength))
+      const bytes = new Uint8Array(
+        value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength),
+      )
       this.#emitter.emit('wire', { direction: 'in', bytes, at: Date.now(), note: channel })
       for (const handler of this.#handlers.get(channel) ?? []) handler(bytes)
     }

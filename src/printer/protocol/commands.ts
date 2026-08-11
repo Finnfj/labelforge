@@ -5,12 +5,7 @@
  * play and they are *not* two protocol generations: `1F` covers print control and
  * configuration, `10 FF` covers device-information queries.
  */
-import {
-  MAX_DENSITY,
-  MIN_DENSITY,
-  type PaperTypeValue,
-  type SpeedValue,
-} from './constants'
+import { MAX_DENSITY, MIN_DENSITY, type PaperTypeValue, type SpeedValue } from './constants'
 
 const cmd = (...bytes: number[]) => Uint8Array.from(bytes)
 
@@ -41,13 +36,44 @@ export function adjustPosition(mode: AdjustModeValue, distance: number): Uint8Ar
 export const LocateMode = { None: 0x10, Gap: 0x20, BlackMark: 0x30 } as const
 export type LocateModeValue = (typeof LocateMode)[keyof typeof LocateMode]
 
+/**
+ * Seek the next label boundary with the optical sensor.
+ *
+ * **This is the gap-alignment command, and where it sits in the stream is the
+ * whole trick.** An HCI capture of the vendor app shows it issued *after* the
+ * raster payload and *before* `stopPrintJob` — not standalone, which is how it
+ * was tested unsuccessfully for a long time. See docs/PROTOCOL.md.
+ */
 export const locate = (mode: LocateModeValue) => cmd(0x1f, 0x12, mode, 0x00)
 export const locateAuto = () => cmd(0x0c)
 
 // --- configuration -------------------------------------------------------
 
+/** Paper type, mode 1. The SDK's form; the vendor app sends {@link setPaperTypeSilent}. */
 export const setPaperType = (type: PaperTypeValue) => cmd(0x1f, 0x80, 0x01, type)
 export const getPaperType = () => cmd(0x1f, 0x80, 0x00)
+
+/**
+ * Paper type, mode 2 — what the vendor app actually sends, once per copy.
+ *
+ * The archived SDK documents mode `0x02` as "set paper type, no reply", and the
+ * capture confirms the app uses this form and never mode `0x01`.
+ */
+export const setPaperTypeSilent = (type: PaperTypeValue) => cmd(0x1f, 0x80, 0x02, type)
+
+/**
+ * Print parameters, mode 2 — the vendor app's only density-ish write.
+ *
+ * Observed verbatim as `1F 70 02 0A 00 00 00 00 00 00`. `1F 70` is the density
+ * family in both SDK dialects, so the first parameter is taken to be density
+ * (`0x0A` = 10 of 15). **The six trailing bytes are unidentified** and are sent as
+ * the observed zeros; speed may well live in one of them, since the app never
+ * sends `1F 60` at all.
+ */
+export function setPrintParams(density: number): Uint8Array {
+  const safe = Math.max(MIN_DENSITY, Math.min(MAX_DENSITY, Math.round(density)))
+  return cmd(0x1f, 0x70, 0x02, safe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+}
 
 /** Darkness, 1–15. Values outside the range are clamped rather than rejected. */
 export function setDensity(level: number): Uint8Array {
@@ -150,43 +176,26 @@ export function setDensityLegacy(level: number): Uint8Array {
 }
 
 /**
- * Speculative commands — not from the vendor SDK at all.
+ * The vendor app's exact per-copy print sequence, from an HCI capture.
  *
- * The SDK has been exhausted: all forty of its functions are enumerated and every
- * byte sequence transcribed, and it contains no motion or gap command beyond the
- * ones already shown to be inert. So anything further has to be guessed from the
- * conventions this firmware plainly borrows from.
+ * This replaces what used to be a list of speculative candidates guessed at after
+ * the SDK was exhausted. The capture answered the question the guesses existed to
+ * answer, so they are gone: the gap seek is {@link locate} with
+ * {@link LocateMode.Gap}, issued between the raster and {@link stopPrintJob}.
  *
- * All of these are read-only or idempotent. None is anywhere near the destructive
- * range below.
+ * Recorded here as data so the driver and the docs cannot drift apart. Two things
+ * the app notably never sends: {@link setSpeed}, and any feed command at all.
  */
-export const CANDIDATES: Array<{ label: string; bytes: Uint8Array; why: string }> = [
-  {
-    label: 'Bare form feed',
-    bytes: cmd(0x0c),
-    why: 'ESC/POS FF. The tidied facade claims this for "locate auto"; the original sends 1D 0C. Only the latter has been tried.',
-  },
-  {
-    label: 'Paper type, silent variant',
-    bytes: cmd(0x1f, 0x80, 0x02, 0x20),
-    why: 'The original documents mode 0x02 as "set paper type, no reply". Only 0x01 has been sent. If gap mode has simply never taken effect, this is why.',
-  },
-  {
-    label: 'Locate black mark',
-    bytes: cmd(0x1f, 0x12, 0x30, 0x00),
-    why: 'Only the gap mode (0x20) of this command was tried.',
-  },
-  {
-    label: 'CPCL FORM',
-    bytes: Uint8Array.from('FORM\r\n', (c) => c.charCodeAt(0)),
-    why: 'The P80 in the same SDK speaks CPCL, where FORM advances to the next label. A long shot, but shared firmware lineage makes it cheap to test.',
-  },
-  {
-    label: 'ESC @ initialise',
-    bytes: cmd(0x1b, 0x40),
-    why: 'ESC/POS reset. Worth knowing whether the firmware responds to plain ESC/POS at all, given it ignored ESC J.',
-  },
-]
+export const VENDOR_PRINT_SEQUENCE = [
+  'setPaperTypeSilent(paperType)',
+  'setPrintParams(density)',
+  'startPrintJob',
+  'alignPaperStart',
+  'encodeImage(bitmap)',
+  'locate(Gap)',
+  'stopPrintJob',
+  'alignPaperEnd',
+] as const
 
 /**
  * Destructive commands. Deliberately grouped and named so they cannot be reached

@@ -38,7 +38,9 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
           ) : (
             <button
               className="primary"
-              disabled={connection.busy || (connection.kind === 'ble' && !connection.bluetoothSupported)}
+              disabled={
+                connection.busy || (connection.kind === 'ble' && !connection.bluetoothSupported)
+              }
               // Straight through to the driver: Web Bluetooth's chooser is only
               // allowed while the click's user activation is still live, so this
               // must not await anything first.
@@ -52,8 +54,8 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
 
       {connection.kind === 'ble' && !connection.bluetoothSupported && (
         <p className="error">
-          This browser has no Web Bluetooth. Use Chrome or Edge on desktop, or Chrome on
-          Android — Safari and Firefox do not implement it and cannot be made to.
+          This browser has no Web Bluetooth. Use Chrome or Edge on desktop, or Chrome on Android —
+          Safari and Firefox do not implement it and cannot be made to.
         </p>
       )}
 
@@ -68,9 +70,9 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
             <span>Show all Bluetooth devices</span>
           </label>
           <p className="hint">
-            The chooser normally lists only devices whose name starts with P50. Tick the box
-            above if yours does not appear — the name prefixes come from reverse
-            engineering, not from a specification, so an unexpected one is quite possible.
+            The chooser normally lists only devices whose name starts with P50. Tick the box above
+            if yours does not appear — the name prefixes come from reverse engineering, not from a
+            specification, so an unexpected one is quite possible.
           </p>
         </>
       )}
@@ -101,10 +103,10 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
 
       {connected && connection.kind === 'ble' && (
         <p className="warn">
-          Model, firmware and battery are decoded from reply formats that were inferred rather
-          than documented — no vendor code parses replies. Firmware, serial and battery have
-          since been confirmed against a P50S; model is taken from the advertised Bluetooth
-          name because the printer does not answer that query at all.
+          Model, firmware and battery are decoded from reply formats that were inferred rather than
+          documented — no vendor code parses replies. Firmware, serial and battery have since been
+          confirmed against a P50S; model is taken from the advertised Bluetooth name because the
+          printer does not answer that query at all.
         </p>
       )}
 
@@ -131,10 +133,19 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
           <em>dots</em>
         </label>
         <span className="hint">= {dotsToMm(connection.geometry.headWidthDots)} mm</span>
+        <label className="field field--check">
+          <input
+            type="checkbox"
+            checked={connection.geometry.padToHead}
+            onChange={(e) => connection.setGeometry({ padToHead: e.target.checked })}
+          />
+          <span>Pad to head width</span>
+        </label>
         <label className="field">
           <span>Align</span>
           <select
             value={connection.geometry.align}
+            disabled={!connection.geometry.padToHead}
             onChange={(e) =>
               connection.setGeometry({
                 align: e.target.value as 'left' | 'center' | 'right',
@@ -151,6 +162,7 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
           <input
             type="number"
             step={1}
+            disabled={!connection.geometry.padToHead}
             value={connection.geometry.offsetDots}
             onChange={(e) => connection.setGeometry({ offsetDots: Number(e.target.value) || 0 })}
           />
@@ -159,6 +171,7 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
         {/* Nudges in whole millimetres: measuring an error off a printed label
             gives millimetres, and converting by hand each time invites slips. */}
         <button
+          disabled={!connection.geometry.padToHead}
           onClick={() =>
             connection.setGeometry({ offsetDots: connection.geometry.offsetDots - DOTS_PER_MM })
           }
@@ -166,6 +179,7 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
           &minus;1 mm
         </button>
         <button
+          disabled={!connection.geometry.padToHead}
           onClick={() =>
             connection.setGeometry({ offsetDots: connection.geometry.offsetDots + DOTS_PER_MM })
           }
@@ -179,10 +193,14 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
         </span>
       </div>
       <p className="hint">
-        None of this is reported by the printer, so it is measured. Print{' '}
-        <strong>Edge frame</strong> from Diagnostics: if all four sides land on the paper the
-        width is right. Then draw a rectangle on the label&rsquo;s exact bounds, print it, and
-        nudge the offset by however many millimetres it sits out. Saved for next time.
+        Leave padding <strong>off</strong>. A capture of the vendor app&rsquo;s Bluetooth traffic
+        shows it sends a raster exactly as wide as the label &mdash; 320 dots for a 40&nbsp;mm one
+        &mdash; and lets the printer position it. Padding out to the head and choosing an alignment
+        was our guess at what it did, and the guess was wrong.
+        <br />
+        Turn it on only to diagnose placement, since padding is the only way to aim at a specific
+        head column. Head width still matters as a limit: print <strong>Edge frame</strong> from
+        Diagnostics and if all four sides land on the paper it is right.
       </p>
 
       <h3 className="subhead">Inter-label gap</h3>
@@ -221,21 +239,20 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
           +1 mm
         </button>
         <span className="hint">
-          {(connection.geometry.feedAfterDots / DOTS_PER_MM).toFixed(2)} mm of blank fed after
-          each label
+          {(connection.geometry.feedAfterDots / DOTS_PER_MM).toFixed(2)} mm of blank fed after each
+          label
         </span>
       </div>
       <p className="hint">
-        A label pitch is its height <em>plus</em> the gap, so every print has to advance the
-        whole pitch or each label lands a little further back than the last — the second print
-        slightly out, the third twice as far. This printer ignores every feed command, so the
-        gap is crossed by appending blank rows to the raster instead; you can see the strip at
-        the bottom of the preview.
+        <strong>Normally leave this at 0.</strong> Every print now ends with a sensor-driven gap
+        seek — the same command, in the same place, as the vendor app — so the printer finds the
+        next label itself and nothing accumulates. This setting appends blank rows to the raster
+        instead, which was the workaround for the seek we had not yet found.
         <br />
-        <strong>To tune it:</strong> print the same label three times. If each one creeps{' '}
-        <em>backwards</em> by some amount, add that many millimetres here; if they creep
-        forwards, subtract. One correction should settle it. Set it to 0 for continuous tape,
-        which has no gap.
+        Still useful in two cases: continuous tape, where there is no gap to seek and a few
+        millimetres of lead-out is convenient; and as a fallback if the seek misbehaves on your
+        stock. To tune it, print the same label three times — if each creeps <em>backwards</em>, add
+        that many millimetres.
       </p>
     </section>
   )

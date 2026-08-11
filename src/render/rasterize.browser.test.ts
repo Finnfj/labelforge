@@ -43,9 +43,7 @@ function firstInkRow(bits: Uint8Array, width: number, height: number): number {
 
 describe('rasterize geometry', () => {
   it('places a 10 mm inset at dot column 80', async () => {
-    const doc = docWith([
-      { kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, x: 10, y: 0 },
-    ])
+    const doc = docWith([{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, x: 10, y: 0 }])
     const { bitmap } = await rasterize(doc)
 
     expect(bitmap.widthDots).toBe(320) // 40 mm at 8 dots/mm
@@ -56,9 +54,7 @@ describe('rasterize geometry', () => {
   })
 
   it('places a 10 mm top inset at dot row 80', async () => {
-    const doc = docWith([
-      { kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, x: 0, y: 10 },
-    ])
+    const doc = docWith([{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, x: 0, y: 10 }])
     const { bitmap } = await rasterize(doc)
     const bits = unpack1bpp(bitmap)
     expect(firstInkRow(bits, bitmap.widthDots, bitmap.heightDots)).toBe(80)
@@ -127,9 +123,7 @@ describe('rasterize geometry', () => {
   })
 
   it('skips hidden elements', async () => {
-    const doc = docWith([
-      { kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, hidden: true },
-    ])
+    const doc = docWith([{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, hidden: true }])
     const { bitmap } = await rasterize(doc)
     expect(bitmap.data.every((b) => b === 0)).toBe(true)
   })
@@ -149,7 +143,18 @@ describe('rasterize geometry', () => {
     // 50 mm presets hit this on every render. Refusing outright left the preview
     // stale with no explanation.
     const doc = docWith(
-      [{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, x: 0, y: 0, widthMm: 50, heightMm: 5 }],
+      [
+        {
+          kind: 'shape',
+          shape: 'rect',
+          filled: true,
+          strokeMm: 0,
+          x: 0,
+          y: 0,
+          widthMm: 50,
+          heightMm: 5,
+        },
+      ],
       50,
       30,
     )
@@ -174,12 +179,53 @@ describe('rasterize geometry', () => {
     expect(clipped).toBe(false)
   })
 
+  describe('unpadded output, as the vendor app sends it', () => {
+    // An HCI capture of the vendor app printing a 40x30 mm label shows a raster of
+    // 40 bytes per row and 240 rows: 320x240 dots, exactly the label, with no
+    // padding out to the 384-dot head. Padding and picking an alignment was our
+    // guess at what it did, and it put content in the wrong place.
+    it('emits exactly the label width when no head width is given', async () => {
+      const doc = docWith([{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0 }], 40, 30)
+      const { bitmap } = await rasterize(doc)
+      expect(bitmap.widthDots).toBe(320)
+      expect(bitmap.rowBytes).toBe(40)
+      expect(bitmap.heightDots).toBe(240)
+    })
+
+    it('still reports clipping against a head limit without padding to it', async () => {
+      // maxWidthDots exists so "how wide is the head" and "pad out to the head"
+      // can be asked separately, which they could not be when one option did both.
+      const doc = docWith([{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0 }], 50, 30)
+      const { bitmap, clipped } = await rasterize(doc, {
+        maxWidthDots: 384,
+        clipToHead: true,
+      })
+      expect(clipped).toBe(true)
+      // Cropped to the head, not padded past it.
+      expect(bitmap.widthDots).toBe(384)
+    })
+
+    it('refuses an over-wide label against a bare limit too', async () => {
+      const doc = docWith([{ kind: 'shape', shape: 'rect', filled: true, strokeMm: 0 }], 50, 30)
+      await expect(rasterize(doc, { maxWidthDots: 384 })).rejects.toThrow(LabelTooWideError)
+    })
+  })
+
   it('supersampling does not move dot-aligned geometry', async () => {
     // A rectangle on whole-dot boundaries must rasterise identically however
     // finely it was sampled. If this drifts, supersampling is shifting edges and
     // barcodes would be next.
     const doc = docWith([
-      { kind: 'shape', shape: 'rect', filled: true, strokeMm: 0, x: 5, y: 5, widthMm: 10, heightMm: 10 },
+      {
+        kind: 'shape',
+        shape: 'rect',
+        filled: true,
+        strokeMm: 0,
+        x: 5,
+        y: 5,
+        widthMm: 10,
+        heightMm: 10,
+      },
     ])
     const plain = await rasterize(doc, { supersample: 1 })
     const fine = await rasterize(doc, { supersample: 3 })

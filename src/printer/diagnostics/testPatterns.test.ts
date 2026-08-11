@@ -82,7 +82,12 @@ describe('rulerStrip', () => {
   })
 })
 
-function countRun(bm: ReturnType<typeof rulerStrip>, fromX: number, y: number, step: number): number {
+function countRun(
+  bm: ReturnType<typeof rulerStrip>,
+  fromX: number,
+  y: number,
+  step: number,
+): number {
   let n = 0
   for (let x = fromX; x >= 0 && x < bm.widthDots; x += step) {
     if (!getDot(bm, x, y)) break

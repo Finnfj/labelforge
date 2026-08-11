@@ -52,10 +52,14 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
   /**
    * Send a command inside a print job.
    *
-   * This was a theory — that these commands only act within a job — and it was
-   * tested and refuted: self test does nothing bare and nothing wrapped. The
-   * wrapping is kept behind a toggle only so the experiment can be repeated on
-   * other firmware, not because it is known to help.
+   * The theory was that these commands only act within a job. Tested against self
+   * test, it was refuted: nothing happens bare or wrapped.
+   *
+   * An HCI capture of the vendor app later showed the theory was too weak rather
+   * than wrong. It does issue `locate(gap)` inside a job — but *after* a raster
+   * payload, not in an empty one. So the requirement is a job with something to
+   * print, which this toggle cannot construct; the real print path does it instead.
+   * Kept for repeating the experiment on other firmware.
    */
   const sendInJob = (label: string, bytes: Uint8Array) =>
     run(label, async () => {
@@ -98,8 +102,8 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
           <button onClick={() => setOpen(true)}>Open diagnostics</button>
         </div>
         <p className="hint">
-          Byte log, calibration, density ladder and a raw command box. Worth having open the
-          first time you connect a printer.
+          Byte log, calibration, density ladder and a raw command box. Worth having open the first
+          time you connect a printer.
         </p>
       </section>
     )
@@ -141,12 +145,11 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         </pre>
       )}
       <p className="hint">
-        All of these only read, and all are from the vendor SDK&rsquo;s{' '}
-        <em>archived original</em>. The tidied-up version of that SDK invented a set of{' '}
-        <code>1f</code> getters that appear nowhere in the vendor&rsquo;s own code — those
-        were what this panel asked for previously, which is why every one came back empty.
-        The <code>10 ff</code> family below is what the vendor actually uses, and the members
-        already tried do answer.
+        All of these only read, and all are from the vendor SDK&rsquo;s <em>archived original</em>.
+        The tidied-up version of that SDK invented a set of <code>1f</code> getters that appear
+        nowhere in the vendor&rsquo;s own code — those were what this panel asked for previously,
+        which is why every one came back empty. The <code>10 ff</code> family below is what the
+        vendor actually uses, and the members already tried do answer.
       </p>
 
       <h3 className="subhead">Label gap</h3>
@@ -210,37 +213,17 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
       </div>
       <p className="hint">
         <strong>Feed by printing blank</strong> is the one that works. Every dedicated motion
-        command on this firmware is acknowledged and then ignored, but a print job does move
-        paper — so an all-white raster of the requested height advances the paper by exactly
-        that much and fires no dots. It also goes through whatever gap handling the print
-        sequence does, which is more than the calibration commands manage. Use it to step the
-        paper until the gap sits where you want it, then read the millimetres off.
+        command on this firmware is acknowledged and then ignored, but a print job does move paper —
+        so an all-white raster of the requested height advances the paper by exactly that much and
+        fires no dots. It also goes through whatever gap handling the print sequence does, which is
+        more than the calibration commands manage. Use it to step the paper until the gap sits where
+        you want it, then read the millimetres off.
       </p>
       <p className="warn">
-        <strong>Calibrate label gap does not work on a P50S.</strong> It runs the vendor
-        SDK&rsquo;s own documented sequence — locate three times, then read the height — but
-        this firmware ignores the locate command and does not implement the height query, so
-        there is nothing to read. Kept only in case another model in the family answers.
-      </p>
-
-      <h3 className="subhead">Untried candidates</h3>
-      <div className="row">
-        {cmd.CANDIDATES.map((candidate) => (
-          <button
-            key={candidate.label}
-            disabled={!connected || busy}
-            title={candidate.why}
-            onClick={() => sendInJob(candidate.label, candidate.bytes)}
-          >
-            {candidate.label}
-          </button>
-        ))}
-      </div>
-      <p className="hint">
-        Guesses, not vendor commands — the SDK is exhausted, so anything further has to come
-        from the conventions this firmware borrows. All are read-only or idempotent. Hover for
-        the reasoning behind each. Watch the paper, not the log: these will not reply either
-        way, so the only signal is whether anything moves.
+        <strong>Calibrate label gap does not work on a P50S.</strong> It runs the vendor SDK&rsquo;s
+        own documented sequence — locate three times, then read the height — but this firmware
+        ignores the locate command and does not implement the height query, so there is nothing to
+        read. Kept only in case another model in the family answers.
       </p>
 
       <h3 className="subhead">Commands with no effect on a P50S</h3>
@@ -259,6 +242,7 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         </button>
         <button
           disabled={!connected || busy}
+          title="Does nothing here. This same command IS the gap seek, but only after a raster payload — which is where every print now sends it."
           onClick={() => sendInJob('Locate gap', cmd.locate(cmd.LocateMode.Gap))}
         >
           Locate gap
@@ -312,11 +296,11 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
       </div>
       <p className="warn">
         Every command in this group has been tested against a P50S (V2.0.00) and{' '}
-        <strong>none of them does anything</strong> — bare or wrapped in a print job. The
-        printer acknowledges the write with a credit and ignores it. That includes the ESC/POS
-        feed, which is why the gap is crossed by printing blank instead. They are kept because
-        they come from the vendor SDK and may be implemented on other models, but nothing here
-        should be relied on, and printing needs none of it.
+        <strong>none of them does anything</strong> — bare or wrapped in a print job. The printer
+        acknowledges the write with a credit and ignores it. That includes the ESC/POS feed, which
+        is why the gap is crossed by printing blank instead. They are kept because they come from
+        the vendor SDK and may be implemented on other models, but nothing here should be relied on,
+        and printing needs none of it.
       </p>
 
       <h3 className="subhead">Head width</h3>
@@ -353,13 +337,13 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         ))}
       </div>
       <p className="hint">
-        <strong>Start with the edge frame.</strong> It draws on the outermost dots of a{' '}
-        {headWidth}-dot raster, so if all four sides land on the paper the geometry above is
-        right. A missing side means the raster is wider than the paper; a margin before a side
-        means it is narrower or offset — adjust the width, then the offset, and reprint.
-        The ruler strips are for measuring how far out it is: long ticks are 10 mm apart, so{' '}
-        {headWidth} dots should span exactly {dotsToMm(headWidth)} mm. Nothing reports any of
-        this, so printing is the only way to find out.
+        <strong>Start with the edge frame.</strong> It draws on the outermost dots of a {headWidth}
+        -dot raster, so if all four sides land on the paper the geometry above is right. A missing
+        side means the raster is wider than the paper; a margin before a side means it is narrower
+        or offset — adjust the width, then the offset, and reprint. The ruler strips are for
+        measuring how far out it is: long ticks are 10 mm apart, so {headWidth} dots should span
+        exactly {dotsToMm(headWidth)} mm. Nothing reports any of this, so printing is the only way
+        to find out.
       </p>
 
       <h3 className="subhead">Density</h3>
@@ -384,9 +368,9 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         </button>
       </div>
       <p className="hint">
-        Prints densities {DENSITY_LADDER.join(', ')} in that order, each a solid half beside a
-        50% checker. Pick the lowest one where the solid is fully black and the checker has
-        not filled in.
+        Prints densities {DENSITY_LADDER.join(', ')} in that order, each a solid half beside a 50%
+        checker. Pick the lowest one where the solid is fully black and the checker has not filled
+        in.
       </p>
 
       <h3 className="subhead">Raw command</h3>
@@ -409,10 +393,10 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         <p className="error">Not valid hex. Use bytes like &ldquo;1f 40&rdquo;.</p>
       )}
       <p className="warn">
-        This sends bytes verbatim. Two documented commands are destructive and deliberately
-        absent from the buttons above: <code>1f 50 be</code> resets the printer to factory
-        settings and <code>1f a0 be 66 88</code> drops it into its bootloader, which may need
-        vendor tooling to undo.
+        This sends bytes verbatim. Two documented commands are destructive and deliberately absent
+        from the buttons above: <code>1f 50 be</code> resets the printer to factory settings and{' '}
+        <code>1f a0 be 66 88</code> drops it into its bootloader, which may need vendor tooling to
+        undo.
       </p>
 
       {note && <p className="hint">{note}</p>}
@@ -432,18 +416,22 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
       </div>
       <pre className="log">{formatLog(connection.wireLog.slice(-200))}</pre>
       <p className="hint">
-        Every byte in and out. This is the artifact worth keeping if something goes wrong — it
-        is the actual wire protocol, which matters because the reply formats in this app are
-        inferred rather than documented.
+        Every byte in and out. This is the artifact worth keeping if something goes wrong — it is
+        the actual wire protocol, which matters because the reply formats in this app are inferred
+        rather than documented.
       </p>
     </section>
   )
 }
 
 function parseHex(input: string): Uint8Array | null {
-  const cleaned = input.trim().replace(/0x/gi, '').replace(/[\s,]+/g, ' ').trim()
+  const cleaned = input
+    .trim()
+    .replace(/0x/gi, '')
+    .replace(/[\s,]+/g, ' ')
+    .trim()
   if (cleaned.length === 0) return new Uint8Array()
-  const parts = cleaned.includes(' ') ? cleaned.split(' ') : cleaned.match(/.{1,2}/g) ?? []
+  const parts = cleaned.includes(' ') ? cleaned.split(' ') : (cleaned.match(/.{1,2}/g) ?? [])
   const bytes: number[] = []
   for (const part of parts) {
     if (!/^[0-9a-f]{1,2}$/i.test(part)) return null

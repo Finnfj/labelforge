@@ -11,8 +11,21 @@ import { pack1bpp } from './pack1bpp'
 import { padToHead, type HeadAlign } from './padToHead'
 
 export interface RasterizeOptions {
-  /** Pad the result out to the head width. Omit to get a label-sized bitmap. */
+  /**
+   * Pad the result out to this width and position the label within it.
+   *
+   * Omit for a label-sized bitmap, which is what the vendor app sends and now the
+   * default: for a 40 mm label it transmits 320 dots and lets the printer place
+   * them. Set it only to address a specific head column.
+   */
   headWidthDots?: number
+  /**
+   * Widest raster the head can print, used purely as a limit.
+   *
+   * Separate from {@link headWidthDots} because "how wide the head is" and "pad out
+   * to the head" stopped being the same question once padding became optional.
+   */
+  maxWidthDots?: number
   align?: HeadAlign
   offsetDots?: number
   /** Resolves image assets. Omit and image elements are skipped. */
@@ -103,9 +116,10 @@ export async function rasterize(
   const merged = composite(crispBits, crispMask, toneBits)
   let bitmap = pack1bpp(merged, widthDots, heightDots)
 
-  let clipped = false
+  const limit = options.maxWidthDots ?? options.headWidthDots
+  const clipped = limit != null && widthDots > limit
+
   if (options.headWidthDots) {
-    clipped = widthDots > options.headWidthDots
     bitmap = padToHead(
       bitmap,
       options.headWidthDots,
@@ -113,6 +127,11 @@ export async function rasterize(
       options.offsetDots ?? 0,
       { clip: options.clipToHead },
     )
+  } else if (clipped) {
+    // Not padding, but still too wide for the head. padToHead with a target
+    // narrower than the source crops to it, which is what is wanted here — and it
+    // throws unless clipping was asked for, same as the padding path.
+    bitmap = padToHead(bitmap, limit, 'left', 0, { clip: options.clipToHead })
   }
 
   bitmap = appendBlankRows(bitmap, options.feedAfterDots ?? 0)

@@ -45,13 +45,7 @@ export interface TextElement extends ElementBase {
 }
 
 export type BarcodeSymbology =
-  | 'code128'
-  | 'ean13'
-  | 'ean8'
-  | 'code39'
-  | 'itf14'
-  | 'datamatrix'
-  | 'gs1-128'
+  'code128' | 'ean13' | 'ean8' | 'code39' | 'itf14' | 'datamatrix' | 'gs1-128'
 
 export interface BarcodeElement extends ElementBase {
   kind: 'barcode'
@@ -94,12 +88,7 @@ export interface ShapeElement extends ElementBase {
 }
 
 export type LabelElement =
-  | TextElement
-  | BarcodeElement
-  | QrElement
-  | ImageElement
-  | IconElement
-  | ShapeElement
+  TextElement | BarcodeElement | QrElement | ImageElement | IconElement | ShapeElement
 
 export type ElementKind = LabelElement['kind']
 

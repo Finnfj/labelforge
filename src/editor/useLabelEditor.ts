@@ -90,19 +90,16 @@ export function useLabelEditor(): LabelEditor {
     })
   }, [])
 
-  const mutate = useCallback(
-    (fn: (draft: LabelDoc) => LabelDoc, transient = false) => {
-      setDocState((current) => {
-        if (!transient) {
-          past.current = [...past.current, current].slice(-HISTORY_LIMIT)
-          future.current = []
-          setHistoryTick((t) => t + 1)
-        }
-        return { ...fn(current), updatedAt: Date.now() }
-      })
-    },
-    [],
-  )
+  const mutate = useCallback((fn: (draft: LabelDoc) => LabelDoc, transient = false) => {
+    setDocState((current) => {
+      if (!transient) {
+        past.current = [...past.current, current].slice(-HISTORY_LIMIT)
+        future.current = []
+        setHistoryTick((t) => t + 1)
+      }
+      return { ...fn(current), updatedAt: Date.now() }
+    })
+  }, [])
 
   const addElement = useCallback(
     (element: DraftElement) => {

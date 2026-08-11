@@ -7,12 +7,7 @@
  * the shapes already line up.
  */
 
-export type TransportState =
-  | 'disconnected'
-  | 'requesting'
-  | 'connecting'
-  | 'ready'
-  | 'error'
+export type TransportState = 'disconnected' | 'requesting' | 'connecting' | 'ready' | 'error'
 
 /** Printer-to-host channels. Writes always go to the one write characteristic. */
 export type NotifyChannel = 'status' | 'credits'

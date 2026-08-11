@@ -67,8 +67,7 @@ export function PaperRoll({
   }, [bitmap, mode, labelStartDots, labelWidthDots, viewOriginDots, viewWidthDots])
 
   const shownWidth = Math.min(viewWidthDots ?? bitmap?.widthDots ?? 0, bitmap?.widthDots ?? 0)
-  const factor =
-    zoom === 'fit' ? fitFactor(availableWidth, shownWidth) : zoomFactor(zoom)
+  const factor = zoom === 'fit' ? fitFactor(availableWidth, shownWidth) : zoomFactor(zoom)
 
   return (
     <div className="roll" ref={rollRef}>

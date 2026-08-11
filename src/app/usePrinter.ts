@@ -23,15 +23,25 @@ export type PrinterKind = 'virtual' | 'ble'
  */
 export interface HeadGeometry {
   headWidthDots: number
+  /**
+   * Pad the raster out to the full head width and position the label inside it.
+   *
+   * Off by default, because an HCI capture settled what the vendor app does: for a
+   * 40 mm label it sends a 320-dot raster — exactly the label width, no padding at
+   * all — and lets the printer place it. Matching that is strictly better than
+   * guessing at an alignment. The option remains for diagnosing placement, since
+   * padding is the only way to address a specific head column.
+   */
+  padToHead: boolean
   align: 'left' | 'center' | 'right'
   /** Fine adjustment in dots; 8 dots is 1 mm. May be negative. */
   offsetDots: number
   /**
    * Blank rows fed after each label, to cross the inter-label gap.
    *
-   * A label pitch is height + gap. The printer stops at the end of the raster and
-   * every motion command is inert, so unless each print advances a full pitch the
-   * error accumulates: second label slightly off, third twice as far.
+   * Now a fallback rather than the mechanism: the print sequence ends with a
+   * sensor-driven gap seek, which is how the vendor app registers each label. Left
+   * in for continuous stock and for the case where the seek misbehaves.
    */
   feedAfterDots: number
 }
@@ -39,33 +49,32 @@ export interface HeadGeometry {
 const GEOMETRY_KEY = 'labelforge.geometry.v1'
 
 /**
- * 384 dots (48 mm), established with the edge-frame pattern — see
- * DEFAULT_HEAD_WIDTH_DOTS.
+ * Head width is 384 dots (48 mm), from the edge-frame pattern — see
+ * DEFAULT_HEAD_WIDTH_DOTS. Everything else here now matches the vendor app rather
+ * than being inferred.
  *
- * Right alignment is the default because on the P50S the stock sits towards the
- * right-hand end of the head, so a narrower label belongs there. Where exactly it
- * sits is what the offset is for; the edge frame plus a single measurement settles
- * it, and guessing costs a label each time.
+ * No padding, no feed: the app sends a label-width raster and ends the job with a
+ * sensor gap seek. Alignment and offset only take effect when padding is turned
+ * back on, and are kept for diagnosing placement.
  */
 export const DEFAULT_GEOMETRY: HeadGeometry = {
   headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
-  align: 'right',
+  padToHead: false,
+  align: 'left',
   offsetDots: 0,
-  // 2 mm, a common die-cut gap. It has to be measured for the actual stock, but
-  // starting from a plausible value converges in one correction, whereas
-  // starting from zero looks like the drift bug this exists to fix.
-  feedAfterDots: 16,
+  feedAfterDots: 0,
 }
 
 /**
  * Bumped when a stored default would now be wrong.
  *
- * Version 2 discarded pre-geometry settings. The head-width default has since
- * moved 384 -> 400 -> 384 as the evidence improved, but a stored value is the
- * user's own measurement and outranks any default, so that churn deliberately
- * did *not* bump this.
+ * Version 2 discarded pre-geometry settings. Version 3 discards the settings that
+ * existed to work around the missing gap seek — right alignment, head-width padding
+ * and a 2 mm blank feed. Those were reasonable inferences and they are now known to
+ * be wrong, so a stored copy of them has to go, even though stored values normally
+ * outrank defaults. Head width is exempt from that reasoning but rides along.
  */
-const GEOMETRY_VERSION = 2
+const GEOMETRY_VERSION = 3
 
 function loadGeometry(): HeadGeometry {
   try {
@@ -78,12 +87,9 @@ function loadGeometry(): HeadGeometry {
         Number.isFinite(parsed.headWidthDots) && parsed.headWidthDots! > 0
           ? Math.round(parsed.headWidthDots!)
           : DEFAULT_GEOMETRY.headWidthDots,
-      align:
-        parsed.align === 'center' || parsed.align === 'right'
-          ? parsed.align
-          : 'left',
+      padToHead: parsed.padToHead === true,
+      align: parsed.align === 'center' || parsed.align === 'right' ? parsed.align : 'left',
       offsetDots: Number.isFinite(parsed.offsetDots) ? Math.round(parsed.offsetDots!) : 0,
-      // Absent in settings saved before the gap feed existed.
       feedAfterDots: Number.isFinite(parsed.feedAfterDots)
         ? Math.max(0, Math.round(parsed.feedAfterDots!))
         : DEFAULT_GEOMETRY.feedAfterDots,
@@ -192,30 +198,27 @@ export function usePrinter(): PrinterConnection {
     [kind],
   )
 
-  const connect = useCallback(
-    async (options?: { acceptAllDevices?: boolean }) => {
-      setError(null)
-      setBusy(true)
+  const connect = useCallback(async (options?: { acceptAllDevices?: boolean }) => {
+    setError(null)
+    setBusy(true)
+    try {
+      // Called straight from the click handler: Web Bluetooth's chooser needs
+      // the user activation still to be live, and any await before this point
+      // would forfeit it.
+      const current = driverRef.current!
+      const caps = await (current as BlePrinterDriver).connect(options)
+      setCapabilities(caps)
       try {
-        // Called straight from the click handler: Web Bluetooth's chooser needs
-        // the user activation still to be live, and any await before this point
-        // would forfeit it.
-        const current = driverRef.current!
-        const caps = await (current as BlePrinterDriver).connect(options)
-        setCapabilities(caps)
-        try {
-          setStatus(await current.getStatus())
-        } catch {
-          // Status is a nicety; a printer that will not answer can still print.
-        }
-      } catch (e) {
-        setError(describe(e))
-      } finally {
-        setBusy(false)
+        setStatus(await current.getStatus())
+      } catch {
+        // Status is a nicety; a printer that will not answer can still print.
       }
-    },
-    [],
-  )
+    } catch (e) {
+      setError(describe(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [])
 
   const disconnect = useCallback(async () => {
     setBusy(true)

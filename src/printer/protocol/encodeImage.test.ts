@@ -19,8 +19,7 @@ const PAINTERS: Record<string, (x: number, y: number) => [number, number, number
   'stride-385x40': (x) => (x % 3 === 0 ? [0, 0, 0, 255] : [255, 255, 255, 255]),
   'transparent-384x16': () => [0, 0, 0, 0],
   'grey-ramp-256x32': (x) => [x, x, x, 255],
-  'checker-384x1200': (x, y) =>
-    ((x >> 3) + (y >> 3)) % 2 ? [0, 0, 0, 255] : [255, 255, 255, 255],
+  'checker-384x1200': (x, y) => (((x >> 3) + (y >> 3)) % 2 ? [0, 0, 0, 255] : [255, 255, 255, 255]),
   'threshold-edge-64x8': (x) => {
     const v = 199 + (x % 3)
     return [v, v, v, 255]
@@ -64,8 +63,7 @@ function paintToBits(name: string, width: number, height: number): Uint8Array {
   return binariseLikeVendor(rgba, width * height)
 }
 
-const fromBase64 = (b64: string): Uint8Array =>
-  Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+const fromBase64 = (b64: string): Uint8Array => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
 
 describe('encodeImage against vendor SDK goldens', () => {
   it.each(goldens.fixtures.map((f) => [f.name, f] as const))('%s', (_name, fixture) => {

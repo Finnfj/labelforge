@@ -22,12 +22,7 @@ export interface PrinterCapabilities {
 }
 
 export type PrinterFault =
-  | 'none'
-  | 'no-paper'
-  | 'cover-open'
-  | 'overheat'
-  | 'low-battery'
-  | 'unknown'
+  'none' | 'no-paper' | 'cover-open' | 'overheat' | 'low-battery' | 'unknown'
 
 export interface PrinterStatus {
   online: boolean
@@ -61,12 +56,7 @@ export interface PrintProgress {
   copies: number
 }
 
-export type PrinterState =
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'printing'
-  | 'error'
+export type PrinterState = 'disconnected' | 'connecting' | 'connected' | 'printing' | 'error'
 
 /**
  * A type alias rather than an interface: interfaces have no implicit index
