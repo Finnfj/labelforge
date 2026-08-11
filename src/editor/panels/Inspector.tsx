@@ -7,7 +7,7 @@ import type {
   ShapeElement,
   TextElement,
 } from '../../model/labelDoc'
-import { ICONS, iconToSvg } from '../../render/icons'
+import { iconsByGroup, iconToSvg } from '../../render/icons'
 import { mmToDots } from '../../model/units'
 import { checkCode } from '../../render/barcode'
 import type { LabelEditor } from '../useLabelEditor'
@@ -302,18 +302,25 @@ export function Inspector({ editor }: { editor: LabelEditor }) {
 
       {element.kind === 'icon' && (
         <div className="symbols symbols--inline">
-          {ICONS.map((icon) => (
-            <button
-              key={icon.id}
-              className={
-                'symbols__item' +
-                (icon.id === (element as IconElement).iconId ? ' symbols__item--active' : '')
-              }
-              title={icon.label}
-              onClick={() => set({ iconId: icon.id } as Partial<IconElement>)}
-              // Markup comes from our own icon table, not user input.
-              dangerouslySetInnerHTML={{ __html: iconToSvg(icon, 22) }}
-            />
+          {iconsByGroup().map(({ group, icons }) => (
+            <div key={group} className="symbols__group">
+              <h4 className="symbols__heading">{group}</h4>
+              <div className="symbols__grid">
+                {icons.map((icon) => (
+                  <button
+                    key={icon.id}
+                    className={
+                      'symbols__item' +
+                      (icon.id === (element as IconElement).iconId ? ' symbols__item--active' : '')
+                    }
+                    title={icon.label}
+                    onClick={() => set({ iconId: icon.id } as Partial<IconElement>)}
+                    // Markup comes from our own icon table, not user input.
+                    dangerouslySetInnerHTML={{ __html: iconToSvg(icon, 22) }}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

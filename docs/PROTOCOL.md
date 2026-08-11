@@ -1,11 +1,29 @@
 # MarkLife P50 / P50S wire protocol
 
-Everything here was established by reading the vendor SDK's source and verified
-empirically where possible. See `docs/THIRD_PARTY.md` for provenance.
+How this document was arrived at, and how much to trust each part of it. See
+`docs/THIRD_PARTY.md` for provenance.
 
-Unverified-on-hardware items are marked **[unconfirmed]** — they come from the SDK or
-from community reverse-engineering but have not yet been observed against a real
-printer. Update this file as the diagnostics page confirms them.
+There are three tiers of evidence here, and the difference between them turned out to
+matter enormously:
+
+1. **Read from the vendor SDK.** A starting point, no more. The published SDK is a
+   tidied-up facade over an archived original, and where they disagree the facade is
+   frequently wrong — it invents commands that appear nowhere in the vendor's own code
+   and that no real printer answers. Marked **[unconfirmed]** where untested.
+2. **Tested against a real P50S** (firmware V2.0.00). Reliable about what was tested,
+   but read the _exact_ claim: "does nothing" always means "does nothing in the
+   position it was sent in", which is not the same as unimplemented. That distinction
+   is what hid the gap-seek command for four rounds of investigation.
+3. **Captured from the vendor Android app** over Bluetooth HCI snoop, then replayed
+   and confirmed on hardware. This is ground truth and it overrides both of the above.
+   `scripts/parse-btsnoop.mjs` decodes such a capture; the procedure is at the end of
+   this document.
+
+**Where a section carries a tier-3 finding it says so.** Several tier-1 and tier-2
+conclusions in here were flatly wrong, and rather than quietly deleting them the
+reasoning that failed is kept alongside the correction — the failure modes repeat, and
+a plausible inference that fit the evidence is exactly the thing to be wary of next
+time.
 
 ## Transport
 
@@ -241,9 +259,10 @@ What does move paper is a **print job**. So to feed a known distance, print an
 all-white raster of that height: the head advances the rows and fires no dots.
 Confirmed working on hardware; every alternative was confirmed not to.
 
-### Keeping successive labels aligned — solved
+### Keeping successive labels aligned — solved and confirmed
 
-**A sensor gap seek does exist, and it is `1F 12 20 00` — `locate` in gap mode.**
+**A sensor gap seek does exist, it is `1F 12 20 00` — `locate` in gap mode — and with
+it in the right place labels now register correctly print after print.**
 
 This was reverse-engineered wrongly twice before an HCI capture of the vendor
 Android app settled it, so the reasoning is worth recording:
@@ -279,10 +298,15 @@ Worth knowing, because several of these were assumed:
 - **No `setPaperType` mode `01`.** It uses mode `02` exclusively.
 - **No padding of the raster to head width.** See Geometry.
 
-## Print sequence — transcribed from a capture of the vendor app
+## Print sequence — captured, then confirmed working
 
-Repeated verbatim per copy, configuration included. Confirmed identical across
-three consecutive prints in one capture.
+**Tier 3, and confirmed on hardware.** Transcribed from an HCI capture of the vendor
+app printing the same label three times, then implemented here and verified: labels
+now register correctly print after print, which is what four earlier attempts built on
+inference failed to achieve.
+
+Repeated verbatim per copy, configuration included. Byte-identical across all three
+captured prints.
 
 ```
 10 FF 50 F1                        battery — the app's own UI polling, not required

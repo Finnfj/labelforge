@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { DraftElement } from '../../model/labelDoc'
-import { ICONS, iconToSvg } from '../../render/icons'
+import { iconsByGroup, iconToSvg } from '../../render/icons'
 import { putAsset } from '../../storage/assets'
 import type { LabelEditor } from '../useLabelEditor'
 
@@ -178,25 +178,34 @@ export function Toolbar({ editor }: { editor: LabelEditor }) {
 
       {symbolsOpen && (
         <div className="symbols">
-          {ICONS.map((icon) => (
-            <button
-              key={icon.id}
-              className="symbols__item"
-              title={icon.label}
-              onClick={() => {
-                add({
-                  kind: 'icon',
-                  iconId: icon.id,
-                  x: 2,
-                  y: 2,
-                  widthMm: 10,
-                  heightMm: 10,
-                  rotation: 0,
-                })
-                setSymbolsOpen(false)
-              }}
-              dangerouslySetInnerHTML={{ __html: iconToSvg(icon, 26) }}
-            />
+          {/* Grouped rather than one flat grid: at seventy symbols a flat grid is
+              a wall of small line drawings and finding one means scanning it all. */}
+          {iconsByGroup().map(({ group, icons }) => (
+            <div key={group} className="symbols__group">
+              <h4 className="symbols__heading">{group}</h4>
+              <div className="symbols__grid">
+                {icons.map((icon) => (
+                  <button
+                    key={icon.id}
+                    className="symbols__item"
+                    title={icon.label}
+                    onClick={() => {
+                      add({
+                        kind: 'icon',
+                        iconId: icon.id,
+                        x: 2,
+                        y: 2,
+                        widthMm: 10,
+                        heightMm: 10,
+                        rotation: 0,
+                      })
+                      setSymbolsOpen(false)
+                    }}
+                    dangerouslySetInnerHTML={{ __html: iconToSvg(icon, 26) }}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

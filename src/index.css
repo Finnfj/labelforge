@@ -8,7 +8,12 @@
   --danger: #f08a8a;
 
   color-scheme: dark light;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
   color: var(--text);
   background: var(--bg);
 }
@@ -352,17 +357,40 @@ button.primary:hover:not(:disabled) {
 
 /* ---- symbols and templates ---- */
 
+/* The container scrolls; the grid lives one level down, per group. */
 .symbols {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(2.4rem, 1fr));
-  gap: 0.3rem;
   width: 100%;
   margin-top: 0.5rem;
   padding: 0.5rem;
   border: 1px solid var(--line);
   border-radius: 8px;
-  max-height: 12rem;
-  overflow: auto;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.symbols__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.4rem, 1fr));
+  gap: 0.3rem;
+}
+
+.symbols__group + .symbols__group {
+  margin-top: 0.7rem;
+}
+
+.symbols__heading {
+  margin: 0 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  /* Sticky so the group a symbol belongs to stays readable while scrolling —
+     which is the entire reason for grouping them. */
+  position: sticky;
+  top: -0.5rem;
+  background: var(--panel);
+  padding: 0.15rem 0;
 }
 
 .symbols__item {
@@ -486,4 +514,88 @@ input.mono {
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--text);
+}
+
+/* --- Collapsible "Advanced" sections ------------------------------------
+   Everything the vendor-app capture showed to be unnecessary — head padding,
+   alignment, manual gap feed, the inert-command probes — lives behind one of
+   these. Still reachable, no longer in the way. */
+
+.advanced {
+  margin-top: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--line) 22%, transparent);
+}
+
+.advanced > summary {
+  cursor: pointer;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  /* The default triangle is replaced by one that reads at this size. */
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced > summary::before {
+  content: '▸';
+  font-size: 0.7rem;
+  transition: transform 120ms ease;
+}
+
+.advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.advanced > summary:hover {
+  color: var(--text);
+}
+
+.advanced__body {
+  padding: 0.2rem 0.7rem 0.7rem;
+  border-top: 1px solid var(--line);
+}
+
+/* A note on what is inside, shown only while collapsed, so the section is not
+   a mystery box. */
+.advanced__hint {
+  font-weight: 400;
+  letter-spacing: 0;
+  font-size: 0.76rem;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.advanced[open] > summary .advanced__hint {
+  display: none;
+}
+
+/* Diagnostics, when closed: a line of text rather than a card. */
+.diagnostics__toggle {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 0.8rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.linklike:hover:not(:disabled) {
+  background: none;
+  filter: brightness(1.15);
 }

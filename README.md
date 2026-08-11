@@ -8,27 +8,45 @@ over **Web Bluetooth**.
 
 ## Status
 
-Everything buildable without the printer is in place, including the Bluetooth
-driver. What remains is the diagnostics page and then the work that genuinely
-needs the hardware: confirming the command set is accepted, measuring the true
-head width, and calibrating density and gap detection.
+**Working end to end on a real P50S.** Text, shapes, barcodes, QR, images and symbols
+design in the browser and print over Bluetooth, and successive labels stay registered
+on gap stock without manual calibration.
+
+That last part took some getting to. The vendor SDK contains no gap-seek command, and
+four rounds of reasoning from the SDK plus hardware testing concluded — wrongly — that
+none existed. Capturing the vendor Android app's own Bluetooth traffic settled it in
+one pass: the seek is `1F 12 20 00`, a command that had been in our table the whole
+time, issued _after_ the raster payload and before the job ends. Sent anywhere else it
+does nothing at all, which is why it had been written off.
+
+The same capture corrected three other guesses: the raster is sent at label width with
+no padding to the head, paper type uses a different mode byte, and print parameters go
+out in a longer form than the SDK documents. `scripts/parse-btsnoop.mjs` decodes such a
+capture against the known command set, and `docs/PROTOCOL.md` records both the findings
+and the reasoning that failed.
 
 Working today:
 
 - Web Bluetooth connection, with identity and status queries, credit-based flow
   control, chunked transfer, progress and cancellation
-
+- The vendor app's exact print sequence, including the sensor gap seek, so labels
+  self-register
 - Label documents in millimetres, with stock presets and gap/continuous paper
 - Text, rectangles, ellipses and lines
 - Barcodes (Code 128/39, EAN-8/13, ITF-14, GS1-128, Data Matrix) and QR codes,
   rendered at whole-dot module widths with proper quiet zones
 - Image upload with per-image threshold, inversion, and a line-art/photo choice
   that decides between hard thresholding and Floyd–Steinberg dithering
-- A 36-symbol library drawn for thermal output
+- A 70-symbol library drawn for thermal output, grouped and including the full
+  copyright/copyleft/Creative Commons family
 - Templates, plus self-contained JSON export/import with images inlined
 - A **virtual printer** that runs the real command sequence and the real encoder,
   then shows the exact bitmap the hardware would receive — including a thermal-bleed
   simulation that reveals text which will smear shut before you waste a label
+
+Settings that exist only for diagnosis — head padding and alignment, manual gap feed,
+the commands this firmware ignores — are folded into **Advanced** sections, since the
+defaults now match what the vendor app does.
 
 ## Requirements
 
@@ -62,8 +80,16 @@ npx playwright install chromium   # once, for the browser tier
 
 ## Documentation
 
-- `docs/PROTOCOL.md` — the wire protocol: GATT profile, command set, raster format
+- `docs/PROTOCOL.md` — the wire protocol: GATT profile, command set, raster format,
+  the captured print sequence, and how to capture one yourself
 - `docs/THIRD_PARTY.md` — dependencies, provenance and licensing
+
+```bash
+npm run snoop captures/btsnoop_hci.log
+```
+
+Decodes an Android Bluetooth HCI snoop log down to the printer's command stream, with
+every byte matched against the known command table. Needs no Wireshark.
 
 ## Licence
 

@@ -116,144 +116,167 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
         </div>
       )}
 
-      <h3 className="subhead">Print head geometry</h3>
-      <div className="row">
-        <label className="field">
-          {/* Not just "Width": the label size panel has one of those too, in mm. */}
-          <span style={{ minWidth: '5rem' }}>Head width</span>
-          <input
-            type="number"
-            min={8}
-            step={8}
-            value={connection.geometry.headWidthDots}
-            onChange={(e) =>
-              connection.setGeometry({ headWidthDots: Math.max(8, Number(e.target.value) || 8) })
-            }
-          />
-          <em>dots</em>
-        </label>
-        <span className="hint">= {dotsToMm(connection.geometry.headWidthDots)} mm</span>
-        <label className="field field--check">
-          <input
-            type="checkbox"
-            checked={connection.geometry.padToHead}
-            onChange={(e) => connection.setGeometry({ padToHead: e.target.checked })}
-          />
-          <span>Pad to head width</span>
-        </label>
-        <label className="field">
-          <span>Align</span>
-          <select
-            value={connection.geometry.align}
-            disabled={!connection.geometry.padToHead}
-            onChange={(e) =>
-              connection.setGeometry({
-                align: e.target.value as 'left' | 'center' | 'right',
-              })
-            }
-          >
-            <option value="left">Left</option>
-            <option value="center">Centre</option>
-            <option value="right">Right</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>Offset</span>
-          <input
-            type="number"
-            step={1}
-            disabled={!connection.geometry.padToHead}
-            value={connection.geometry.offsetDots}
-            onChange={(e) => connection.setGeometry({ offsetDots: Number(e.target.value) || 0 })}
-          />
-          <em>dots</em>
-        </label>
-        {/* Nudges in whole millimetres: measuring an error off a printed label
+      {/*
+        All of this turned out to be unnecessary, so it is folded away rather than
+        deleted. The capture of the vendor app settled both questions it existed to
+        answer: the raster goes out at label width with no padding and no alignment
+        choice, and registration comes from a sensor gap seek rather than a measured
+        blank feed. What is left is for diagnosing placement on stock that
+        misbehaves, which is a real but rare need.
+      */}
+      <details className="advanced">
+        <summary>
+          Head geometry and manual feed
+          <span className="advanced__hint">
+            defaults now match the vendor app &mdash; you should not need these
+          </span>
+        </summary>
+        <div className="advanced__body">
+          <h3 className="subhead">Print head geometry</h3>
+          <div className="row">
+            <label className="field">
+              {/* Not just "Width": the label size panel has one of those too, in mm. */}
+              <span style={{ minWidth: '5rem' }}>Head width</span>
+              <input
+                type="number"
+                min={8}
+                step={8}
+                value={connection.geometry.headWidthDots}
+                onChange={(e) =>
+                  connection.setGeometry({
+                    headWidthDots: Math.max(8, Number(e.target.value) || 8),
+                  })
+                }
+              />
+              <em>dots</em>
+            </label>
+            <span className="hint">= {dotsToMm(connection.geometry.headWidthDots)} mm</span>
+            <label className="field field--check">
+              <input
+                type="checkbox"
+                checked={connection.geometry.padToHead}
+                onChange={(e) => connection.setGeometry({ padToHead: e.target.checked })}
+              />
+              <span>Pad to head width</span>
+            </label>
+            <label className="field">
+              <span>Align</span>
+              <select
+                value={connection.geometry.align}
+                disabled={!connection.geometry.padToHead}
+                onChange={(e) =>
+                  connection.setGeometry({
+                    align: e.target.value as 'left' | 'center' | 'right',
+                  })
+                }
+              >
+                <option value="left">Left</option>
+                <option value="center">Centre</option>
+                <option value="right">Right</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Offset</span>
+              <input
+                type="number"
+                step={1}
+                disabled={!connection.geometry.padToHead}
+                value={connection.geometry.offsetDots}
+                onChange={(e) =>
+                  connection.setGeometry({ offsetDots: Number(e.target.value) || 0 })
+                }
+              />
+              <em>dots</em>
+            </label>
+            {/* Nudges in whole millimetres: measuring an error off a printed label
             gives millimetres, and converting by hand each time invites slips. */}
-        <button
-          disabled={!connection.geometry.padToHead}
-          onClick={() =>
-            connection.setGeometry({ offsetDots: connection.geometry.offsetDots - DOTS_PER_MM })
-          }
-        >
-          &minus;1 mm
-        </button>
-        <button
-          disabled={!connection.geometry.padToHead}
-          onClick={() =>
-            connection.setGeometry({ offsetDots: connection.geometry.offsetDots + DOTS_PER_MM })
-          }
-        >
-          +1 mm
-        </button>
-        <span className="hint">
-          {connection.geometry.offsetDots === 0
-            ? '8 dots = 1 mm; positive moves right'
-            : `${(connection.geometry.offsetDots / DOTS_PER_MM).toFixed(2)} mm`}
-        </span>
-      </div>
-      <p className="hint">
-        Leave padding <strong>off</strong>. A capture of the vendor app&rsquo;s Bluetooth traffic
-        shows it sends a raster exactly as wide as the label &mdash; 320 dots for a 40&nbsp;mm one
-        &mdash; and lets the printer position it. Padding out to the head and choosing an alignment
-        was our guess at what it did, and the guess was wrong.
-        <br />
-        Turn it on only to diagnose placement, since padding is the only way to aim at a specific
-        head column. Head width still matters as a limit: print <strong>Edge frame</strong> from
-        Diagnostics and if all four sides land on the paper it is right.
-      </p>
+            <button
+              disabled={!connection.geometry.padToHead}
+              onClick={() =>
+                connection.setGeometry({ offsetDots: connection.geometry.offsetDots - DOTS_PER_MM })
+              }
+            >
+              &minus;1 mm
+            </button>
+            <button
+              disabled={!connection.geometry.padToHead}
+              onClick={() =>
+                connection.setGeometry({ offsetDots: connection.geometry.offsetDots + DOTS_PER_MM })
+              }
+            >
+              +1 mm
+            </button>
+            <span className="hint">
+              {connection.geometry.offsetDots === 0
+                ? '8 dots = 1 mm; positive moves right'
+                : `${(connection.geometry.offsetDots / DOTS_PER_MM).toFixed(2)} mm`}
+            </span>
+          </div>
+          <p className="hint">
+            Leave padding <strong>off</strong>. A capture of the vendor app&rsquo;s Bluetooth
+            traffic shows it sends a raster exactly as wide as the label &mdash; 320 dots for a
+            40&nbsp;mm one &mdash; and lets the printer position it. Padding out to the head and
+            choosing an alignment was our guess at what it did, and the guess was wrong.
+            <br />
+            Turn it on only to diagnose placement, since padding is the only way to aim at a
+            specific head column. Head width still matters as a limit: print{' '}
+            <strong>Edge frame</strong> from Diagnostics and if all four sides land on the paper it
+            is right.
+          </p>
 
-      <h3 className="subhead">Inter-label gap</h3>
-      <div className="row">
-        <label className="field">
-          <span style={{ minWidth: '5rem' }}>Feed after</span>
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={connection.geometry.feedAfterDots}
-            onChange={(e) =>
-              connection.setGeometry({
-                feedAfterDots: Math.max(0, Number(e.target.value) || 0),
-              })
-            }
-          />
-          <em>dots</em>
-        </label>
-        <button
-          onClick={() =>
-            connection.setGeometry({
-              feedAfterDots: Math.max(0, connection.geometry.feedAfterDots - DOTS_PER_MM),
-            })
-          }
-        >
-          &minus;1 mm
-        </button>
-        <button
-          onClick={() =>
-            connection.setGeometry({
-              feedAfterDots: connection.geometry.feedAfterDots + DOTS_PER_MM,
-            })
-          }
-        >
-          +1 mm
-        </button>
-        <span className="hint">
-          {(connection.geometry.feedAfterDots / DOTS_PER_MM).toFixed(2)} mm of blank fed after each
-          label
-        </span>
-      </div>
-      <p className="hint">
-        <strong>Normally leave this at 0.</strong> Every print now ends with a sensor-driven gap
-        seek — the same command, in the same place, as the vendor app — so the printer finds the
-        next label itself and nothing accumulates. This setting appends blank rows to the raster
-        instead, which was the workaround for the seek we had not yet found.
-        <br />
-        Still useful in two cases: continuous tape, where there is no gap to seek and a few
-        millimetres of lead-out is convenient; and as a fallback if the seek misbehaves on your
-        stock. To tune it, print the same label three times — if each creeps <em>backwards</em>, add
-        that many millimetres.
-      </p>
+          <h3 className="subhead">Inter-label gap</h3>
+          <div className="row">
+            <label className="field">
+              <span style={{ minWidth: '5rem' }}>Feed after</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={connection.geometry.feedAfterDots}
+                onChange={(e) =>
+                  connection.setGeometry({
+                    feedAfterDots: Math.max(0, Number(e.target.value) || 0),
+                  })
+                }
+              />
+              <em>dots</em>
+            </label>
+            <button
+              onClick={() =>
+                connection.setGeometry({
+                  feedAfterDots: Math.max(0, connection.geometry.feedAfterDots - DOTS_PER_MM),
+                })
+              }
+            >
+              &minus;1 mm
+            </button>
+            <button
+              onClick={() =>
+                connection.setGeometry({
+                  feedAfterDots: connection.geometry.feedAfterDots + DOTS_PER_MM,
+                })
+              }
+            >
+              +1 mm
+            </button>
+            <span className="hint">
+              {(connection.geometry.feedAfterDots / DOTS_PER_MM).toFixed(2)} mm of blank fed after
+              each label
+            </span>
+          </div>
+          <p className="hint">
+            <strong>Normally leave this at 0.</strong> Every print now ends with a sensor-driven gap
+            seek — the same command, in the same place, as the vendor app — so the printer finds the
+            next label itself and nothing accumulates. This setting appends blank rows to the raster
+            instead, which was the workaround for the seek we had not yet found.
+            <br />
+            Still useful in two cases: continuous tape, where there is no gap to seek and a few
+            millimetres of lead-out is convenient; and as a fallback if the seek misbehaves on your
+            stock. To tune it, print the same label three times — if each creeps <em>backwards</em>,
+            add that many millimetres.
+          </p>
+        </div>
+      </details>
     </section>
   )
 }

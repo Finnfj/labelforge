@@ -75,7 +75,7 @@ export function PrintPanel({ doc, connection }: { doc: LabelDoc; connection: Pri
           if (cancelled) return
           setError(
             e instanceof LabelTooWideError
-              ? `${e.message} Choose a narrower roll, or measure the real head width with the ruler strip.`
+              ? `${e.message} Choose a narrower roll — a P50S head is 384 dots, or 48 mm.`
               : e instanceof Error
                 ? e.message
                 : String(e),
@@ -146,19 +146,6 @@ export function PrintPanel({ doc, connection }: { doc: LabelDoc; connection: Pri
             <em>{settings.density}</em>
           </label>
           <label className="field">
-            <span>Speed</span>
-            <select
-              value={settings.speed}
-              onChange={(e) =>
-                setSettings((s) => ({ ...s, speed: Number(e.target.value) as 0 | 1 | 2 }))
-              }
-            >
-              <option value={0}>Low</option>
-              <option value={1}>Medium</option>
-              <option value={2}>High</option>
-            </select>
-          </label>
-          <label className="field">
             <span>Copies</span>
             <input
               type="number"
@@ -179,24 +166,6 @@ export function PrintPanel({ doc, connection }: { doc: LabelDoc; connection: Pri
             onClick={() => bitmap && send(bitmap)}
           >
             Print label
-          </button>
-          <button
-            disabled={printing || !connected}
-            onClick={() => printPattern((h) => testStrip(h))}
-          >
-            Test strip
-          </button>
-          <button
-            disabled={printing || !connected}
-            onClick={() => printPattern((h) => rulerStrip(h))}
-          >
-            Ruler strip
-          </button>
-          <button
-            disabled={printing || !connected}
-            onClick={() => printPattern((h) => checkerboard(h, 96))}
-          >
-            Checkerboard
           </button>
           {printing && (
             <button className="danger" onClick={() => abortRef.current?.abort()}>
@@ -228,15 +197,75 @@ export function PrintPanel({ doc, connection }: { doc: LabelDoc; connection: Pri
           </div>
         )}
 
+        {/*
+          Speed and the test patterns sit here because the capture showed what they
+          are worth. The vendor app never sends a speed command at all, so ours may
+          be doing nothing — speed could be one of the six unidentified bytes in
+          `setPrintParams`. The patterns existed to measure head width and placement
+          by trial, which the capture answered outright.
+        */}
+        <details className="advanced">
+          <summary>
+            Advanced
+            <span className="advanced__hint">speed and test patterns</span>
+          </summary>
+          <div className="advanced__body">
+            <div className="row">
+              <label className="field">
+                <span>Speed</span>
+                <select
+                  value={settings.speed}
+                  onChange={(e) =>
+                    setSettings((s) => ({ ...s, speed: Number(e.target.value) as 0 | 1 | 2 }))
+                  }
+                >
+                  <option value={0}>Low</option>
+                  <option value={1}>Medium</option>
+                  <option value={2}>High</option>
+                </select>
+              </label>
+              <span className="hint">
+                The vendor app sends no speed command, so this may have no effect.
+              </span>
+            </div>
+
+            <div className="row" style={{ marginTop: '0.6rem' }}>
+              <button
+                disabled={printing || !connected}
+                onClick={() => printPattern((h) => testStrip(h))}
+              >
+                Test strip
+              </button>
+              <button
+                disabled={printing || !connected}
+                title="Millimetre-numbered rulers. Used to measure head width before the capture settled it at 384 dots."
+                onClick={() => printPattern((h) => rulerStrip(h))}
+              >
+                Ruler strip
+              </button>
+              <button
+                disabled={printing || !connected}
+                onClick={() => printPattern((h) => checkerboard(h, 96))}
+              >
+                Checkerboard
+              </button>
+            </div>
+            <p className="hint">
+              Each of these prints at full head width, so they ignore the label size and
+              deliberately overrun narrow stock.
+            </p>
+          </div>
+        </details>
+
         {!connected && <p className="hint">Connect a printer above to enable printing.</p>}
 
         {error && <p className="error">{error}</p>}
         {clipped && (
           <p className="warn">
-            This label is {dotsToMm(labelWidthDots)} mm wide but the print head is assumed to be{' '}
-            {dotsToMm(headWidth)} mm. Anything past that edge will be cut off. The head width is an
-            assumption until you measure it with the ruler strip — the P50 may well be a true 50 mm
-            head.
+            This label is {dotsToMm(labelWidthDots)} mm wide but the print head is only{' '}
+            {dotsToMm(headWidth)} mm, so anything past that edge is cut off. 384 dots was measured
+            with the edge-frame pattern and agrees with the vendor SDK; if your unit differs, the
+            head width is under Advanced in the Printer panel.
           </p>
         )}
       </section>
