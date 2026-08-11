@@ -24,28 +24,89 @@ export function testStrip(headWidthDots: number, heightDots = 120): PackedBitmap
 }
 
 /**
+ * A 3×5 dot font, just the digits.
+ *
+ * Enough to number a ruler, which turns "count the ticks and hope" into reading
+ * a number off the paper. Drawn by hand rather than rasterised from a real font:
+ * this module must stay free of canvas so it works anywhere, and at this size
+ * hinting would wreck a real typeface anyway.
+ */
+const DIGITS_3X5: Record<string, number[]> = {
+  '0': [0b111, 0b101, 0b101, 0b101, 0b111],
+  '1': [0b010, 0b110, 0b010, 0b010, 0b111],
+  '2': [0b111, 0b001, 0b111, 0b100, 0b111],
+  '3': [0b111, 0b001, 0b111, 0b001, 0b111],
+  '4': [0b101, 0b101, 0b111, 0b001, 0b001],
+  '5': [0b111, 0b100, 0b111, 0b001, 0b111],
+  '6': [0b111, 0b100, 0b111, 0b101, 0b111],
+  '7': [0b111, 0b001, 0b001, 0b001, 0b001],
+  '8': [0b111, 0b101, 0b111, 0b101, 0b111],
+  '9': [0b111, 0b101, 0b111, 0b001, 0b111],
+}
+
+/** Draw digits at `scale` dots per font pixel. Returns the width used. */
+function drawNumber(bm: PackedBitmap, x0: number, y0: number, text: string, scale: number): number {
+  let x = x0
+  for (const character of text) {
+    const glyph = DIGITS_3X5[character]
+    if (!glyph) continue
+    for (let row = 0; row < glyph.length; row++) {
+      for (let column = 0; column < 3; column++) {
+        if (glyph[row] & (0b100 >> column)) {
+          fillRect(bm, x + column * scale, y0 + row * scale, scale, scale)
+        }
+      }
+    }
+    x += 4 * scale
+  }
+  return x - x0
+}
+
+/**
  * Ruler strip for measuring the true head width and horizontal origin.
  *
- * A tick every dot-millimetre, a long tick every centimetre, a solid block at
- * x=0 and a single column at the far edge. Print one at each candidate width and
- * measure with a real ruler: if 384 dots measures 48.0 mm the assumed geometry is
- * right; if the far-edge column is missing the head is narrower than assumed; if
- * the left block is clipped the origin is offset. There is no command that
- * reports any of this, so measuring is the only way to learn it.
+ * Numbered in millimetres, so you read the answer instead of counting ticks: the
+ * highest number that printed tells you how much width you actually got, whether
+ * it ran out because the head is narrower than requested or because the paper is.
+ *
+ * The two ends are deliberately different shapes — a right-pointing wedge at the
+ * origin, a left-pointing one at the far edge. An earlier version put a solid
+ * block at one end and a plain column at the other, which was genuinely
+ * ambiguous on a printed strip: either could be described as "a long mark at one
+ * end", and a mirrored or clipped print looked the same as a correct one.
+ *
+ * Nothing in the protocol reports head width, so measuring is the only way.
  */
 export function rulerStrip(widthDots: number): PackedBitmap {
-  const height = 64
+  const height = 96
   const bm = createPackedBitmap(widthDots, height)
+  const cm = DOTS_PER_MM * 10
 
-  // Origin marker: an asymmetric block so a mirrored print is obvious.
-  fillRect(bm, 0, 0, 16, 24)
-  fillRect(bm, 0, 24, 8, 8)
+  // Origin: a wedge widening to the right, unmistakably "this is the start".
+  for (let y = 0; y < 24; y++) {
+    fillRect(bm, 0, y, 4 + Math.round((y / 23) * 16), 1)
+  }
 
-  // Far-edge column: absent on the print => the head is narrower than widthDots.
+  // Far edge: the mirror image, plus a column right on the last dot. If the
+  // wedge is missing, the strip stopped before the width requested.
+  for (let y = 0; y < 24; y++) {
+    const w = 4 + Math.round((y / 23) * 16)
+    fillRect(bm, widthDots - w, y, w, 1)
+  }
   fillRect(bm, widthDots - 1, 0, 1, height)
 
+  // Millimetre numbers every centimetre.
+  for (let x = 0; x <= widthDots - cm; x += cm) {
+    const mm = String((x / DOTS_PER_MM) | 0)
+    const scale = 4
+    const textWidth = mm.length * 4 * scale
+    // Keep the number clear of the end wedges.
+    if (x + textWidth < widthDots - 26) drawNumber(bm, x + 3, 30, mm, scale)
+  }
+
+  // Ticks along the bottom: 1 mm short, 10 mm long.
   for (let x = 0; x < widthDots; x += DOTS_PER_MM) {
-    const isCm = x % (DOTS_PER_MM * 10) === 0
+    const isCm = x % cm === 0
     fillRect(bm, x, height - (isCm ? 32 : 12), 1, isCm ? 32 : 12)
   }
   return bm
