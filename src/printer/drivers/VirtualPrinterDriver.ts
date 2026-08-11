@@ -179,6 +179,11 @@ export class VirtualPrinterDriver implements PrinterDriver {
     }
   }
 
+  async sendCommand(bytes: Uint8Array, note?: string): Promise<void> {
+    if (this.#state === 'disconnected') throw new Error('Virtual printer is not connected')
+    this.#emitter.emit('wire', { dir: 'out', bytes, at: Date.now(), note })
+  }
+
   async disconnect(): Promise<void> {
     this.#capabilities = null
     this.#setState('disconnected')

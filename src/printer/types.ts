@@ -92,6 +92,14 @@ export interface PrinterDriver {
   connect(): Promise<PrinterCapabilities>
   getStatus(): Promise<PrinterStatus>
   print(job: PrintJob, opts?: { signal?: AbortSignal }): Promise<void>
+  /**
+   * Send a command straight through.
+   *
+   * Needed by the diagnostics panel: maintenance commands and hand-typed bytes
+   * have no place in the normal print path, but on first contact with unfamiliar
+   * firmware they are the difference between debugging and guessing.
+   */
+  sendCommand(bytes: Uint8Array, note?: string): Promise<void>
   disconnect(): Promise<void>
 
   on<E extends keyof PrinterEvents>(

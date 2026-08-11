@@ -6,6 +6,7 @@ import { Inspector } from '../editor/panels/Inspector'
 import { useLabelEditor } from '../editor/useLabelEditor'
 import { PrintPanel } from './PrintPanel'
 import { ConnectionPanel } from './ConnectionPanel'
+import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { usePrinter } from './usePrinter'
 import { TemplatesPanel } from './TemplatesPanel'
 import { resolveAssetUrl } from '../storage/assets'
@@ -165,6 +166,8 @@ export default function App() {
       <ConnectionPanel connection={connection} />
 
       <PrintPanel doc={editor.doc} connection={connection} />
+
+      <DiagnosticsPanel connection={connection} />
     </main>
   )
 }

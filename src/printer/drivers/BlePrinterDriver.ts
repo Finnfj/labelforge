@@ -211,6 +211,12 @@ export class BlePrinterDriver implements PrinterDriver {
     }
   }
 
+  async sendCommand(bytes: Uint8Array, note?: string): Promise<void> {
+    if (this.#state === 'disconnected') throw new Error('Not connected to a printer.')
+    if (note) this.#emitter.emit('log', { level: 'info', message: note })
+    await this.#transport.write(bytes)
+  }
+
   async disconnect(): Promise<void> {
     for (const off of this.#unsubscribe) off()
     this.#unsubscribe = []
