@@ -40,12 +40,20 @@ export class CreditWindow {
   /**
    * Handle a `ff03` notification.
    *
-   * The vendor SDK treats a value of exactly 4 as "the window is 4", and any
-   * other value as an increment. That asymmetry looks odd but is reproduced
-   * deliberately: it is what the shipping firmware is known to work with.
+   * The channel is not credits-only. A real P50S was observed sending
+   * `02 dc 00` here amongst the `01 01` grants, so the first byte is a frame
+   * type and only `0x01` frames carry credits. The vendor SDK ignores that byte
+   * and would have read `0xdc` as a grant of 220, disabling flow control for
+   * the rest of the session — which is exactly the sort of thing that prints
+   * fine on a short label and drops bands on a long one.
+   *
+   * Within a credit frame, a value of exactly 4 sets the window rather than
+   * incrementing it. That asymmetry comes from the vendor SDK, and the observed
+   * opening frame of `01 04` is consistent with it.
    */
   onNotify(bytes: Uint8Array): void {
     if (bytes.length < 2) return
+    if (bytes[0] !== 0x01) return
     this.#everSeen = true
     const value = bytes[1]
     if (value === 0x04) this.#credits = 4

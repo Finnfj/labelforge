@@ -130,8 +130,15 @@ export class BlePrinterDriver implements PrinterDriver {
     const serial = await this.#query(cmd.getPrinterSerial(), decodeText)
     const mac = await this.#query(cmd.getPrinterMac(), decodeText)
 
+    // A real P50S answers the firmware and serial queries but stays silent on
+    // model and MAC. The advertised BLE name carries the model anyway — it looks
+    // like `P50S_2950_BLE` — so use it rather than reporting "Unknown" for
+    // something we plainly know.
+    const advertised = this.#transport.device?.name
+    const modelFromName = advertised ? advertised.split('_')[0] : null
+
     return {
-      model: model ?? 'Unknown',
+      model: model ?? modelFromName ?? 'Unknown',
       firmware: firmware ?? 'Unknown',
       serial: serial ?? 'Unknown',
       mac: mac ?? 'Unknown',

@@ -13,7 +13,7 @@ function identityResponder() {
   return (bytes: Uint8Array) => {
     const key = hex(bytes)
     const text = (s: string) => Uint8Array.from(s, (c) => c.charCodeAt(0))
-    if (key === '10 ff 20 f0') return text('P50S')
+    // Deliberately silent on model, matching a real P50S.
     if (key === '10 ff 20 f1') return text('V2.10')
     if (key === '10 ff 20 f2') return text('SN12345678')
     if (key === '10 ff 30 11') return text('AA:BB:CC:DD:EE:FF')
@@ -40,7 +40,9 @@ describe('BlePrinterDriver', () => {
 
     // The vendor app sends setBTType immediately after connecting.
     expect(hex(transport.writes[0])).toBe('1f b2 00')
-    expect(capabilities.model).toBe('P50S')
+    // A real P50S never answers the model query, so the model comes from the
+    // advertised BLE name instead of being reported as unknown.
+    expect(capabilities.model).toBe('P50')
     expect(capabilities.firmware).toBe('V2.10')
     expect(capabilities.serial).toBe('SN12345678')
     expect(driver.state).toBe('connected')
@@ -52,8 +54,8 @@ describe('BlePrinterDriver', () => {
     const transport = new MockTransport()
     const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20 })
     const capabilities = await driver.connect()
-    expect(capabilities.model).toBe('Unknown')
     expect(capabilities.firmware).toBe('Unknown')
+    expect(capabilities.serial).toBe('Unknown')
     expect(driver.state).toBe('connected')
   })
 
@@ -167,6 +169,27 @@ describe('CreditWindow', () => {
     await expect(window.acquire({ timeoutMs: 50 })).resolves.toBeUndefined()
     expect(window.hasFlowControl).toBe(false)
     expect(window.delayMs).toBe(30)
+  })
+
+  it('ignores frames that are not credit grants', () => {
+    // A real P50S sends `02 dc 00` on this channel alongside the `01 01` grants.
+    // Reading byte 1 regardless of frame type — as the vendor SDK does — would
+    // bank 220 phantom credits and disable flow control for the whole session,
+    // which shows up as bands missing from long labels and nothing else.
+    const window = new CreditWindow()
+    window.onNotify(Uint8Array.of(0x02, 0xdc, 0x00))
+    expect(window.available).toBe(0)
+    expect(window.hasFlowControl).toBe(false)
+
+    window.onNotify(Uint8Array.of(0x01, 0x01))
+    expect(window.available).toBe(1)
+    expect(window.hasFlowControl).toBe(true)
+  })
+
+  it('opens with a window of 4, as observed on real hardware', () => {
+    const window = new CreditWindow()
+    window.onNotify(Uint8Array.of(0x01, 0x04))
+    expect(window.available).toBe(4)
   })
 
   it('treats a value of 4 as a window and anything else as an increment', () => {

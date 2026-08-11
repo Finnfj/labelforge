@@ -24,10 +24,18 @@ Discovery: filter on the advertised **name prefix** (`P50`), *not* on the servic
 UUID. These printers do not advertise the 128-bit service UUID, so a service filter
 returns an empty device chooser. Advertised names look like `P50_2950_BLE`.
 
-Writes go to `ff02` in chunks of ~90 bytes. Flow control **[unconfirmed]**: `ff03`
-notifications carry `[_, credits]`; if `credits === 0x04` the window is set to 4,
-otherwise it is incremented by that value. Use ~5 ms between chunks while credits are
-flowing and fall back to ~30 ms if `ff03` never fires.
+Writes go to `ff02` in chunks of ~90 bytes.
+
+**Flow control — confirmed on a P50S (firmware V2.0.00).** `ff03` frames are
+`[type, ...]` and **only type `0x01` carries credits**. The opening frame is
+`01 04`, which sets the window to 4; subsequent `01 01` frames each add one, and
+one arrives per write. A frame of `02 dc 00` was also observed on this channel
+and is *not* a credit grant — its meaning is unknown. Reading byte 1 regardless
+of the type, as the vendor SDK does, turns that into a phantom grant of 220 and
+silently disables flow control for the rest of the session.
+
+Use ~5 ms between chunks while credits are flowing, falling back to ~30 ms if
+`ff03` never fires.
 
 Subscribe to **both** `ff01` and `ff03` before starting a print, or the job stalls.
 
@@ -64,6 +72,13 @@ in dots, `0x11` backward in mm.
 | Get speed | `1F 60 00` |
 
 ### Maintenance and status
+
+**Commands appear to act only inside a print job.** On a P50S, `1f 40`
+(self test), `1f 30 60` (learn paper) and `1f 12 20 00` (locate gap) each did
+nothing whatsoever when sent bare, and `1f 11 50` (feed) did nothing bare while
+working reliably inside a print. Every command observed to take effect was
+bracketed by `1f c0 01 00` … `1f c0 01 01`. Wrap maintenance commands
+accordingly.
 
 | Purpose | Bytes |
 | --- | --- |
@@ -121,6 +136,23 @@ pixels are always white regardless of colour. We binarise upstream in the render
 pipeline (with proper luminance weighting and, for photos, Floyd–Steinberg dithering)
 and hand this stage pure black-or-white pixels, so its own threshold is a pass-through.
 
+## Replies — confirmed on a P50S (firmware V2.0.00)
+
+Replies arrive on `ff01` as unsolicited notifications; there is no request id, so
+a query takes the next frame.
+
+| Query | Reply | Decoded |
+| --- | --- | --- |
+| firmware `10 FF 20 F1` | `56 32 2e 30 2e 30 30` | ASCII `V2.0.00` |
+| serial `10 FF 20 F2` | `35 30 …  00` | ASCII digits, NUL-terminated |
+| battery `10 FF 50 F1` | `00 64` | `0x64` = 100 (percent) |
+| print complete | `4f 4b` | ASCII `OK` |
+
+**Silent queries.** Model `10 FF 20 F0`, MAC `10 FF 30 11` and status `1F 20 00`
+produced no reply at all on this unit — only the usual credit frames. The model
+is recoverable from the advertised BLE name (`P50S_nnnn_BLE`) instead; there is
+currently no known way to read the MAC or a fault code.
+
 ## Print sequence
 
 ```
@@ -134,6 +166,10 @@ alignPaperEnd              (1F 11 50)
 
 ## Geometry
 
-203 dpi = **8 dots/mm** exactly. A 384-dot head is 48.0 mm. Head width is
-**[unconfirmed]** for the P50 and must be measured with the diagnostics ruler strip
-rather than assumed.
+203 dpi = **8 dots/mm** exactly. A 384-dot head is 48.0 mm, a 400-dot head 50.0 mm.
+
+Head width is still **[unconfirmed]**. A P50S accepted and acknowledged a
+400-dot-wide raster (`1f 10 00 32 …`, 50 bytes per row) without complaint, which
+rules out a head narrower than that *only if* the printed strip actually reaches
+its right-hand edge — the firmware may equally be clipping silently. Measure the
+ruler strip; do not infer head width from a successful print.

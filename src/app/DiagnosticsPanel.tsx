@@ -16,6 +16,7 @@ const HEAD_WIDTH_CANDIDATES = [320, 384, 400, 576]
 export function DiagnosticsPanel({ connection }: { connection: PrinterConnection }) {
   const [open, setOpen] = useState(false)
   const [rawHex, setRawHex] = useState('')
+  const [wrapInJob, setWrapInJob] = useState(true)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -39,6 +40,27 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
 
   const send = (label: string, bytes: Uint8Array) =>
     run(label, () => connection.driver.sendCommand(bytes, label))
+
+  /**
+   * Send a command inside a print job.
+   *
+   * On a real P50S, self test, learn paper and locate did nothing at all when
+   * sent bare, while the very same motion command (`1f 11 50`) worked reliably
+   * inside a print. Every command observed to take effect was bracketed by
+   * `startPrintJob`/`stopPrintJob`, so the firmware appears to act only within a
+   * job. Wrapping is therefore the default; the toggle exists to re-test that.
+   */
+  const sendInJob = (label: string, bytes: Uint8Array) =>
+    run(label, async () => {
+      const driver = connection.driver
+      if (!wrapInJob) {
+        await driver.sendCommand(bytes, label)
+        return
+      }
+      await driver.sendCommand(cmd.startPrintJob(), 'startPrintJob')
+      await driver.sendCommand(bytes, label)
+      await driver.sendCommand(cmd.stopPrintJob(), 'stopPrintJob')
+    })
 
   const parsedRaw = useMemo(() => parseHex(rawHex), [rawHex])
 
@@ -70,19 +92,19 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
       <div className="row">
         <button
           disabled={!connected || busy}
-          onClick={() => send('Self test', cmd.selfCheck())}
+          onClick={() => sendInJob('Self test', cmd.selfCheck())}
         >
           Self test
         </button>
         <button
           disabled={!connected || busy}
-          onClick={() => send('Learn paper', cmd.learnPaper())}
+          onClick={() => sendInJob('Learn paper', cmd.learnPaper())}
         >
           Learn paper
         </button>
         <button
           disabled={!connected || busy}
-          onClick={() => send('Locate gap', cmd.locate(cmd.LocateMode.Gap))}
+          onClick={() => sendInJob('Locate gap', cmd.locate(cmd.LocateMode.Gap))}
         >
           Locate gap
         </button>
@@ -100,14 +122,25 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
         </button>
         <button
           disabled={!connected || busy}
-          onClick={() => send('Feed to end', cmd.alignPaperEnd())}
+          onClick={() => sendInJob('Feed to end', cmd.alignPaperEnd())}
         >
           Feed
         </button>
       </div>
+      <label className="field field--check">
+        <input
+          type="checkbox"
+          checked={wrapInJob}
+          onChange={(e) => setWrapInJob(e.target.checked)}
+        />
+        <span>Wrap maintenance commands in a print job</span>
+      </label>
       <p className="hint">
         &ldquo;Learn paper&rdquo; makes the printer measure its own label gap, and is the
-        first thing to try if prints land across the gap rather than on the label.
+        first thing to try if prints land across the gap rather than on the label. These four
+        commands do nothing at all when sent bare on a P50S, so by default they are bracketed
+        by start/stop-print-job — the only context in which any command has been seen to take
+        effect. Untick the box to send them raw and compare.
       </p>
 
       <h3 className="subhead">Head width</h3>
