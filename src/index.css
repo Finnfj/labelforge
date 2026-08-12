@@ -599,3 +599,21 @@ input.mono {
   background: none;
   filter: brightness(1.15);
 }
+
+/* Diagnostics and the source link share one line at the foot of the page.
+   `align-items: baseline` so the link sits on the same text baseline as the
+   diagnostics sentence rather than being centred against it. */
+.app__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.app__footer a {
+  color: var(--accent);
+  font-size: 0.8rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

@@ -13,6 +13,9 @@ import { resolveAssetUrl } from '../storage/assets'
 
 const EDIT_ZOOMS = [1, 1.5, 2, 3] as const
 
+/** Where the source lives. */
+const REPO_URL = 'https://github.com/Finnfj/labelforge'
+
 export default function App() {
   const editor = useLabelEditor()
   const connection = usePrinter()
@@ -165,7 +168,12 @@ export default function App() {
 
       <PrintPanel doc={editor.doc} connection={connection} />
 
-      <DiagnosticsPanel connection={connection} />
+      <footer className="app__footer">
+        <DiagnosticsPanel connection={connection} />
+        <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
+          Source on GitHub
+        </a>
+      </footer>
     </main>
   )
 }

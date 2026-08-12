@@ -30,7 +30,7 @@ afterEach(async () => {
   host = null
 })
 
-async function mount(doc: LabelDoc, zoom = 2) {
+async function mount(doc: LabelDoc, zoom = 2, selectedId: string | null = null) {
   updates = []
   canvas = null
   host = document.createElement('div')
@@ -41,7 +41,7 @@ async function mount(doc: LabelDoc, zoom = 2) {
       <StrictMode>
         <EditorCanvas
           doc={doc}
-          selectedId={null}
+          selectedId={selectedId}
           zoom={zoom}
           onSelect={() => {}}
           onUpdate={(id, patch, options) =>
@@ -62,6 +62,41 @@ async function mount(doc: LabelDoc, zoom = 2) {
   await act(async () => {
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
   })
+}
+
+/** Re-render the mounted editor with a new document, as a doc edit would. */
+async function rerender(doc: LabelDoc, zoom = 2, selectedId: string | null = null) {
+  await act(async () => {
+    root!.render(
+      <StrictMode>
+        <EditorCanvas
+          doc={doc}
+          selectedId={selectedId}
+          zoom={zoom}
+          onSelect={() => {}}
+          onUpdate={() => {}}
+          onReady={(c) => {
+            canvas = c
+          }}
+        />
+      </StrictMode>,
+    )
+  })
+  await settle()
+}
+
+/**
+ * Pixel identity of the bitmap backing a Fabric image object.
+ *
+ * Comparing the object's width is not enough: two different QR payloads often
+ * encode to the same module count, so a stale symbol can be exactly the right
+ * size and still be the wrong code.
+ */
+function sourceFingerprint(index = 0): string {
+  const object = canvas!.getObjects()[index] as { _element?: CanvasImageSource }
+  const element = object._element as HTMLCanvasElement | undefined
+  expect(element, 'object is not backed by a canvas').toBeTruthy()
+  return element!.toDataURL()
 }
 
 function liveCanvas(): HTMLCanvasElement {
@@ -155,6 +190,25 @@ function docWithRect(): LabelDoc {
       y: 5,
       widthMm: 10,
       heightMm: 10,
+      rotation: 0,
+      z: 1,
+    },
+  ]
+  return doc
+}
+
+function docWithQr(value: string, ecLevel: 'L' | 'M' | 'Q' | 'H' = 'M'): LabelDoc {
+  const doc = createEmptyDoc(40, 30)
+  doc.elements = [
+    {
+      id: 'q1',
+      kind: 'qr',
+      value,
+      ecLevel,
+      x: 2,
+      y: 2,
+      widthMm: 18,
+      heightMm: 18,
       rotation: 0,
       z: 1,
     },
@@ -283,6 +337,65 @@ describe('EditorCanvas', () => {
     // The rebuild must not cost the user their selection, which is why it was
     // being suppressed in the first place.
     expect((canvas!.getActiveObject() as { elementId?: string } | null)?.elementId).toBe('r1')
+  })
+
+  it('regenerates a QR code when its value changes', async () => {
+    // Selected, because that is the state the app is in: adding a QR selects it,
+    // and the Inspector you then type into only exists for the selected element.
+    const doc = docWithQr('https://example.com')
+    await mount(doc, 2, 'q1')
+    const before = sourceFingerprint()
+
+    await rerender(docWithQr('https://example.com/a-quite-different-payload-entirely'), 2, 'q1')
+    expect(sourceFingerprint(), 'the canvas still shows the old payload').not.toBe(before)
+  })
+
+  it('regenerates a QR code when its error correction changes', async () => {
+    // A different EC level at the same payload means different modules, so this
+    // must redraw too — and it is the case most likely to be missed, since the
+    // element's own text is untouched.
+    const doc = docWithQr('https://example.com', 'L')
+    await mount(doc, 2, 'q1')
+    const before = sourceFingerprint()
+
+    await rerender(docWithQr('https://example.com', 'H'), 2, 'q1')
+    expect(sourceFingerprint(), 'the canvas still shows the old EC level').not.toBe(before)
+  })
+
+  it('regenerates a QR even when a text element shares the label', async () => {
+    // The suspicion: Fabric raises `text:changed` while laying a Textbox out on
+    // add, not only while a user is typing. If so, every rebuild containing text
+    // sets the "skip the next rebuild" flag, and the *following* edit is
+    // swallowed — which would make any change appear to need a second nudge.
+    const withText = (value: string): LabelDoc => {
+      const doc = docWithQr(value)
+      doc.elements = [
+        ...doc.elements,
+        {
+          id: 't1',
+          kind: 'text',
+          text: 'HELLO',
+          fontFamily: 'sans-serif',
+          fontSizePt: 12,
+          align: 'left',
+          x: 22,
+          y: 2,
+          widthMm: 16,
+          heightMm: 6,
+          rotation: 0,
+          z: 2,
+        },
+      ]
+      return doc
+    }
+
+    await mount(withText('https://example.com'))
+    const qrIndex = canvas!.getObjects().findIndex((o) => (o as { elementId?: string }).elementId === 'q1')
+    expect(qrIndex).toBeGreaterThanOrEqual(0)
+    const before = sourceFingerprint(qrIndex)
+
+    await rerender(withText('https://example.com/a-quite-different-payload-entirely'))
+    expect(sourceFingerprint(qrIndex), 'a text element blocked the rebuild').not.toBe(before)
   })
 
   it('clears ink when the element is removed', async () => {

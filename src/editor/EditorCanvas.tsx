@@ -40,23 +40,6 @@ export function EditorCanvas({
   const handlers = useRef({ doc, onSelect, onUpdate, onReady })
   handlers.current = { doc, onSelect, onUpdate, onReady }
 
-  /**
-   * Set while an *in-progress text edit* propagates into the document, so the
-   * rebuild effect skips that round trip.
-   *
-   * Narrowly scoped on purpose. Rebuilding while Fabric has a live editing session
-   * open would tear the textarea out from under the caret, so keystrokes must not
-   * trigger one. Everything else — moves, resizes, rotations — *must* rebuild, so
-   * that what is on the canvas is always what is in the document.
-   *
-   * This used to cover geometry too, and that was the resize bug: `readGeometry`
-   * folds Fabric's scale factor into an intrinsic size and resets the scale, so
-   * suppressing the rebuild left the object drawn at its pre-resize size while the
-   * document already held the new one. It sprang back, then corrected itself as
-   * soon as any unrelated change forced a rebuild.
-   */
-  const editingText = useRef(false)
-
   const widthDots = mmToDots(doc.size.widthMm)
   const heightDots = mmToDots(doc.size.heightMm)
 
@@ -92,9 +75,9 @@ export function EditorCanvas({
     canvas.on('selection:created', selectionChanged)
     canvas.on('selection:updated', selectionChanged)
     canvas.on('selection:cleared', () => handlers.current.onSelect(null))
-    // Deliberately does not set `editingText`: the rebuild that follows is what
-    // makes the resize stick. Fabric raises this on gesture end, and the rebuild
-    // restores the active object, so nothing is interrupted and no selection lost.
+    // The rebuild that follows is what makes a resize stick. Fabric raises this on
+    // gesture end, and the rebuild restores the active object, so nothing is
+    // interrupted and no selection is lost.
     canvas.on('object:modified', (event) => {
       const object = event.target as TaggedObject | undefined
       if (!object?.elementId) return
@@ -108,7 +91,6 @@ export function EditorCanvas({
     const readText = (event: { target?: unknown }, transient: boolean) => {
       const object = event.target as (TaggedObject & { text?: string }) | undefined
       if (!object?.elementId) return
-      editingText.current = true
       handlers.current.onUpdate(object.elementId, { text: object.text ?? '' } as ElementPatch, {
         transient,
       })
@@ -133,12 +115,19 @@ export function EditorCanvas({
   }, [widthDots, heightDots, zoom, epoch])
 
   useEffect(() => {
-    if (editingText.current) {
-      editingText.current = false
-      return
-    }
     const canvas = canvasRef.current
     if (!canvas) return
+
+    // Rebuilding mid-typing would tear Fabric's hidden textarea out from under the
+    // caret, so an open editing session suppresses it — the canvas already shows
+    // what the user typed, and `text:editing:exited` triggers a rebuild on the way
+    // out. Asking Fabric whether a session is open, rather than latching a flag
+    // when one starts, is deliberate: the latch this replaces was cleared by
+    // exactly one effect run, so two `text:changed` events batched into a single
+    // React render left it set and silently swallowed the *following* edit.
+    if (canvas.getObjects().some((object) => (object as { isEditing?: boolean }).isEditing)) {
+      return
+    }
 
     let cancelled = false
     void (async () => {

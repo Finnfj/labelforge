@@ -92,8 +92,11 @@ describe('confirmed reply formats', () => {
   })
 
   it('decodes a NUL-terminated serial', () => {
-    const reply = Uint8Array.from([...'502550544127'].map((c) => c.charCodeAt(0)).concat(0x00))
-    expect(decodeText(reply)).toBe('502550544127')
+    // A stand-in of the same shape as a real one: twelve digits, NUL-terminated.
+    // What is under test is the NUL handling, and a public repo is no place for
+    // the serial number of somebody's actual printer.
+    const reply = Uint8Array.from([...'000000000000'].map((c) => c.charCodeAt(0)).concat(0x00))
+    expect(decodeText(reply)).toBe('000000000000')
   })
 
   it('decodes the battery percentage a P50S actually returned', () => {
