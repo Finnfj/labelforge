@@ -66,6 +66,20 @@ export interface RasterizeResult {
   labelHeightDots: number
   /** True when content was cropped because the label exceeds the head width. */
   clipped: boolean
+  /**
+   * Elements that could not be rendered and were left out.
+   *
+   * Reported rather than thrown so one unencodable code cannot cost you the whole
+   * raster. The editor already tolerated this; the print path did not, and the
+   * consequences were bad — see the comment on the loop below.
+   */
+  skipped: SkippedElement[]
+}
+
+export interface SkippedElement {
+  id: string
+  kind: string
+  reason: string
 }
 
 /**
@@ -90,8 +104,29 @@ export async function rasterize(
 
   const crispObjects: FabricObject[] = []
   const toneObjects: FabricObject[] = []
+  const skipped: SkippedElement[] = []
+
   for (const element of elementsInDrawOrder(doc)) {
-    const object = await toFabricObject(element, { resolveAsset: options.resolveAsset })
+    let object: FabricObject | null = null
+    try {
+      object = await toFabricObject(element, { resolveAsset: options.resolveAsset })
+    } catch (error) {
+      // One element that cannot render must not throw away the whole raster.
+      //
+      // It used to. Clearing a QR's value to type a new one makes bwip-js refuse
+      // to encode, this function threw, and the caller — having no new bitmap to
+      // show — kept the *previous* one. The preview then displayed a stale raster
+      // that could still be sent to the printer, so the label came out carrying the
+      // old payload. Silently printing something other than what is on screen is
+      // the worst failure this code is capable of, so the element is dropped and
+      // named instead, and the caller can refuse on its own terms.
+      skipped.push({
+        id: element.id,
+        kind: element.kind,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      continue
+    }
     if (!object) continue
     ;(isToneElement(element) ? toneObjects : crispObjects).push(object)
   }
@@ -136,7 +171,7 @@ export async function rasterize(
 
   bitmap = appendBlankRows(bitmap, options.feedAfterDots ?? 0)
 
-  return { bitmap, labelWidthDots: widthDots, labelHeightDots: heightDots, clipped }
+  return { bitmap, labelWidthDots: widthDots, labelHeightDots: heightDots, clipped, skipped }
 }
 
 /** Render objects to a transparent canvas, optionally supersampled. */

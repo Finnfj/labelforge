@@ -92,9 +92,20 @@ export function renderCode(
   const modulePxAt1 = matrix ? MATRIX_MODULE_PX_AT_SCALE_1 : LINEAR_MODULE_PX_AT_SCALE_1
   const quietPxAt1 = quietModules * modulePxAt1
 
+  // Caught here rather than left to bwip-js, which reports it as "bar code text
+  // not specified" — accurate, useless to the person who just cleared the field to
+  // type a new URL, and the single easiest way to reach this error.
+  if (element.value.trim() === '') {
+    throw new BarcodeError(
+      element.kind === 'qr'
+        ? 'No value yet — type the text or URL for this QR code.'
+        : 'No value yet — type the text or number for this barcode.',
+    )
+  }
+
   const baseOptions: Record<string, unknown> = {
     bcid: bwipId(element),
-    text: element.kind === 'qr' ? element.value : element.value,
+    text: element.value,
     scale: 1,
     monochrome: true,
   }

@@ -271,4 +271,56 @@ describe('rasterize geometry', () => {
     expect(getDot(bitmap, 0, 0)).toBe(true)
     expect(getDot(bitmap, 160, 0)).toBe(true)
   })
+  describe('an element that cannot be rendered', () => {
+    /*
+     * These guard the worst bug this code has had: clearing a QR's value to type a
+     * new one made bwip-js refuse to encode, rasterize threw, and the caller kept
+     * the previous bitmap — so the preview showed, and the printer received, the
+     * payload that had just been replaced. Scanning the label gave the old URL.
+     */
+    const emptyQr = () =>
+      docWith([{ kind: 'qr', value: '', ecLevel: 'M', widthMm: 18, heightMm: 18 }])
+
+    it('does not throw the whole raster away', async () => {
+      const { bitmap, skipped } = await rasterize(emptyQr())
+      expect(bitmap.widthDots).toBe(320)
+      expect(skipped).toHaveLength(1)
+    })
+
+    it('names the element and says why, in words worth reading', async () => {
+      const { skipped } = await rasterize(emptyQr())
+      expect(skipped[0].kind).toBe('qr')
+      expect(skipped[0].id).toBeTruthy()
+      // bwip-js's own wording is "bar code text not specified", which tells someone
+      // who just cleared a field nothing at all.
+      expect(skipped[0].reason).toMatch(/No value yet/i)
+      expect(skipped[0].reason).not.toMatch(/bwip/i)
+    })
+
+    it('leaves the rest of the label intact', async () => {
+      const doc = docWith([
+        { kind: 'qr', value: '', ecLevel: 'M', widthMm: 12, heightMm: 12, x: 20, y: 2 },
+        {
+          kind: 'shape',
+          shape: 'rect',
+          filled: true,
+          strokeMm: 0,
+          x: 0,
+          y: 0,
+          widthMm: 8,
+          heightMm: 8,
+        },
+      ])
+      const { bitmap, skipped } = await rasterize(doc)
+      expect(skipped).toHaveLength(1)
+      // The rectangle still prints; only the unencodable code is missing.
+      expect(getDot(bitmap, 4, 4)).toBe(true)
+    })
+
+    it('reports nothing skipped when everything renders', async () => {
+      const doc = docWith([{ kind: 'qr', value: 'https://example.com', ecLevel: 'M' }])
+      const { skipped } = await rasterize(doc)
+      expect(skipped).toEqual([])
+    })
+  })
 })

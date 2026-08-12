@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LabelDoc } from '../model/labelDoc'
 import type { PackedBitmap } from '../model/bitmap'
 import { dotsToMm, mmToDots } from '../model/units'
-import { rasterize } from '../render/rasterize'
+import { rasterize, type SkippedElement } from '../render/rasterize'
 import { LabelTooWideError, headOriginDots } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
@@ -28,6 +28,7 @@ export function PrintPanel({ doc, connection }: { doc: LabelDoc; connection: Pri
   const [showHeadArea, setShowHeadArea] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [clipped, setClipped] = useState(false)
+  const [skipped, setSkipped] = useState<SkippedElement[]>([])
   const abortRef = useRef<AbortController | null>(null)
 
   const {
@@ -70,9 +71,16 @@ export function PrintPanel({ doc, connection }: { doc: LabelDoc; connection: Pri
           setBitmap(result.bitmap)
           setLabelWidthDots(result.labelWidthDots)
           setClipped(result.clipped)
+          setSkipped(result.skipped)
           setError(null)
         } catch (e) {
           if (cancelled) return
+          // Discard the previous raster. Keeping it meant the preview showed, and
+          // the button would happily send, a bitmap that no longer matched the
+          // document — a label printed with the QR payload you had just replaced.
+          // No bitmap disables printing, which is the correct answer here.
+          setBitmap(null)
+          setSkipped([])
           setError(
             e instanceof LabelTooWideError
               ? `${e.message} Choose a narrower roll — a P50S head is 384 dots, or 48 mm.`
@@ -260,6 +268,20 @@ export function PrintPanel({ doc, connection }: { doc: LabelDoc; connection: Pri
         {!connected && <p className="hint">Connect a printer above to enable printing.</p>}
 
         {error && <p className="error">{error}</p>}
+        {skipped.length > 0 && (
+          <p className="warn">
+            Left off this label because {skipped.length === 1 ? 'it' : 'they'} could not be
+            rendered:
+            <br />
+            {skipped.map((s) => (
+              <span key={s.id}>
+                &bull; {s.kind} &mdash; {s.reason}
+                <br />
+              </span>
+            ))}
+            The preview shows what would actually print, so fix these before sending it.
+          </p>
+        )}
         {clipped && (
           <p className="warn">
             This label is {dotsToMm(labelWidthDots)} mm wide but the print head is only{' '}
