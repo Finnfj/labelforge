@@ -15,6 +15,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The browser test tier drives a real Chromium through Playwright, and the
+      # `playwright` package carries no install hook — `npm ci` does not fetch
+      # browsers. Without this step the whole tier fails to launch. `--with-deps`
+      # covers the shared libraries the runner image does not ship.
+      - run: npx playwright install --with-deps chromium
       - run: npm run lint
       - run: npm run check:layering
       - run: npm test -- --run
