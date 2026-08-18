@@ -8,7 +8,10 @@ import type { LabelEditor } from '../useLabelEditor'
 const NEW_TEXT = {
   kind: 'text',
   text: 'Text',
-  fontFamily: 'sans-serif',
+  // A bundled face, so a new label is reproducible on any machine from the
+  // start. The system keywords are still offered, and still resolve differently
+  // everywhere, which is now said out loud in the picker.
+  fontFamily: 'Fira Sans',
   fontSizePt: 10,
   align: 'left',
   x: 2,

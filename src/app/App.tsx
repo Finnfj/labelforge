@@ -14,6 +14,7 @@ import { useDiagnosticFlags } from './useDiagnosticFlags'
 import { useElementWidth } from './useElementWidth'
 import { fitScale } from './zoom'
 import { resolveAssetUrl } from '../storage/assets'
+import { registerStoredFonts } from '../storage/fonts'
 
 /**
  * Editor zoom. "fit" leads because it is what you want on almost every screen:
@@ -39,6 +40,13 @@ export default function App() {
     zoom === 'fit' ? fitScale(stageWidth, mmToDots(editor.doc.size.widthMm)) : zoom
   // Dimensions are the preset's to define; "Custom…" hands them back to the user.
   const isPreset = editor.doc.size.presetId != null
+
+  // Uploaded fonts survive a reload in IndexedDB but not in the browser's font
+  // set, so a label using one would render as a fallback until it was uploaded
+  // again. Re-registering them at startup is what makes them persist.
+  useEffect(() => {
+    void registerStoredFonts()
+  }, [])
 
   // Keyboard shortcuts. Deliberately skipped while a field has focus, so that
   // Delete in a text box removes a character rather than the whole element.

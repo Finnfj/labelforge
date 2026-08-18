@@ -5,6 +5,11 @@ import { createEmptyDoc, type LabelDoc, type LabelElement } from '../model/label
 import { unpack1bpp } from './pack1bpp'
 import { LabelTooWideError } from './padToHead'
 
+// As main.tsx loads them. Without this the bundled families are not declared and
+// the fidelity test below would compare two fallbacks against each other.
+import '@fontsource/fira-sans/latin-400.css'
+import '@fontsource/jetbrains-mono/latin-400.css'
+
 /**
  * These run in a real Chromium via Playwright, not jsdom. Canvas text metrics and
  * antialiasing are exactly what ships, so a geometry assertion here means the
@@ -115,6 +120,83 @@ describe('rasterize geometry', () => {
     const inked = bits.reduce((n: number, v: number) => n + v, 0)
     expect(inked).toBeGreaterThan(50)
     expect(firstInkColumn(bits, bitmap.widthDots, bitmap.heightDots)).toBeGreaterThanOrEqual(16)
+  })
+
+  it('actually uses a bundled font rather than quietly falling back', async () => {
+    // The assertion that catches the whole failure mode. A font that failed to
+    // load still rasterises — in a substitute face, at the wrong widths, looking
+    // entirely deliberate. The only proof it was used is that the bits differ
+    // from what the fallback would have produced.
+    const render = async (fontFamily: string) => {
+      const { bitmap } = await rasterize(
+        docWith([
+          {
+            kind: 'text',
+            text: 'Handling 8.5 — WWiill',
+            fontFamily,
+            fontSizePt: 11,
+            align: 'left',
+            x: 2,
+            y: 2,
+            widthMm: 34,
+            heightMm: 10,
+          },
+        ]),
+      )
+      return unpack1bpp(bitmap).join('')
+    }
+
+    const generic = await render('sans-serif')
+    const fira = await render('Fira Sans')
+    const mono = await render('JetBrains Mono')
+
+    expect(fira).not.toBe(generic)
+    expect(mono).not.toBe(generic)
+    expect(mono).not.toBe(fira)
+    // ...and all three are real text, not three different blanks.
+    for (const bits of [generic, fira, mono]) {
+      expect([...bits].filter((b) => b === '1').length).toBeGreaterThan(50)
+    }
+  })
+
+  it('reports a missing font instead of silently substituting one', async () => {
+    const result = await rasterize(
+      docWith([
+        {
+          kind: 'text',
+          text: 'HELLO',
+          fontFamily: 'No Such Family Anywhere',
+          fontSizePt: 12,
+          align: 'left',
+          x: 2,
+          y: 2,
+          widthMm: 30,
+          heightMm: 8,
+        },
+      ]),
+    )
+    expect(result.fontFallbacks).toEqual(['No Such Family Anywhere'])
+    // Reported, not thrown — the label still prints, in a substitute face.
+    expect(unpack1bpp(result.bitmap).reduce((n: number, v: number) => n + v, 0)).toBeGreaterThan(50)
+  })
+
+  it('says nothing about fonts when every family resolves', async () => {
+    const result = await rasterize(
+      docWith([
+        {
+          kind: 'text',
+          text: 'HELLO',
+          fontFamily: 'Fira Sans',
+          fontSizePt: 12,
+          align: 'left',
+          x: 2,
+          y: 2,
+          widthMm: 30,
+          heightMm: 8,
+        },
+      ]),
+    )
+    expect(result.fontFallbacks).toEqual([])
   })
 
   it('produces a blank bitmap for an empty document', async () => {

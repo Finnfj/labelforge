@@ -9,10 +9,23 @@ import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/test
 import { MAX_DENSITY, MIN_DENSITY } from '../printer/protocol/constants'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../printer/types'
 import { resolveAssetUrl } from '../storage/assets'
+import { registerStoredFonts } from '../storage/fonts'
 import { PaperRoll } from './PaperRoll'
 import type { DiagnosticFlags } from './useDiagnosticFlags'
 import type { ZoomSetting } from './zoom'
 import type { PrinterConnection } from './usePrinter'
+
+/**
+ * Name a missing font in a way that says what to do about it.
+ *
+ * An uploaded font is identified by a hash of its bytes, which is right for
+ * matching it across machines and useless to read. Its display name lived in the
+ * font record, and if we are reporting it missing that record is exactly what is
+ * gone — so say what kind of thing it was instead of showing a bare hash.
+ */
+function describeFont(family: string): string {
+  return family.startsWith('lf-') ? `an uploaded font (${family})` : family
+}
 
 export function PrintPanel({
   doc,
@@ -38,6 +51,7 @@ export function PrintPanel({
   const [error, setError] = useState<string | null>(null)
   const [clipped, setClipped] = useState(false)
   const [skipped, setSkipped] = useState<SkippedElement[]>([])
+  const [fontFallbacks, setFontFallbacks] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
 
   const {
@@ -64,6 +78,10 @@ export function PrintPanel({
     const id = setTimeout(() => {
       void (async () => {
         try {
+          // Idempotent and cheap once warm. Awaited here rather than trusted to
+          // the startup registration because this is the raster that gets
+          // printed, and losing that race would send the wrong typeface.
+          await registerStoredFonts()
           const result = await rasterize(doc, {
             // Omitting the head width is what stops the raster being padded, which
             // is how the vendor app sends it. The head width is still needed as a
@@ -81,6 +99,7 @@ export function PrintPanel({
           setLabelWidthDots(result.labelWidthDots)
           setClipped(result.clipped)
           setSkipped(result.skipped)
+          setFontFallbacks(result.fontFallbacks)
           setError(null)
         } catch (e) {
           if (cancelled) return
@@ -90,6 +109,7 @@ export function PrintPanel({
           // No bitmap disables printing, which is the correct answer here.
           setBitmap(null)
           setSkipped([])
+          setFontFallbacks([])
           setError(
             e instanceof LabelTooWideError
               ? `${e.message} Choose a narrower roll — a P50S head is 384 dots, or 48 mm.`
@@ -227,6 +247,13 @@ export function PrintPanel({
             </span>
           ))}
           The preview shows what would actually print, so fix these before sending it.
+        </p>
+      )}
+      {fontFallbacks.length > 0 && (
+        <p className="warn">
+          Not available on this machine, so the label prints in a substitute typeface:{' '}
+          {fontFallbacks.map(describeFont).join(', ')}. The preview above is already showing that
+          substitute &mdash; the spacing and line breaks are what you would actually get.
         </p>
       )}
       {clipped && (

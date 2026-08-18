@@ -9,6 +9,7 @@ import type {
   TextElement,
 } from '../../model/labelDoc'
 import { iconsByGroup, iconToSvg } from '../../render/icons'
+import { FontField } from './FontField'
 import { mmToDots } from '../../model/units'
 import { checkCode } from '../../render/barcode'
 import type { LabelEditor } from '../useLabelEditor'
@@ -27,12 +28,6 @@ const DITHERS: Array<{ value: DitherAlgorithm; label: string }> = [
   { value: 'floyd-steinberg', label: 'Floyd–Steinberg' },
   { value: 'atkinson', label: 'Atkinson' },
   { value: 'bayer', label: 'Ordered' },
-]
-
-const FONTS = [
-  { value: 'sans-serif', label: 'Sans' },
-  { value: 'serif', label: 'Serif' },
-  { value: 'monospace', label: 'Mono' },
 ]
 
 function NumberField({
@@ -141,19 +136,10 @@ export function Inspector({ editor }: { editor: LabelEditor }) {
             />
           </label>
           <div className="grid2">
-            <label className="field">
-              <span>Font</span>
-              <select
-                value={(element as TextElement).fontFamily}
-                onChange={(e) => set({ fontFamily: e.target.value } as Partial<TextElement>)}
-              >
-                {FONTS.map((f) => (
-                  <option key={f.value} value={f.value}>
-                    {f.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <FontField
+              value={(element as TextElement).fontFamily}
+              onChange={(fontFamily) => set({ fontFamily } as Partial<TextElement>)}
+            />
             <NumberField
               label="Size"
               value={(element as TextElement).fontSizePt}

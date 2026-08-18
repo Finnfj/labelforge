@@ -7,6 +7,7 @@ import { toAlphaMask, toLuminance } from './luminance'
 import { threshold } from './threshold'
 import { floydSteinberg } from './dither'
 import { composite } from './composite'
+import { ensureDocumentFonts } from './fonts'
 import { pack1bpp } from './pack1bpp'
 import { padToHead, type HeadAlign } from './padToHead'
 
@@ -74,6 +75,16 @@ export interface RasterizeResult {
    * consequences were bad — see the comment on the loop below.
    */
   skipped: SkippedElement[]
+  /**
+   * Font families the browser could not supply, so this raster used a substitute
+   * face for them.
+   *
+   * Same judgement as `skipped`: reported rather than thrown, because a missing
+   * font still prints a readable label. It has to be reported, though — the
+   * raster looks entirely plausible, and nothing else would ever say the
+   * typeface is wrong.
+   */
+  fontFallbacks: string[]
 }
 
 export interface SkippedElement {
@@ -98,9 +109,13 @@ export async function rasterize(
   const widthDots = mmToDots(doc.size.widthMm)
   const heightDots = mmToDots(doc.size.heightMm)
 
-  // Web fonts that have not finished loading would silently rasterise in a
-  // fallback face, producing a label that does not match what was designed.
-  if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready
+  // Fonts have to be pulled in before anything is drawn. Canvas does not start a
+  // font load when you name a family, and does not redraw when one arrives, so a
+  // face that is merely not loaded *yet* rasterises in a fallback and looks
+  // entirely fine. This used to await `document.fonts.ready`, which cannot do the
+  // job: that settles fonts layout has used, and ours are only named from a
+  // canvas, so it resolved instantly with every face still unloaded.
+  const fontFallbacks = await ensureDocumentFonts(doc)
 
   const crispObjects: FabricObject[] = []
   const toneObjects: FabricObject[] = []
@@ -171,7 +186,14 @@ export async function rasterize(
 
   bitmap = appendBlankRows(bitmap, options.feedAfterDots ?? 0)
 
-  return { bitmap, labelWidthDots: widthDots, labelHeightDots: heightDots, clipped, skipped }
+  return {
+    bitmap,
+    labelWidthDots: widthDots,
+    labelHeightDots: heightDots,
+    clipped,
+    skipped,
+    fontFallbacks,
+  }
 }
 
 /** Render objects to a transparent canvas, optionally supersampled. */
