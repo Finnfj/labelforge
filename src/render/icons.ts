@@ -390,8 +390,24 @@ export const ICONS: IconDef[] = [
   {
     id: 'usb',
     group: 'Tech',
+    // The trident, with the three prongs the mark is actually about: an arrow, a
+    // square and a circle, weighted against the larger circle at the base. What
+    // was here before ended both arms in open right-angle strokes instead, and
+    // the left one's stub finished 1.5 units short of the trunk — close enough
+    // to read as a rendering fault rather than a symbol.
+    //
+    // Filled, so the four terminators are solid. Fill does not touch the <line>
+    // elements, which is why the trunk and arms can stay strokes.
     label: 'USB',
-    body: '<line x1="12" y1="21.5" x2="12" y2="6"/><circle cx="12" cy="3.8" r="1.7"/><path d="M12 14.5 L7.5 10 V7.5 h3"/><path d="M12 11.5 L16.5 7.2 h2.6 v3"/>',
+    filled: true,
+    body:
+      '<line x1="12" y1="5.8" x2="12" y2="18.6"/>' +
+      '<circle cx="12" cy="20" r="2.2"/>' +
+      '<polygon points="12 2.2 14.6 6.6 9.4 6.6"/>' +
+      '<line x1="12" y1="13.2" x2="7.8" y2="9"/>' +
+      '<rect x="5.6" y="6.8" width="3.4" height="3.4"/>' +
+      '<line x1="12" y1="15.6" x2="16.2" y2="11.4"/>' +
+      '<circle cx="16.9" cy="10.7" r="1.6"/>',
   },
   {
     id: 'plug',
