@@ -29,3 +29,21 @@ export function fitFactor(availableWidth: number, bitmapWidth: number): number {
   if (!availableWidth || !bitmapWidth) return 1
   return Math.max(1, Math.min(MAX_FIT_FACTOR, Math.floor(availableWidth / bitmapWidth)))
 }
+
+/**
+ * Fit scale for the vector editor, where a fractional scale is harmless.
+ *
+ * Deliberately *not* {@link fitFactor}. That one floors to a whole integer
+ * because `PaperRoll` paints one device pixel per printer dot under
+ * `image-rendering: pixelated`, where a fractional scale makes some dots wider
+ * than others and reads as a rendering defect that is not in the data. The
+ * editor draws vectors through Fabric's own zoom, so it has no such constraint
+ * and can use every pixel the panel offers.
+ */
+export function fitScale(availableWidth: number, contentWidth: number): number {
+  if (!availableWidth || !contentWidth) return 1
+  return Math.max(MIN_EDIT_ZOOM, Math.min(MAX_FIT_FACTOR, availableWidth / contentWidth))
+}
+
+/** Below this the label is too small to place anything on with a pointer. */
+const MIN_EDIT_ZOOM = 0.25

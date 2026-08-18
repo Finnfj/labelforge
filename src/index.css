@@ -177,6 +177,7 @@ button.danger {
   display: grid;
   place-items: center;
   scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .roll__canvas {
@@ -229,8 +230,13 @@ button.danger {
     transparent 6px 12px
   );
   overflow: auto;
-  display: flex;
-  justify-content: center;
+  /* Grid rather than flex centring, for the same reason as `.roll`: with flex
+     `justify-content: center` an oversized canvas overflows in both directions
+     and the left edge can never be scrolled to. */
+  display: grid;
+  place-items: center;
+  /* Stop a phone bouncing the whole page once this box has scrolled to its end. */
+  overscroll-behavior: contain;
 }
 
 .editor__paper {

@@ -11,6 +11,7 @@ import {
 import { DEFAULT_PRINT_SETTINGS } from '../printer/types'
 import { decodeText, toHex } from '../printer/protocol/responses'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
+import type { DiagnosticFlagsHandle } from './useDiagnosticFlags'
 import type { PrinterConnection, WireEntry } from './usePrinter'
 
 /** Densities to walk when finding a good darkness. One label each. */
@@ -19,7 +20,13 @@ const DENSITY_LADDER = [3, 6, 9, 12, 15]
 /** Candidate head widths for the ruler probe. */
 const HEAD_WIDTH_CANDIDATES = [320, 384, 400, 576]
 
-export function DiagnosticsPanel({ connection }: { connection: PrinterConnection }) {
+export function DiagnosticsPanel({
+  connection,
+  diagnostics,
+}: {
+  connection: PrinterConnection
+  diagnostics: DiagnosticFlagsHandle
+}) {
   const [open, setOpen] = useState(false)
   const [rawHex, setRawHex] = useState('')
   const [feedMm, setFeedMm] = useState(5)
@@ -116,6 +123,42 @@ export function DiagnosticsPanel({ connection }: { connection: PrinterConnection
       </div>
 
       {!connected && <p className="hint">Connect a printer to use these.</p>}
+
+      {/*
+        Two controls that live in the main UI but only make sense to someone
+        diagnosing this app, so the main UI does not carry them until asked.
+      */}
+      <h3 className="subhead">Reveal in the main UI</h3>
+      <label className="field field--check">
+        <input
+          type="checkbox"
+          checked={diagnostics.flags.virtualPrinter}
+          onChange={(e) => {
+            diagnostics.setFlag('virtualPrinter', e.target.checked)
+            // Hiding the option while it is the one in use would strand the app
+            // on a driver with nothing left to select it back.
+            if (!e.target.checked && connection.kind === 'virtual') connection.setKind('ble')
+          }}
+        />
+        <span>Offer the virtual printer</span>
+      </label>
+      <p className="hint">
+        Adds an Output dropdown to the Printer panel. The virtual printer runs the real command
+        sequence and the real encoder with no hardware attached, so the preview is byte-for-byte
+        what a P50 would receive.
+      </p>
+      <label className="field field--check" style={{ marginTop: '0.5rem' }}>
+        <input
+          type="checkbox"
+          checked={diagnostics.flags.advancedPrint}
+          onChange={(e) => diagnostics.setFlag('advancedPrint', e.target.checked)}
+        />
+        <span>Show advanced print options</span>
+      </label>
+      <p className="hint">
+        Adds the speed selector and the test-pattern buttons to the Print panel. The capture shows
+        the vendor app sends no speed command at all, so that selector may do nothing.
+      </p>
 
       <details className="advanced">
         <summary>

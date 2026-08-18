@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { DOTS_PER_MM, dotsToMm } from '../model/units'
+import type { DiagnosticFlags } from './useDiagnosticFlags'
 import type { PrinterConnection } from './usePrinter'
 
 const FAULT_TEXT: Record<string, string> = {
@@ -11,7 +12,13 @@ const FAULT_TEXT: Record<string, string> = {
   unknown: 'Unknown',
 }
 
-export function ConnectionPanel({ connection }: { connection: PrinterConnection }) {
+export function ConnectionPanel({
+  connection,
+  flags,
+}: {
+  connection: PrinterConnection
+  flags: DiagnosticFlags
+}) {
   const [acceptAllDevices, setAcceptAllDevices] = useState(false)
   const connected = connection.state !== 'disconnected' && connection.capabilities !== null
 
@@ -20,17 +27,22 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
       <div className="row row--between">
         <h2>Printer</h2>
         <div className="row">
-          <label className="field">
-            <span>Output</span>
-            <select
-              value={connection.kind}
-              disabled={connection.busy}
-              onChange={(e) => connection.setKind(e.target.value as 'virtual' | 'ble')}
-            >
-              <option value="virtual">Virtual printer</option>
-              <option value="ble">Bluetooth printer</option>
-            </select>
-          </label>
+          {/* One entry is not a choice. With the virtual printer hidden the select
+              would be a disabled-looking box saying "Bluetooth printer", which is
+              worse than the fact stated plainly next to the button. */}
+          {flags.virtualPrinter && (
+            <label className="field">
+              <span>Output</span>
+              <select
+                value={connection.kind}
+                disabled={connection.busy}
+                onChange={(e) => connection.setKind(e.target.value as 'virtual' | 'ble')}
+              >
+                <option value="virtual">Virtual printer</option>
+                <option value="ble">Bluetooth printer</option>
+              </select>
+            </label>
+          )}
           {connected ? (
             <button disabled={connection.busy} onClick={() => void connection.disconnect()}>
               Disconnect
@@ -56,6 +68,14 @@ export function ConnectionPanel({ connection }: { connection: PrinterConnection 
         <p className="error">
           This browser has no Web Bluetooth. Use Chrome or Edge on desktop, or Chrome on Android —
           Safari and Firefox do not implement it and cannot be made to.
+          {!flags.virtualPrinter && (
+            <>
+              {' '}
+              To try the designer anyway, tick <strong>Offer the virtual printer</strong> under
+              Diagnostics at the foot of the page: it runs the real command sequence and the real
+              encoder against no hardware.
+            </>
+          )}
         </p>
       )}
 

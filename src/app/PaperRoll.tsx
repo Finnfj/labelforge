@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import type { PackedBitmap } from '../model/bitmap'
 import { toPreviewImage, type PreviewMode } from '../render/preview'
+import { useElementWidth } from './useElementWidth'
 import { fitFactor, zoomFactor, type ZoomSetting } from './zoom'
 
 export function PaperRoll({
@@ -24,21 +25,8 @@ export function PaperRoll({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rollRef = useRef<HTMLDivElement>(null)
-  const [availableWidth, setAvailableWidth] = useState(0)
-
-  // Track the container so "Fit" can pick a scale that does not overflow. A
-  // ResizeObserver rather than a window listener, because the panel also changes
-  // width when the layout reflows around it.
-  useLayoutEffect(() => {
-    const element = rollRef.current
-    if (!element) return
-    const observer = new ResizeObserver(([entry]) => {
-      setAvailableWidth(entry.contentRect.width)
-    })
-    observer.observe(element)
-    setAvailableWidth(element.clientWidth)
-    return () => observer.disconnect()
-  }, [])
+  // Tracked so "Fit" can pick a scale that does not overflow.
+  const availableWidth = useElementWidth(rollRef)
 
   useEffect(() => {
     const canvas = canvasRef.current

@@ -63,6 +63,14 @@ export function EditorCanvas({
       preserveObjectStacking: true,
       selection: false,
       enableRetinaScaling: false,
+      // Without this Fabric sets `touch-action: none` on its canvases and calls
+      // preventDefault on every touchmove, so on a phone a zoomed label could not
+      // be panned at all: the drag that should scroll the stage was swallowed by
+      // a canvas that had nothing to do with it. With it, Fabric only suppresses
+      // scrolling when the touch starts on the *already-active* object — so the
+      // gesture becomes tap to select, then drag to move, and a drag anywhere
+      // else scrolls. That is the standard mobile bargain and the right one here.
+      allowTouchScrolling: true,
     })
     canvasRef.current = canvas
     setEpoch((e) => e + 1)

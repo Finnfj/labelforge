@@ -129,7 +129,11 @@ export interface PrinterConnection {
 }
 
 export function usePrinter(): PrinterConnection {
-  const [kind, setKindState] = useState<PrinterKind>('virtual')
+  // Bluetooth by default. The virtual printer used to hold this spot, which meant
+  // the app opened already "connected" to something that cannot print — a fine
+  // demo and a poor default. It is now revealed from Diagnostics; see
+  // `useDiagnosticFlags`.
+  const [kind, setKindState] = useState<PrinterKind>('ble')
   const [state, setState] = useState<PrinterState>('disconnected')
   const [capabilities, setCapabilities] = useState<PrinterCapabilities | null>(null)
   const [status, setStatus] = useState<PrinterStatus | null>(null)
@@ -152,8 +156,11 @@ export function usePrinter(): PrinterConnection {
 
   const bluetoothSupported = useMemo(() => WebBluetoothTransport.isSupported(), [])
 
+  // Constructing the transport is free and cannot throw: every capability check
+  // is deferred to `connect()` or the static `isSupported()`, so this is safe
+  // even in a browser with no Web Bluetooth at all.
   const driverRef = useRef<PrinterDriver | null>(null)
-  if (!driverRef.current) driverRef.current = new VirtualPrinterDriver()
+  if (!driverRef.current) driverRef.current = new BlePrinterDriver(new WebBluetoothTransport())
   const driver = driverRef.current
 
   // Subscribe to whichever driver is current. Re-runs when the kind changes,

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { STOCK_PRESETS, findPreset } from '../model/presets'
+import { mmToDots } from '../model/units'
 import { EditorCanvas } from '../editor/EditorCanvas'
 import { Toolbar } from '../editor/panels/Toolbar'
 import { Inspector } from '../editor/panels/Inspector'
@@ -9,9 +10,18 @@ import { ConnectionPanel } from './ConnectionPanel'
 import { DiagnosticsPanel } from './DiagnosticsPanel'
 import { usePrinter } from './usePrinter'
 import { TemplatesPanel } from './TemplatesPanel'
+import { useDiagnosticFlags } from './useDiagnosticFlags'
+import { useElementWidth } from './useElementWidth'
+import { fitScale } from './zoom'
 import { resolveAssetUrl } from '../storage/assets'
 
-const EDIT_ZOOMS = [1, 1.5, 2, 3] as const
+/**
+ * Editor zoom. "fit" leads because it is what you want on almost every screen:
+ * the label as large as the panel can show it, and on a phone that is the
+ * difference between seeing the design and seeing a third of it.
+ */
+const EDIT_ZOOMS = ['fit', 1, 1.5, 2, 3] as const
+type EditZoom = (typeof EDIT_ZOOMS)[number]
 
 /** Where the source lives. */
 const REPO_URL = 'https://github.com/Finnfj/labelforge'
@@ -19,7 +29,14 @@ const REPO_URL = 'https://github.com/Finnfj/labelforge'
 export default function App() {
   const editor = useLabelEditor()
   const connection = usePrinter()
-  const [zoom, setZoom] = useState<number>(2)
+  const diagnostics = useDiagnosticFlags()
+  const [zoom, setZoom] = useState<EditZoom>('fit')
+  const stageRef = useRef<HTMLDivElement>(null)
+  const stageWidth = useElementWidth(stageRef)
+  // Resolved to a number here rather than inside EditorCanvas, which keeps the
+  // canvas ignorant of where its scale came from.
+  const effectiveZoom =
+    zoom === 'fit' ? fitScale(stageWidth, mmToDots(editor.doc.size.widthMm)) : zoom
   // Dimensions are the preset's to define; "Custom…" hands them back to the user.
   const isPreset = editor.doc.size.presetId != null
 
@@ -60,6 +77,8 @@ export default function App() {
         </p>
       </header>
 
+      <ConnectionPanel connection={connection} flags={diagnostics.flags} />
+
       <section className="panel">
         <h2>Label</h2>
         <div className="row">
@@ -92,6 +111,16 @@ export default function App() {
             </select>
           </label>
           <label className="field">
+            <span>Paper</span>
+            <select
+              value={editor.doc.paper.type}
+              onChange={(e) => editor.setPaper(e.target.value as 'gap' | 'continuous')}
+            >
+              <option value="gap">Gap labels</option>
+              <option value="continuous">Continuous</option>
+            </select>
+          </label>
+          <label className="field">
             <span>Width</span>
             <input
               type="number"
@@ -117,16 +146,6 @@ export default function App() {
             />
             <em>mm</em>
           </label>
-          <label className="field">
-            <span>Paper</span>
-            <select
-              value={editor.doc.paper.type}
-              onChange={(e) => editor.setPaper(e.target.value as 'gap' | 'continuous')}
-            >
-              <option value="gap">Gap labels</option>
-              <option value="continuous">Continuous</option>
-            </select>
-          </label>
         </div>
       </section>
 
@@ -135,10 +154,15 @@ export default function App() {
           <h2>Design</h2>
           <label className="field">
             <span>Zoom</span>
-            <select value={zoom} onChange={(e) => setZoom(Number(e.target.value))}>
+            <select
+              value={String(zoom)}
+              onChange={(e) =>
+                setZoom(e.target.value === 'fit' ? 'fit' : (Number(e.target.value) as EditZoom))
+              }
+            >
               {EDIT_ZOOMS.map((z) => (
                 <option key={z} value={z}>
-                  {z}&times;
+                  {z === 'fit' ? 'Fit' : `${z}×`}
                 </option>
               ))}
             </select>
@@ -148,11 +172,11 @@ export default function App() {
         <Toolbar editor={editor} />
 
         <div className="editor">
-          <div className="editor__stage">
+          <div className="editor__stage" ref={stageRef}>
             <EditorCanvas
               doc={editor.doc}
               selectedId={editor.selectedId}
-              zoom={zoom}
+              zoom={effectiveZoom}
               onSelect={editor.select}
               onUpdate={editor.updateElement}
               resolveAsset={resolveAssetUrl}
@@ -164,12 +188,10 @@ export default function App() {
 
       <TemplatesPanel doc={editor.doc} onLoad={editor.replaceDoc} />
 
-      <ConnectionPanel connection={connection} />
-
-      <PrintPanel doc={editor.doc} connection={connection} />
+      <PrintPanel doc={editor.doc} connection={connection} flags={diagnostics.flags} />
 
       <footer className="app__footer">
-        <DiagnosticsPanel connection={connection} />
+        <DiagnosticsPanel connection={connection} diagnostics={diagnostics} />
         <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
           Source on GitHub
         </a>
