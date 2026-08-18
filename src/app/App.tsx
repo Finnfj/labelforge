@@ -41,9 +41,9 @@ export default function App() {
   // Dimensions are the preset's to define; "Custom…" hands them back to the user.
   const isPreset = editor.doc.size.presetId != null
 
-  // Uploaded fonts survive a reload in IndexedDB but not in the browser's font
-  // set, so a label using one would render as a fallback until it was uploaded
-  // again. Re-registering them at startup is what makes them persist.
+  // Added fonts survive a reload in IndexedDB but not in the browser's font set,
+  // so a label using one would render as a fallback until it was added again.
+  // Re-registering them at startup is what makes them persist.
   useEffect(() => {
     void registerStoredFonts()
   }, [])
@@ -200,9 +200,22 @@ export default function App() {
 
       <footer className="app__footer">
         <DiagnosticsPanel connection={connection} diagnostics={diagnostics} />
-        <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
-          Source on GitHub
-        </a>
+        <span className="app__footer-links">
+          {/* The OFL asks that the licence travel with the font software, which
+              shipping OFL.txt beside the files already satisfies. This link is
+              so a person can actually find it. BASE_URL rather than a bare path,
+              because the app is served from a subdirectory on GitHub Pages. */}
+          <a
+            href={`${import.meta.env.BASE_URL}fonts/OFL.txt`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Font licences
+          </a>
+          <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
+            Source on GitHub
+          </a>
+        </span>
       </footer>
     </main>
   )

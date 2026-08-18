@@ -617,6 +617,14 @@ input.mono {
   justify-content: space-between;
 }
 
+/* The links sit together at the right; the diagnostics sentence keeps the left. */
+.app__footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  align-items: baseline;
+}
+
 .app__footer a {
   color: var(--accent);
   font-size: 0.8rem;

@@ -21,8 +21,8 @@ export function TemplatesPanel({ doc, onLoad }: { doc: LabelDoc; onLoad(doc: Lab
   const [note, setNote] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // The embed choice is only worth showing when the label actually uses an
-  // uploaded font; bundled and system fonts need nothing carried.
+  // The embed choice is only worth showing when the label actually uses a font
+  // the user added; bundled and system fonts need nothing carried.
   useEffect(() => {
     void hasEmbeddableFonts(doc).then(setCanEmbedFonts)
   }, [doc])
@@ -122,13 +122,13 @@ export function TemplatesPanel({ doc, onLoad }: { doc: LabelDoc; onLoad(doc: Lab
               checked={embedFonts}
               onChange={(e) => setEmbedFonts(e.target.checked)}
             />
-            <span>Embed uploaded fonts in the export</span>
+            <span>Embed added fonts in the export</span>
           </label>
           <p className="hint">
-            Off by default. Embedding puts the font file itself in the export, which is
+            Off by default. Embedding puts the font file itself into the export, which is
             redistribution &mdash; fine for a font you are licensed to pass on, not for most
-            commercial ones. Left off, the export names the font so the other end knows exactly what
-            is missing.
+            commercial ones. Left off, the export only names the font, so the other end knows
+            exactly what is missing without you having handed the file over.
           </p>
         </>
       )}

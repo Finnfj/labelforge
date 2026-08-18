@@ -18,13 +18,13 @@ import type { PrinterConnection } from './usePrinter'
 /**
  * Name a missing font in a way that says what to do about it.
  *
- * An uploaded font is identified by a hash of its bytes, which is right for
+ * An added font is identified by a hash of its bytes, which is right for
  * matching it across machines and useless to read. Its display name lived in the
  * font record, and if we are reporting it missing that record is exactly what is
  * gone — so say what kind of thing it was instead of showing a bare hash.
  */
 function describeFont(family: string): string {
-  return family.startsWith('lf-') ? `an uploaded font (${family})` : family
+  return family.startsWith('lf-') ? `an added font (${family})` : family
 }
 
 export function PrintPanel({

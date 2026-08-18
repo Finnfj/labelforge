@@ -36,8 +36,8 @@ export async function deleteTemplate(id: string): Promise<void> {
 /**
  * Portable file format.
  *
- * Version 2 adds `fonts`. Version 1 files are still read — they have no
- * uploaded fonts by construction, so there is nothing to migrate.
+ * Version 2 adds `fonts`. Version 1 files are still read — they predate added
+ * fonts entirely, so there is nothing to migrate.
  */
 const portableFontSchema = z.object({
   displayName: z.string(),
@@ -56,7 +56,7 @@ const portableSchema = z.object({
 
 export type PortableFont = z.infer<typeof portableFontSchema>
 
-/** Font families in a document that came from an upload rather than a bundle. */
+/** Font families in a document that the user added rather than ones we bundle. */
 function userFontFamilies(doc: LabelDoc): string[] {
   const families = new Set<string>()
   for (const element of doc.elements) {
@@ -83,12 +83,16 @@ export const PORTABLE_EXTENSION = '.labelforge.json'
  * Exports are self-contained on purpose: a label that silently loses its logo
  * when opened on another machine is worse than a slightly larger file.
  *
- * Uploaded fonts are the exception, and deliberately so. Putting font bytes in a
- * file you hand to someone else is redistribution, which most commercial font
- * licences forbid outright — so the same reasoning that makes inlining an image
- * obviously right makes inlining a font the user's call, not ours. By default
- * only the name and size travel, which is enough for the receiving end to say
- * exactly which font is missing instead of quietly substituting one.
+ * Fonts the user added are the exception, and deliberately so. Putting font
+ * bytes in a file you hand to someone else is redistribution, which most
+ * commercial font licences forbid outright — so the same reasoning that makes
+ * inlining an image obviously right makes inlining a font the user's call, not
+ * ours. By default only the name and size travel, which is enough for the
+ * receiving end to say exactly which font is missing instead of quietly
+ * substituting one.
+ *
+ * The three bundled faces never appear here at all: both machines have them
+ * because both machines have the app.
  */
 export async function exportDoc(
   doc: LabelDoc,
@@ -138,7 +142,7 @@ export class ImportError extends Error {
 export interface ImportResult {
   doc: LabelDoc
   /**
-   * Uploaded fonts the file named but did not carry, by display name.
+   * Added fonts the file named but did not carry, by display name.
    *
    * Not an error — the label opens and prints — but the caller has to say so,
    * because the substitute face it renders in looks entirely intentional.

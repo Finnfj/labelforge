@@ -10,11 +10,11 @@ import { listFonts, putFont, type UserFontRecord } from '../../storage/fonts'
  */
 export function FontField({ value, onChange }: { value: string; onChange(family: string): void }) {
   const fileRef = useRef<HTMLInputElement>(null)
-  const [userFonts, setUserFonts] = useState<UserFontRecord[]>([])
+  const [added, setAdded] = useState<UserFontRecord[]>([])
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    void listFonts().then(setUserFonts)
+    void listFonts().then(setAdded)
   }, [])
 
   async function onFile(file: File | undefined) {
@@ -22,7 +22,7 @@ export function FontField({ value, onChange }: { value: string; onChange(family:
     setError(null)
     try {
       const record = await putFont(file)
-      setUserFonts(await listFonts())
+      setAdded(await listFonts())
       onChange(record.family)
     } catch (e) {
       // Loud on purpose. A font that failed to load and said nothing would
@@ -31,13 +31,13 @@ export function FontField({ value, onChange }: { value: string; onChange(family:
     }
   }
 
-  // A family the document names but this machine does not have — a user font
+  // A family the document names but this machine does not have — an added font
   // that travelled in a template without its bytes. Offered explicitly so the
   // select shows what the label actually wants instead of rendering blank.
   const known =
     BUNDLED_FONTS.some((f) => f.family === value) ||
     SYSTEM_FONTS.some((f) => f.family === value) ||
-    userFonts.some((f) => f.family === value)
+    added.some((f) => f.family === value)
 
   const selected =
     BUNDLED_FONTS.find((f) => f.family === value) ?? SYSTEM_FONTS.find((f) => f.family === value)
@@ -55,9 +55,9 @@ export function FontField({ value, onChange }: { value: string; onChange(family:
               </option>
             ))}
           </optgroup>
-          {userFonts.length > 0 && (
-            <optgroup label="Uploaded">
-              {userFonts.map((f) => (
+          {added.length > 0 && (
+            <optgroup label="Added">
+              {added.map((f) => (
                 <option key={f.family} value={f.family}>
                   {f.displayName}
                 </option>
@@ -93,6 +93,12 @@ export function FontField({ value, onChange }: { value: string; onChange(family:
 
       {error && <p className="error">{error}</p>}
       {selected?.note && <p className="hint">{selected.note}</p>}
+      {added.some((f) => f.family === value) && (
+        <p className="hint">
+          Added fonts stay on this device &mdash; nothing is sent anywhere. An export names the font
+          rather than carrying it, unless you tick the box in Templates.
+        </p>
+      )}
       {isGenericFamily(value) && (
         <p className="hint">
           A system font resolves to whatever this machine has, so this label may print in a

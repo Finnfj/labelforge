@@ -65,7 +65,16 @@ Mono**, all under the **SIL Open Font License 1.1**. The full notices are in
 [`public/fonts/OFL.txt`](../public/fonts/OFL.txt), which is served alongside the font
 files rather than only living in this repository — the OFL asks that the licence
 travel with the font software, and a doc in a git tree does not travel with a
-`.woff2` on a CDN.
+`.woff2` on a CDN. The app footer links to it, so it is reachable and not merely
+present.
+
+To be precise about the obligation: OFL 1.1 requires each copy of the font software
+to carry the copyright notice and the licence, and accepts a stand-alone text file as
+one of the ways to do that. It has **no display requirement** — unlike CC BY, it does
+not ask for visible attribution inside the product. Shipping `OFL.txt` beside the
+files is therefore sufficient on its own; the footer link exists because SIL
+recommends a findable mention, and because a licence nobody can locate is a poor kind
+of compliance.
 
 **The OFL does not reach this project's code.** SIL's own FAQ is explicit that only
 portions based on the font software fall under the OFL, and that bundling with
@@ -84,11 +93,14 @@ so the files would be bytes for an unreachable state. Bold _is_ bundled rather t
 left to the browser's synthetic emboldening, which thickens stems by an amount nobody
 chose; at 203 dpi that is a visible difference rather than a subtle one.
 
-### Fonts the user uploads
+### Fonts the user adds
 
-Users can add their own font files, which are stored locally in IndexedDB. For local
-use that is the user's own font on the user's own machine, and their licence to it is
-theirs to hold.
+Users can add their own font files. **"Added", not "uploaded"** — the wording in the
+UI is deliberate, because there is nothing here to upload to. The file is read in the
+browser, registered with the browser's own font set, and kept in IndexedDB on that
+device; this app has no server and never sends a font anywhere. For local use that is
+the user's own font on the user's own machine, and their licence to it is theirs to
+hold.
 
 Exporting is where this project takes a position. Putting font bytes into a file you
 hand to someone else is redistribution, and most commercial font licences forbid it

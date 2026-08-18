@@ -102,7 +102,7 @@ const userFonts = new Map<string, string>()
  * the CSS matching path and resolve to whichever the browser preferred.
  *
  * Throws on a file that is not a font. That has to be loud: the alternative is
- * an upload that appears to work and prints in a substitute face.
+ * an add that appears to work and prints in a substitute face.
  */
 export async function registerUserFont(
   family: string,

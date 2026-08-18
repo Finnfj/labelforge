@@ -3,7 +3,11 @@ import { fontStore } from './db'
 import { forgetUserFont, isUserFontRegistered, registerUserFont } from '../render/fonts'
 
 /**
- * Fonts the user supplied.
+ * Fonts the user added.
+ *
+ * "Added", not "uploaded": nothing leaves the machine. The file is read in the
+ * browser, registered with the browser's own font set and kept in IndexedDB on
+ * this device. There is no server in this app to upload anything to.
  *
  * Content-addressed, unlike images. An image gets a random id because only the
  * machine that made it needs to find it again; a font has to be identifiable
@@ -50,7 +54,7 @@ function displayNameFor(fileName: string): string {
     fileName
       .replace(/\.[a-z0-9]+$/i, '')
       .replace(/[-_]+/g, ' ')
-      .trim() || 'Uploaded font'
+      .trim() || 'Added font'
   )
 }
 
@@ -93,7 +97,7 @@ export async function deleteFont(family: string): Promise<void> {
  *
  * Called once at startup. Without it a font survives a reload in IndexedDB but
  * not in the CSS font set, so every label using one would render as a fallback
- * until it was re-uploaded.
+ * until it was added again.
  */
 export async function registerStoredFonts(): Promise<void> {
   const all = await entries<string, StoredFont>(fontStore)
