@@ -5,6 +5,7 @@ import {
   PORTABLE_EXTENSION,
   deleteTemplate,
   exportDoc,
+  hasEmbeddableFonts,
   importDoc,
   listTemplates,
   saveTemplate,
@@ -15,7 +16,16 @@ export function TemplatesPanel({ doc, onLoad }: { doc: LabelDoc; onLoad(doc: Lab
   const [templates, setTemplates] = useState<StoredTemplate[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [embedFonts, setEmbedFonts] = useState(false)
+  const [canEmbedFonts, setCanEmbedFonts] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // The embed choice is only worth showing when the label actually uses an
+  // uploaded font; bundled and system fonts need nothing carried.
+  useEffect(() => {
+    void hasEmbeddableFonts(doc).then(setCanEmbedFonts)
+  }, [doc])
 
   const refresh = useCallback(async () => {
     try {
@@ -61,7 +71,7 @@ export function TemplatesPanel({ doc, onLoad }: { doc: LabelDoc; onLoad(doc: Lab
             disabled={busy}
             onClick={() =>
               run(async () => {
-                const json = await exportDoc(doc)
+                const json = await exportDoc(doc, { embedFonts: embedFonts && canEmbedFonts })
                 const blob = new Blob([json], { type: 'application/json' })
                 const url = URL.createObjectURL(blob)
                 const anchor = document.createElement('a')
@@ -87,17 +97,44 @@ export function TemplatesPanel({ doc, onLoad }: { doc: LabelDoc; onLoad(doc: Lab
               e.target.value = ''
               if (!file) return
               void run(async () => {
-                const imported = await importDoc(await file.text())
+                const { doc: imported, missingFonts } = await importDoc(await file.text())
                 // A fresh id, so importing the same file twice does not overwrite
                 // the copy already open.
                 onLoad({ ...imported, id: newId() })
+                setNote(
+                  missingFonts.length > 0
+                    ? `Imported, but this machine does not have ${missingFonts.join(', ')}. ` +
+                        `Text using ${missingFonts.length === 1 ? 'it' : 'them'} will print in a ` +
+                        `substitute typeface until you add the font under the text Inspector.`
+                    : null,
+                )
               })
             }}
           />
         </div>
       </div>
 
+      {canEmbedFonts && (
+        <>
+          <label className="field field--check" style={{ marginTop: '0.6rem' }}>
+            <input
+              type="checkbox"
+              checked={embedFonts}
+              onChange={(e) => setEmbedFonts(e.target.checked)}
+            />
+            <span>Embed uploaded fonts in the export</span>
+          </label>
+          <p className="hint">
+            Off by default. Embedding puts the font file itself in the export, which is
+            redistribution &mdash; fine for a font you are licensed to pass on, not for most
+            commercial ones. Left off, the export names the font so the other end knows exactly what
+            is missing.
+          </p>
+        </>
+      )}
+
       {error && <p className="error">{error}</p>}
+      {note && <p className="warn">{note}</p>}
 
       {templates.length === 0 ? (
         <p className="hint">
