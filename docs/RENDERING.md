@@ -133,6 +133,61 @@ order: switch to Atkinson or Ordered, lift the contrast, and only then reach for
 density in the Print panel. Density affects the whole label, including text that was
 already fine.
 
+## Text
+
+### The load-before-rasterise rule
+
+Canvas is not the DOM. Setting `ctx.font` to a family the browser has not loaded does
+**not** start a load, and the canvas is never redrawn when one finishes — it silently
+substitutes and carries on. A label rasterised a moment too early therefore produces a
+completely plausible bitmap in the wrong typeface, with the wrong metrics and the wrong
+line breaks, and nothing anywhere says so.
+
+`document.fonts.ready` does not solve this, which is worth stating because it looks
+like it should. It settles fonts that _layout_ has used; ours are only ever named from
+a canvas, so it resolves instantly with every face still unloaded. `rasterize` used to
+await exactly that, under a comment describing the hazard it did not actually prevent.
+
+`ensureDocumentFonts` in `src/render/fonts.ts` is the real guard. For each distinct
+family and size a document's text actually uses it calls `document.fonts.load()` —
+passing the element's own text, which is what decides the needed files for a family
+split across unicode-ranges — and then asserts with `document.fonts.check()`. `load`
+alone is not enough: it resolves with an empty array when nothing matched, which is
+indistinguishable from success.
+
+Families that fail come back as `fontFallbacks` on the `RasterizeResult` and are
+reported in the Print panel. Reported, not thrown: a missing font still prints a
+readable label, and one bad family should not cost the whole raster — the same
+judgement `skipped` already encodes.
+
+### The bundled faces
+
+Chosen for 203 dpi, not for looks. At 8 pt an em is roughly 22 dots and a stem is one
+or two, so what survives is generous x-height, open counters and even stem weight;
+delicate faces close up under the head's dot gain. Note that TrueType hinting is
+largely irrelevant here — canvas renders from outlines with grayscale antialiasing,
+so the outline design and the threshold do the work.
+
+- **Fira Sans** was drawn for low-resolution rendering on cheap phones, which is
+  nearly the same constraint.
+- **Archivo Narrow** buys horizontal room on narrow stock. Worth noting the road not
+  taken: the Liberation family is metric-compatible with Arial and Times, which is
+  attractive, but its OFL releases contain no condensed cut at all.
+- **JetBrains Mono** draws `0`/`O` and `1`/`l`/`I` apart, which is the failure mode
+  that actually matters on a serial or a batch code.
+
+Regular and bold only, and no italic — see `docs/THIRD_PARTY.md` for why, and for the
+licensing position.
+
+### System fonts, and why they are labelled
+
+`sans-serif`, `serif` and `monospace` are still offered, because every label saved
+before the bundled fonts existed names one and rewriting those would change how they
+print without being asked. They are now labelled **System — varies by machine**, which
+is the honest description: `sans-serif` is Arial on Windows, Liberation or DejaVu on
+Linux, Roboto on Android. Same document, different metrics, different line breaks. A
+bundled font is the way out, and new text elements use one by default.
+
 ## Line art
 
 `mode: lineart` skips all of the above and takes a hard threshold at the per-image

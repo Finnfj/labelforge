@@ -2,14 +2,17 @@
 
 ## Runtime dependencies
 
-| Package                                                   | License    | Used for                                                |
-| --------------------------------------------------------- | ---------- | ------------------------------------------------------- |
-| [pako](https://github.com/nodeca/pako)                    | MIT        | zlib deflate — the printer's raster payload compression |
-| [React](https://react.dev/) / react-router                | MIT        | UI                                                      |
-| [zod](https://zod.dev/)                                   | MIT        | document schema validation and migration                |
-| [idb-keyval](https://github.com/jakearchibald/idb-keyval) | Apache-2.0 | IndexedDB persistence                                   |
-| [fabric](http://fabricjs.com/)                            | MIT        | the editor canvas                                       |
-| [bwip-js](https://github.com/metafloor/bwip-js)           | MIT        | barcode and QR rendering                                |
+| Package                                                                   | License    | Used for                                                |
+| ------------------------------------------------------------------------- | ---------- | ------------------------------------------------------- |
+| [pako](https://github.com/nodeca/pako)                                    | MIT        | zlib deflate — the printer's raster payload compression |
+| [React](https://react.dev/) / react-router                                | MIT        | UI                                                      |
+| [zod](https://zod.dev/)                                                   | MIT        | document schema validation and migration                |
+| [idb-keyval](https://github.com/jakearchibald/idb-keyval)                 | Apache-2.0 | IndexedDB persistence                                   |
+| [fabric](http://fabricjs.com/)                                            | MIT        | the editor canvas                                       |
+| [bwip-js](https://github.com/metafloor/bwip-js)                           | MIT        | barcode and QR rendering                                |
+| [@fontsource/fira-sans](https://fontsource.org/fonts/fira-sans)           | OFL-1.1    | bundled label font                                      |
+| [@fontsource/archivo-narrow](https://fontsource.org/fonts/archivo-narrow) | OFL-1.1    | bundled label font                                      |
+| [@fontsource/jetbrains-mono](https://fontsource.org/fonts/jetbrains-mono) | OFL-1.1    | bundled label font                                      |
 
 Dev-only: `vite`, `typescript`, `vitest`, `oxlint`, `prettier`, `playwright` (browser
 test tier), `@zxing/library` and `jsqr` (decoding rendered barcodes back in tests).
@@ -54,6 +57,47 @@ The parameters are `level: -1, windowBits: 10, memLevel: 8, strategy: 0`. Callin
 is pinned by the golden-fixture test in `src/printer/protocol/`, whose expected values
 were captured from the original SDK. The `windowBits: 10` in particular is
 load-bearing — the default of 15 produces different bytes.
+
+## Fonts
+
+Three typefaces ship with the app: **Fira Sans**, **Archivo Narrow** and **JetBrains
+Mono**, all under the **SIL Open Font License 1.1**. The full notices are in
+[`public/fonts/OFL.txt`](../public/fonts/OFL.txt), which is served alongside the font
+files rather than only living in this repository — the OFL asks that the licence
+travel with the font software, and a doc in a git tree does not travel with a
+`.woff2` on a CDN.
+
+**The OFL does not reach this project's code.** SIL's own FAQ is explicit that only
+portions based on the font software fall under the OFL, and that bundling with
+software under other licensing is intended and allowed. LabelForge stays MIT.
+
+They are shipped **unmodified**, which is a deliberate choice rather than laziness.
+The OFL treats subsetting and format conversion as producing a Modified Version, and
+a Modified Version may not keep a font's Reserved Font Name. Serving the exact files
+`@fontsource` publishes means that question never has to be answered: no subsetting
+here, no conversion here, no renaming obligation. The Latin-only, 400-and-700 subsets
+were already made and published upstream.
+
+Only regular and bold are bundled. Italic is not, because nothing in the UI can set
+it — the field exists on `TextElement` and reaches Fabric, but no control writes it,
+so the files would be bytes for an unreachable state. Bold _is_ bundled rather than
+left to the browser's synthetic emboldening, which thickens stems by an amount nobody
+chose; at 203 dpi that is a visible difference rather than a subtle one.
+
+### Fonts the user uploads
+
+Users can add their own font files, which are stored locally in IndexedDB. For local
+use that is the user's own font on the user's own machine, and their licence to it is
+theirs to hold.
+
+Exporting is where this project takes a position. Putting font bytes into a file you
+hand to someone else is redistribution, and most commercial font licences forbid it
+outright. So unlike images — which are always inlined, on the grounds that a label
+silently losing its logo is worse than a larger file — **font bytes are not embedded
+by default.** An export carries the font's name and size so the receiving machine can
+say exactly what is missing, and embedding the bytes is a checkbox the exporter has to
+tick, next to a line saying what ticking it means. The app should not make an
+unlicensed redistribution the path of least resistance.
 
 ## Symbols
 

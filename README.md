@@ -33,6 +33,11 @@ Working today:
   self-register
 - Label documents in millimetres, with stock presets and gap/continuous paper
 - Text, rectangles, ellipses and lines
+- Three bundled typefaces chosen for 203 dpi — Fira Sans, Archivo Narrow and
+  JetBrains Mono, all OFL 1.1 — so a label prints the same on every machine,
+  plus your own font files if you have them. The old `sans-serif`/`serif`/`monospace`
+  options are still there but labelled for what they are: whatever the machine
+  happens to have, which is not the same font on Windows, Linux and Android
 - Barcodes (Code 128/39, EAN-8/13, ITF-14, GS1-128, Data Matrix) and QR codes,
   rendered at whole-dot module widths with proper quiet zones
 - Image upload with a line-art/photo choice that decides between hard thresholding
@@ -92,8 +97,9 @@ npx playwright install chromium   # once, for the browser tier
 - `docs/PROTOCOL.md` — the wire protocol: GATT profile, command set, raster format,
   the captured print sequence — with a sequence diagram — and how to capture one
   yourself
-- `docs/RENDERING.md` — how a document becomes dots: the two-plane rasteriser, and
-  the dithering controls with guidance on choosing between them
+- `docs/RENDERING.md` — how a document becomes dots: the two-plane rasteriser, the
+  dithering controls with guidance on choosing between them, and how text is loaded
+  and rendered
 - `docs/THIRD_PARTY.md` — dependencies, provenance and licensing
 
 ### Layout
