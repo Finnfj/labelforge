@@ -308,6 +308,51 @@ inference failed to achieve.
 Repeated verbatim per copy, configuration included. Byte-identical across all three
 captured prints.
 
+The shape of it, from connect to a registered label. The bytes below the diagram are
+the authority — this is a reading aid, and `VENDOR_PRINT_SEQUENCE` in
+`src/printer/protocol/commands.ts` is where the driver and these docs are kept from
+drifting apart.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as LabelForge
+    participant P as P50S
+
+    rect rgb(240, 244, 250)
+    Note over A,P: Connect — BlePrinterDriver.connect()
+    A->>P: requestDevice, filtered on the name prefix "P50"
+    A->>P: GATT connect, discover service ff00
+    A->>P: subscribe ff01 (status) and ff03 (credits)
+    Note right of A: Both, before any print.<br/>Subscribing to one stalls the job.
+    P-->>A: ff03: 01 04 — opening credit window, size 4
+    A->>P: 1F 07 setBluetoothType
+    A->>P: 10 FF 20 F2 / F1 / F3 — version, serial, MAC
+    P-->>A: firmware, serial (model is taken from the advertised name)
+    end
+
+    rect rgb(245, 243, 236)
+    Note over A,P: Print job — repeated verbatim per copy
+    A->>P: 1F 80 02 20 setPaperTypeSilent(gap)
+    A->>P: 1F 70 02 0A 00×6 setPrintParams(density)
+    A->>P: 1F C0 01 00 startPrintJob
+    A->>P: 1F 11 51 alignPaperStart
+
+    loop 90-byte chunks over ff02
+        A->>P: 1F 10 … zlib raster payload
+        P-->>A: ff03: 01 01 — one credit back per write
+    end
+    Note right of A: ~5 ms between chunks while credits<br/>flow, ~30 ms if ff03 never fires.
+
+    A->>P: 1F 12 20 00 locate(gap)
+    Note right of A: The alignment fix. Inert anywhere else —<br/>it only acts after a raster payload.
+    A->>P: 1F C0 01 01 stopPrintJob
+    A->>P: 1F 11 50 alignPaperEnd
+    P-->>A: ff01: 4F 4B ("OK"), ~300 ms later
+    Note right of A: Waiting for this before the next copy<br/>is what stops multi-copy runs stacking.
+    end
+```
+
 ```
 10 FF 50 F1                        battery — the app's own UI polling, not required
 1F 80 02 20                        setPaperTypeSilent(gap)      mode 02, not 01

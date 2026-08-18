@@ -35,18 +35,27 @@ Working today:
 - Text, rectangles, ellipses and lines
 - Barcodes (Code 128/39, EAN-8/13, ITF-14, GS1-128, Data Matrix) and QR codes,
   rendered at whole-dot module widths with proper quiet zones
-- Image upload with per-image threshold, inversion, and a line-art/photo choice
-  that decides between hard thresholding and Floyd–Steinberg dithering
+- Image upload with a line-art/photo choice that decides between hard thresholding
+  and dithering, plus per-image threshold, dither algorithm (Floyd–Steinberg,
+  Atkinson or ordered Bayer), diffusion strength, brightness, contrast and inversion
+  — see `docs/RENDERING.md` for which to reach for when a photo prints muddy
 - A 70-symbol library drawn for thermal output, grouped and including the full
   copyright/copyleft/Creative Commons family
 - Templates, plus self-contained JSON export/import with images inlined
-- A **virtual printer** that runs the real command sequence and the real encoder,
-  then shows the exact bitmap the hardware would receive — including a thermal-bleed
-  simulation that reveals text which will smear shut before you waste a label
+- A live preview of the exact bitmap the hardware would receive, including a
+  thermal-bleed simulation that reveals text which will smear shut before you waste
+  a label
+- A **virtual printer** that runs the real command sequence and the real encoder
+  against no hardware at all. Bluetooth is the default output; tick _Offer the
+  virtual printer_ under Diagnostics to get it back as a choice
 
 Settings that exist only for diagnosis — head padding and alignment, manual gap feed,
 the commands this firmware ignores — are folded into **Advanced** sections, since the
-defaults now match what the vendor app does.
+defaults now match what the vendor app does. Two go further and are hidden outright
+until asked for in **Diagnostics**: the virtual printer, and the speed selector and
+test patterns in the Print panel. Neither is a preference — both are admissions that
+a control exists for diagnosing this app rather than for printing a label, and the
+speed command in particular is one the vendor app never sends at all.
 
 ## Requirements
 
@@ -81,8 +90,34 @@ npx playwright install chromium   # once, for the browser tier
 ## Documentation
 
 - `docs/PROTOCOL.md` — the wire protocol: GATT profile, command set, raster format,
-  the captured print sequence, and how to capture one yourself
+  the captured print sequence — with a sequence diagram — and how to capture one
+  yourself
+- `docs/RENDERING.md` — how a document becomes dots: the two-plane rasteriser, and
+  the dithering controls with guidance on choosing between them
 - `docs/THIRD_PARTY.md` — dependencies, provenance and licensing
+
+### Layout
+
+Five layers, with the dependency rules enforced in CI by
+`scripts/check-layering.mjs`. The point is that hardware concerns stay quarantined in
+`printer/`, so the editor and renderer stay testable with no Bluetooth in sight.
+
+```mermaid
+flowchart TD
+    app["<b>app/</b><br/>page shell, panels, usePrinter<br/><i>may import anything</i>"]
+    editor["<b>editor/</b><br/>Fabric canvas, toolbar, inspector<br/><i>not printer/</i>"]
+    render["<b>render/</b><br/>rasterise, dither, barcode, icons<br/><i>not printer/, not react</i>"]
+    printer["<b>printer/</b><br/>drivers, transport, protocol<br/><i>not fabric, react or editor/</i>"]
+    model["<b>model/</b><br/>LabelDoc, units, bitmap<br/><i>leaf — imports no layer</i>"]
+
+    app --> editor
+    app --> render
+    app --> printer
+    editor --> render
+    editor --> model
+    render --> model
+    printer --> model
+```
 
 ```bash
 npm run snoop captures/btsnoop_hci.log
