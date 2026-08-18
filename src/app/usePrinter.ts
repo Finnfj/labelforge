@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { VirtualPrinterDriver } from '../printer/drivers/VirtualPrinterDriver'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import { WebBluetoothTransport } from '../printer/transport/WebBluetoothTransport'
+import { findProfile } from '../printer/profiles'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../model/units'
 import type {
   PrinterCapabilities,
@@ -111,6 +112,15 @@ const WIRE_LOG_LIMIT = 500
 
 export interface PrinterConnection {
   kind: PrinterKind
+  /**
+   * Forced model, or null to detect from the advertised name.
+   *
+   * A diagnostic escape hatch: detection matches a name prefix that came from
+   * reverse engineering, so it will eventually misidentify somebody's printer,
+   * and that person needs a way through without waiting for a release.
+   */
+  profileOverride: string | null
+  setProfileOverride(id: string | null): void
   driver: PrinterDriver
   state: PrinterState
   capabilities: PrinterCapabilities | null
@@ -141,6 +151,7 @@ export function usePrinter(): PrinterConnection {
   const [busy, setBusy] = useState(false)
   const [wireLog, setWireLog] = useState<WireEntry[]>([])
   const [geometry, setGeometryState] = useState<HeadGeometry>(loadGeometry)
+  const [profileOverride, setProfileOverrideState] = useState<string | null>(null)
 
   const setGeometry = useCallback((patch: Partial<HeadGeometry>) => {
     setGeometryState((current) => {
@@ -160,7 +171,7 @@ export function usePrinter(): PrinterConnection {
   // is deferred to `connect()` or the static `isSupported()`, so this is safe
   // even in a browser with no Web Bluetooth at all.
   const driverRef = useRef<PrinterDriver | null>(null)
-  if (!driverRef.current) driverRef.current = new BlePrinterDriver(new WebBluetoothTransport())
+  if (!driverRef.current) driverRef.current = makeBleDriver(null)
   const driver = driverRef.current
 
   // Subscribe to whichever driver is current. Re-runs when the kind changes,
@@ -192,9 +203,7 @@ export function usePrinter(): PrinterConnection {
       // nothing is listening to any more.
       void previous?.disconnect().catch(() => {})
       driverRef.current =
-        next === 'ble'
-          ? new BlePrinterDriver(new WebBluetoothTransport())
-          : new VirtualPrinterDriver()
+        next === 'ble' ? makeBleDriver(profileOverride) : new VirtualPrinterDriver()
       setKindState(next)
       setCapabilities(null)
       setStatus(null)
@@ -202,7 +211,7 @@ export function usePrinter(): PrinterConnection {
       setWireLog([])
       setState('disconnected')
     },
-    [kind],
+    [kind, profileOverride],
   )
 
   const connect = useCallback(async (options?: { acceptAllDevices?: boolean }) => {
@@ -250,8 +259,27 @@ export function usePrinter(): PrinterConnection {
 
   const clearWireLog = useCallback(() => setWireLog([]), [])
 
+  // Changing the override has to rebuild the driver: the profile decides the
+  // chunk size and head width the driver is constructed with, and detection
+  // runs inside connect().
+  const setProfileOverride = useCallback(
+    (id: string | null) => {
+      setProfileOverrideState(id)
+      if (kind !== 'ble') return
+      void driverRef.current?.disconnect().catch(() => {})
+      driverRef.current = makeBleDriver(id)
+      setCapabilities(null)
+      setStatus(null)
+      setError(null)
+      setState('disconnected')
+    },
+    [kind],
+  )
+
   return {
     kind,
+    profileOverride,
+    setProfileOverride,
     driver,
     state,
     capabilities,
@@ -268,6 +296,15 @@ export function usePrinter(): PrinterConnection {
     refreshStatus,
     clearWireLog,
   }
+}
+
+/** A BLE driver, optionally pinned to a model rather than detecting one. */
+function makeBleDriver(overrideId: string | null): BlePrinterDriver {
+  const profile = overrideId ? findProfile(overrideId) : undefined
+  return new BlePrinterDriver(
+    new WebBluetoothTransport(),
+    profile ? { profile, lockProfile: true } : {},
+  )
 }
 
 function describe(error: unknown): string {

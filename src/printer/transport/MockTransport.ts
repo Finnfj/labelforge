@@ -29,8 +29,12 @@ export class MockTransport implements Transport {
   /** Grant this many credits after each write, mimicking firmware flow control. */
   creditsPerWrite = 0
 
-  constructor(options: { autoRespond?: MockTransport['autoRespond'] } = {}) {
+  /** Advertised name, which is what the driver identifies the model from. */
+  deviceName: string
+
+  constructor(options: { autoRespond?: MockTransport['autoRespond']; deviceName?: string } = {}) {
     this.autoRespond = options.autoRespond
+    this.deviceName = options.deviceName ?? 'P50_TEST_BLE'
   }
 
   get state(): TransportState {
@@ -38,7 +42,7 @@ export class MockTransport implements Transport {
   }
 
   get device(): TransportDevice | null {
-    return this.#state === 'ready' ? { id: 'mock', name: 'P50_TEST_BLE' } : null
+    return this.#state === 'ready' ? { id: 'mock', name: this.deviceName } : null
   }
 
   on = <E extends keyof TransportEvents>(

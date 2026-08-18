@@ -1,4 +1,5 @@
 import type { PackedBitmap } from '../model/bitmap'
+import type { ProfileSupport } from './profiles'
 import type { PaperTypeValue, SpeedValue } from './protocol/constants'
 
 /**
@@ -19,6 +20,18 @@ export interface PrinterCapabilities {
   headWidthDots: number
   chunkSize: number
   probedAt: number
+  /** Which entry in `printer/profiles.ts` was matched, or assumed. */
+  profileId: string
+  /**
+   * How much this app actually knows about the connected model.
+   *
+   * Surfaced rather than kept internal because "unverified" is a claim the UI
+   * has to make out loud — a profile that has never met its hardware should not
+   * look the same as one confirmed against it.
+   */
+  support: ProfileSupport
+  /** True when the advertised name matched nothing and a P50 was assumed. */
+  profileAssumed: boolean
 }
 
 export type PrinterFault =

@@ -2,6 +2,7 @@ import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import * as cmd from '../protocol/commands'
 import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
+import { DEFAULT_PROFILE, matchProfile, type PrinterProfile } from '../profiles'
 import { CreditWindow } from '../protocol/CreditWindow'
 import {
   decodeBattery,
@@ -33,7 +34,35 @@ const DONE_REPLY = 'OK'
 /** Long enough for the gap seek to finish; a quiet printer is not an error. */
 const DONE_TIMEOUT_MS = 5000
 
+/**
+ * Raised when the printer is a model this app knows it cannot drive.
+ *
+ * Its own type so the UI can present it as a fact about the hardware rather
+ * than as a failure — nothing went wrong, the printer simply speaks a different
+ * protocol.
+ */
+export class IncompatiblePrinterError extends Error {
+  readonly modelLabel: string
+  readonly reason: string
+
+  constructor(modelLabel: string, reason: string) {
+    super(`That looks like a ${modelLabel}. ${reason}`.trim())
+    this.name = 'IncompatiblePrinterError'
+    this.modelLabel = modelLabel
+    this.reason = reason
+  }
+}
+
 export interface BlePrinterOptions {
+  /**
+   * Which printer to assume before the advertised name is known.
+   *
+   * Overridden by detection on connect unless `lockProfile` is set, which is
+   * what the Diagnostics override uses when detection guesses wrong.
+   */
+  profile?: PrinterProfile
+  /** Skip detection and keep `profile` whatever the printer calls itself. */
+  lockProfile?: boolean
   chunkSize?: number
   headWidthDots?: number
   /** Reply timeout. Shortened in tests so a silent printer is cheap to assert. */
@@ -57,6 +86,9 @@ export class BlePrinterDriver implements PrinterDriver {
   #capabilities: PrinterCapabilities | null = null
   #emitter = new Emitter<PrinterEvents>()
   #credits = new CreditWindow()
+  #profile: PrinterProfile
+  #lockProfile: boolean
+  #profileAssumed = false
   #chunkSize: number
   #headWidthDots: number
   #queryTimeoutMs: number
@@ -70,8 +102,11 @@ export class BlePrinterDriver implements PrinterDriver {
 
   constructor(transport: Transport, options: BlePrinterOptions = {}) {
     this.#transport = transport
-    this.#chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE
-    this.#headWidthDots = options.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
+    this.#profile = options.profile ?? DEFAULT_PROFILE
+    this.#lockProfile = options.lockProfile ?? false
+    this.#chunkSize = options.chunkSize ?? this.#profile.chunkSize ?? DEFAULT_CHUNK_SIZE
+    this.#headWidthDots =
+      options.headWidthDots ?? this.#profile.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
     this.#queryTimeoutMs = options.queryTimeoutMs ?? QUERY_TIMEOUT_MS
     this.#doneTimeoutMs = options.doneTimeoutMs ?? DONE_TIMEOUT_MS
 
@@ -113,6 +148,11 @@ export class BlePrinterDriver implements PrinterDriver {
     try {
       await this.#transport.connect(options)
 
+      // Identify the printer before writing a single byte. An L11-family model
+      // cannot parse anything this app sends, so the useful thing to do is say
+      // which model it is and stop — not to send it a job it will ignore.
+      this.#adoptProfile()
+
       this.#unsubscribe.push(
         await this.#transport.subscribe('credits', (bytes) => this.#credits.onNotify(bytes)),
       )
@@ -145,6 +185,39 @@ export class BlePrinterDriver implements PrinterDriver {
   }
 
   /**
+   * Decide which printer we are talking to, from its advertised name.
+   *
+   * Runs after the GATT connection is open but before any write. Detection is
+   * possible this late only because every documented model in the family shares
+   * the same service and characteristics — see the note in `profiles.ts`.
+   */
+  #adoptProfile(): void {
+    if (!this.#lockProfile) {
+      const matched = matchProfile(this.#transport.device?.name)
+      this.#profileAssumed = matched === null
+      const profile = matched ?? DEFAULT_PROFILE
+      this.#profile = profile
+      this.#chunkSize = profile.chunkSize ?? this.#chunkSize
+      this.#headWidthDots = profile.headWidthDots ?? this.#headWidthDots
+    }
+
+    // Checked even when the profile was forced. Locking exists so someone whose
+    // printer is *misidentified* can get past detection; it is not a way to
+    // drive a printer we know ignores everything we send, because there is no
+    // experiment there to run.
+    if (this.#profile.support === 'incompatible') {
+      // Disconnect first, so a refusal does not leave a live GATT link behind.
+      void this.#transport.disconnect().catch(() => {})
+      throw new IncompatiblePrinterError(this.#profile.label, this.#profile.note ?? '')
+    }
+  }
+
+  /** The profile in force, for the UI to report. */
+  get profile(): PrinterProfile {
+    return this.#profile
+  }
+
+  /**
    * Read identity off the printer.
    *
    * Every field is optional: the reply formats are inferred rather than
@@ -173,6 +246,9 @@ export class BlePrinterDriver implements PrinterDriver {
       headWidthDots: this.#headWidthDots,
       chunkSize: this.#chunkSize,
       probedAt: Date.now(),
+      profileId: this.#profile.id,
+      support: this.#profile.support,
+      profileAssumed: this.#profileAssumed,
     }
   }
 
@@ -225,6 +301,7 @@ export class BlePrinterDriver implements PrinterDriver {
 
     try {
       const image = encodeImage(job.bitmap)
+      const framing = cmd.printJobFraming(job.settings)
       const total = image.length * job.settings.copies
       let sent = 0
 
@@ -244,15 +321,9 @@ export class BlePrinterDriver implements PrinterDriver {
         progress('handshake', copy)
 
         // Configuration is re-sent per copy, inside the job, exactly as the vendor
-        // app does it. See cmd.VENDOR_PRINT_SEQUENCE and docs/PROTOCOL.md.
-        await this.#transport.write(cmd.setPaperTypeSilent(job.settings.paperType))
-        await this.#transport.write(cmd.setPrintParams(job.settings.density))
-        // The vendor app never sends this one. Kept because it is a user-facing
-        // setting and has been harmless in practice, but if speed hides in one of
-        // setPrintParams' six unidentified bytes, this is the thing to drop first.
-        await this.#transport.write(cmd.setSpeed(job.settings.speed))
-        await this.#transport.write(cmd.startPrintJob())
-        await this.#transport.write(cmd.alignPaperStart())
+        // app does it. The sequence itself lives in cmd.printJobFraming, shared
+        // with the virtual printer so the two cannot drift.
+        for (const { bytes } of framing.preamble) await this.#transport.write(bytes)
 
         for (let offset = 0; offset < image.length; offset += this.#chunkSize) {
           opts.signal?.throwIfAborted()
@@ -268,13 +339,7 @@ export class BlePrinterDriver implements PrinterDriver {
         }
 
         progress('feed', copy)
-        // The alignment fix, and the reason labels no longer drift: seek the next
-        // gap with the optical sensor once the raster is in. It must come after the
-        // payload and before stopPrintJob — issued standalone it does nothing,
-        // which is why it looked inert for so long.
-        await this.#transport.write(cmd.locate(cmd.LocateMode.Gap))
-        await this.#transport.write(cmd.stopPrintJob())
-        await this.#transport.write(cmd.alignPaperEnd())
+        for (const { bytes } of framing.trailer) await this.#transport.write(bytes)
 
         // The printer answers "OK" on the status channel a fraction of a second
         // after the job ends. Waiting for it keeps a multi-copy run from stacking

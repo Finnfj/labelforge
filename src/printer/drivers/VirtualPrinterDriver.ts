@@ -1,6 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import { encodeImage } from '../protocol/encodeImage'
+import { DEFAULT_PROFILE } from '../profiles'
 import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
 import * as cmd from '../protocol/commands'
 import type {
@@ -78,6 +79,12 @@ export class VirtualPrinterDriver implements PrinterDriver {
       headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
       chunkSize: DEFAULT_CHUNK_SIZE,
       probedAt: Date.now(),
+      // It pretends to be a P50 because it runs the P50 command sequence and the
+      // P50 encoder. Confirmed is the honest word: what it emits is checked
+      // against the same goldens as the real driver.
+      profileId: DEFAULT_PROFILE.id,
+      support: DEFAULT_PROFILE.support,
+      profileAssumed: false,
     }
     this.#setState('connected')
     return this.#capabilities
@@ -106,6 +113,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
 
     try {
       const image = encodeImage(job.bitmap)
+      const framing = cmd.printJobFraming(job.settings)
       const perCopy = image.length
       const total = perCopy * job.settings.copies
 
@@ -116,10 +124,6 @@ export class VirtualPrinterDriver implements PrinterDriver {
         copy: 0,
         copies: job.settings.copies,
       })
-
-      send(cmd.setPaperType(job.settings.paperType), 'setPaperType')
-      send(cmd.setDensity(job.settings.density), 'setDensity')
-      send(cmd.setSpeed(job.settings.speed), 'setSpeed')
 
       let sent = 0
       for (let copy = 1; copy <= job.settings.copies; copy++) {
@@ -132,8 +136,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-        send(cmd.startPrintJob(), 'startPrintJob')
-        send(cmd.alignPaperStart(), 'alignPaperStart')
+        for (const { bytes, note } of framing.preamble) send(bytes, note)
 
         // Chunk the raster exactly as the BLE driver will, so the byte stream
         // recorded here is directly comparable to the real one.
@@ -160,8 +163,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-        send(cmd.stopPrintJob(), 'stopPrintJob')
-        send(cmd.alignPaperEnd(), 'alignPaperEnd')
+        for (const { bytes, note } of framing.trailer) send(bytes, note)
       }
 
       this.#printouts.push({ job, wire, at: Date.now() })

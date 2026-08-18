@@ -3,6 +3,16 @@
 A browser-based label designer and printer driver for **MarkLife P50 / P50S** thermal
 label printers, built to replace the vendor's phone app.
 
+| Model              | Status                                                                |
+| ------------------ | --------------------------------------------------------------------- |
+| **P50 / P50S**     | Confirmed — developed and tested against real hardware                |
+| **M60 / X2**       | Unverified — believed to use the same protocol, never run against one |
+| **P15 / P12 / P7** | Recognised and declined — they use a different, uncompressed protocol |
+
+The last row is deliberate: those printers are identified by name and refused with a
+reason, rather than being connected to and sent commands they cannot parse. See
+`docs/PROTOCOL.md` for the evidence behind each row.
+
 No install, no server, no account: a static site that talks to the printer directly
 over **Web Bluetooth**.
 

@@ -58,6 +58,32 @@ is pinned by the golden-fixture test in `src/printer/protocol/`, whose expected 
 were captured from the original SDK. The `windowBits: 10` in particular is
 load-bearing — the default of 15 produces different bytes.
 
+### Another app for the same printers
+
+[tomLadder/thermoprint](https://github.com/tomLadder/thermoprint) is an independent
+browser app for MarkLife printers. **No code from it is used here.** What was taken is
+factual: which models exist, which advertised-name prefixes they use, and that the
+family splits into two protocol dialects — recorded in `docs/PROTOCOL.md` under a
+tier-4 heading and in `src/printer/profiles.ts`.
+
+Two reasons no code, in descending order of how much they matter.
+
+The first is that there is no licence to rely on. The README carries an MIT badge and
+`packages/core/package.json` says `"license": "MIT"`, but the repository contains **no
+LICENSE file** — the README's own link to one is a 404, and the GitHub API reports
+`"license": null`. The author's intent is clear enough, but the grant itself is absent,
+and "probably fine" is not the standard this file holds anything else to.
+
+The second is provenance. Their `REVERSE_ENGINEERING.md` states it derives from a JADX
+decompile of the vendor Android app (`com.feioou.deliprint.yxq` v3.6.0). Facts sourced
+that way are second-hand for us — a stranger's reading of a decompile we have not
+repeated — which is exactly why they get their own, weaker evidence tier rather than
+being folded in with things we confirmed on hardware.
+
+Worth stating plainly because it cuts the other way too: their reconstruction of the
+compressed dialect and ours agree byte for byte, reached by different routes. That is
+corroboration, and it is recorded as such.
+
 ## Fonts
 
 Three typefaces ship with the app: **Fira Sans**, **Archivo Narrow** and **JetBrains

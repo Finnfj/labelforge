@@ -3,9 +3,9 @@ import {
   CHAR_NOTIFY_CREDITS,
   CHAR_NOTIFY_STATUS,
   CHAR_WRITE,
-  NAME_PREFIXES,
   SERVICE_UUID,
 } from '../protocol/constants'
+import { ALL_NAME_PREFIXES } from '../profiles'
 import { GattQueue } from './GattQueue'
 import {
   BluetoothUnavailableError,
@@ -83,7 +83,7 @@ export class WebBluetoothTransport implements Transport {
         options.acceptAllDevices
           ? { acceptAllDevices: true, optionalServices: [SERVICE_UUID] }
           : {
-              filters: NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
+              filters: ALL_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
               optionalServices: [SERVICE_UUID],
             },
       )

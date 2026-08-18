@@ -10,6 +10,26 @@ const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '
 /** No pacing delay: these assert ordering, not timing. */
 const driver = () => new VirtualPrinterDriver(Infinity)
 
+/**
+ * Split a printout's writes into framing commands and raster chunks.
+ *
+ * Bracketed by position rather than filtered by length. Length worked only while
+ * the virtual driver still sent the 4-byte `setDensity`; the captured sequence
+ * uses the 10-byte `setPrintParams`, which is longer than a chunk of a small
+ * label. The same trap caught the BLE driver's test, and the same fix applies —
+ * bracketing is exact, and asserts the boundaries are where they should be.
+ */
+function splitJob(wire: Uint8Array[]) {
+  const start = wire.findIndex((b) => hex(b) === '1f 11 51')
+  const end = wire.findIndex((b) => hex(b) === '1f 12 20 00')
+  expect(start, 'alignPaperStart is missing').toBeGreaterThanOrEqual(0)
+  expect(end, 'the gap seek is missing').toBeGreaterThan(start)
+  return {
+    framing: [...wire.slice(0, start + 1), ...wire.slice(end)].map(hex),
+    chunks: wire.slice(start + 1, end),
+  }
+}
+
 describe('VirtualPrinterDriver', () => {
   it('emits the documented print sequence', async () => {
     const p = driver()
@@ -20,16 +40,18 @@ describe('VirtualPrinterDriver', () => {
     const [printout] = p.printouts
     expect(printout).toBeDefined()
 
-    // Framing commands, in order, ignoring the raster chunks between them.
-    const framing = printout.wire.filter((b) => b.length <= 5).map(hex)
-    expect(framing).toEqual([
-      '1f 80 01 20', // setPaperType(gap)
-      '1f 70 01 08', // setDensity(8)
-      '1f 60 01 01', // setSpeed(medium)
-      '1f c0 01 00', // startPrintJob
-      '1f 11 51', //    alignPaperStart
-      '1f c0 01 01', // stopPrintJob
-      '1f 11 50', //    alignPaperEnd
+    // The captured vendor sequence, which the BLE driver also asserts verbatim.
+    // Both now build it from cmd.printJobFraming, so this test and its BLE twin
+    // fail together if either side is changed alone.
+    expect(splitJob(printout.wire).framing).toEqual([
+      '1f 80 02 20', //                     setPaperTypeSilent(gap), mode 02
+      '1f 70 02 08 00 00 00 00 00 00', //   setPrintParams(8)
+      '1f 60 01 01', //                     setSpeed(medium)
+      '1f c0 01 00', //                     startPrintJob
+      '1f 11 51', //                        alignPaperStart
+      '1f 12 20 00', //                     locate(Gap) — the alignment fix
+      '1f c0 01 01', //                     stopPrintJob
+      '1f 11 50', //                        alignPaperEnd
     ])
   })
 
@@ -40,8 +62,7 @@ describe('VirtualPrinterDriver', () => {
     await p.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
 
     const expected = encodeImage(bitmap)
-    // Raster chunks are everything that is not a framing command.
-    const chunks = p.printouts[0].wire.filter((b) => b.length > 5)
+    const { chunks } = splitJob(p.printouts[0].wire)
     const joined = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
     let at = 0
     for (const c of chunks) {
@@ -59,8 +80,16 @@ describe('VirtualPrinterDriver', () => {
       bitmap: checkerboard(64, 16),
       settings: { ...DEFAULT_PRINT_SETTINGS, copies: 3 },
     })
-    const starts = p.printouts[0].wire.filter((b) => hex(b) === '1f c0 01 00')
-    expect(starts).toHaveLength(3)
+    const wire = p.printouts[0].wire
+    // Configuration rides along per copy, inside the job, as the capture shows —
+    // it used to be sent once before the loop, which is not what the vendor app
+    // does and not what the BLE driver does.
+    for (const command of ['1f 80 02 20', '1f c0 01 00', '1f 12 20 00', '1f 11 50']) {
+      expect(
+        wire.filter((b) => hex(b) === command),
+        command,
+      ).toHaveLength(3)
+    }
   })
 
   it('reports progress ending at 100% of the declared total', async () => {

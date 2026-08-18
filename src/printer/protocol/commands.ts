@@ -175,27 +175,75 @@ export function setDensityLegacy(level: number): Uint8Array {
   return cmd(0x10, 0xff, 0x10, 0x00, safe)
 }
 
+/** A command paired with the name the byte log should show for it. */
+export interface FramedCommand {
+  bytes: Uint8Array
+  note: string
+}
+
+/**
+ * Everything that wraps the raster payload, once per copy.
+ *
+ * `preamble` goes before the payload and `trailer` after it; the payload itself
+ * is {@link encodeImage}'s output, chunked by whichever driver is sending it.
+ *
+ * Split this way because that is the one thing the two sides genuinely differ
+ * on — the real driver has to interleave credit acquisition and progress with
+ * the chunks, the virtual one paces them and records them. Everything either
+ * side of the payload is identical, so it lives here.
+ */
+export interface PrintJobFraming {
+  preamble: FramedCommand[]
+  trailer: FramedCommand[]
+}
+
 /**
  * The vendor app's exact per-copy print sequence, from an HCI capture.
  *
  * This replaces what used to be a list of speculative candidates guessed at after
  * the SDK was exhausted. The capture answered the question the guesses existed to
- * answer, so they are gone: the gap seek is {@link locate} with
- * {@link LocateMode.Gap}, issued between the raster and {@link stopPrintJob}.
+ * answer: the gap seek is {@link locate} with {@link LocateMode.Gap}, issued
+ * between the raster and {@link stopPrintJob}.
  *
- * Recorded here as data so the driver and the docs cannot drift apart. Two things
- * the app notably never sends: {@link setSpeed}, and any feed command at all.
+ * **Executable, not descriptive.** This used to be an array of strings under a
+ * comment claiming it kept the driver and the docs from drifting apart. It could
+ * not — nothing imported it — and they drifted: the virtual printer was still
+ * sending the superseded paper-type mode and the short density command, and was
+ * missing the gap seek entirely, while advertising itself as byte-for-byte what
+ * a real P50 would receive. Both drivers now build their job from this function,
+ * so the claim is true by construction and a change lands in both at once.
+ *
+ * Configuration is re-sent per copy, inside the job, exactly as the capture
+ * shows. One thing the vendor app notably never sends is any feed command at
+ * all; {@link setSpeed} is discussed below.
  */
-export const VENDOR_PRINT_SEQUENCE = [
-  'setPaperTypeSilent(paperType)',
-  'setPrintParams(density)',
-  'startPrintJob',
-  'alignPaperStart',
-  'encodeImage(bitmap)',
-  'locate(Gap)',
-  'stopPrintJob',
-  'alignPaperEnd',
-] as const
+export function printJobFraming(settings: {
+  paperType: PaperTypeValue
+  density: number
+  speed: SpeedValue
+}): PrintJobFraming {
+  return {
+    preamble: [
+      { bytes: setPaperTypeSilent(settings.paperType), note: 'setPaperTypeSilent' },
+      { bytes: setPrintParams(settings.density), note: 'setPrintParams' },
+      // The vendor app never sends this one. Kept because it is a user-facing
+      // setting and has been harmless in practice, but if speed hides in one of
+      // setPrintParams' six unidentified bytes, this is the thing to drop first.
+      { bytes: setSpeed(settings.speed), note: 'setSpeed' },
+      { bytes: startPrintJob(), note: 'startPrintJob' },
+      { bytes: alignPaperStart(), note: 'alignPaperStart' },
+    ],
+    trailer: [
+      // The alignment fix, and the reason labels no longer drift: seek the next
+      // gap with the optical sensor once the raster is in. It must come after
+      // the payload and before stopPrintJob — issued standalone it does
+      // nothing, which is why it looked inert for so long.
+      { bytes: locate(LocateMode.Gap), note: 'locate(Gap)' },
+      { bytes: stopPrintJob(), note: 'stopPrintJob' },
+      { bytes: alignPaperEnd(), note: 'alignPaperEnd' },
+    ],
+  }
+}
 
 /**
  * Destructive commands. Deliberately grouped and named so they cannot be reached

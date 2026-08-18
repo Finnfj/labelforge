@@ -13,6 +13,7 @@ import { TemplatesPanel } from './TemplatesPanel'
 import { useDiagnosticFlags } from './useDiagnosticFlags'
 import { useElementWidth } from './useElementWidth'
 import { fitScale } from './zoom'
+import { REPO_URL } from './links'
 import { resolveAssetUrl } from '../storage/assets'
 import { registerStoredFonts } from '../storage/fonts'
 
@@ -23,9 +24,6 @@ import { registerStoredFonts } from '../storage/fonts'
  */
 const EDIT_ZOOMS = ['fit', 1, 1.5, 2, 3] as const
 type EditZoom = (typeof EDIT_ZOOMS)[number]
-
-/** Where the source lives. */
-const REPO_URL = 'https://github.com/Finnfj/labelforge'
 
 export default function App() {
   const editor = useLabelEditor()

@@ -3,7 +3,7 @@
 How this document was arrived at, and how much to trust each part of it. See
 `docs/THIRD_PARTY.md` for provenance.
 
-There are three tiers of evidence here, and the difference between them turned out to
+There are four tiers of evidence here, and the difference between them turned out to
 matter enormously:
 
 1. **Read from the vendor SDK.** A starting point, no more. The published SDK is a
@@ -18,6 +18,13 @@ matter enormously:
    and confirmed on hardware. This is ground truth and it overrides both of the above.
    `scripts/parse-btsnoop.mjs` decodes such a capture; the procedure is at the end of
    this document.
+4. **Third-party reverse engineering, unconfirmed here.** Facts published by someone
+   else that have never been seen on our own wire. Weaker than tier 1, not stronger:
+   an SDK at least ships with the product, whereas this is a stranger's reading of a
+   decompile we have not repeated. Useful for knowing what to look for and for
+   corroborating something already confirmed; never sufficient on its own. Marked
+   **[tier 4]** at the point of use, and where it contradicts tiers 2 or 3 the
+   confirmed evidence wins and the disagreement is recorded rather than resolved.
 
 **Where a section carries a tier-3 finding it says so.** Several tier-1 and tier-2
 conclusions in here were flatly wrong, and rather than quietly deleting them the
@@ -309,9 +316,10 @@ Repeated verbatim per copy, configuration included. Byte-identical across all th
 captured prints.
 
 The shape of it, from connect to a registered label. The bytes below the diagram are
-the authority — this is a reading aid, and `VENDOR_PRINT_SEQUENCE` in
-`src/printer/protocol/commands.ts` is where the driver and these docs are kept from
-drifting apart.
+the authority — this is a reading aid. `printJobFraming()` in
+`src/printer/protocol/commands.ts` is where the code keeps to it: both the Bluetooth
+driver and the virtual printer build their job from that one function, so neither can
+drift from the other without the tests noticing.
 
 ```mermaid
 sequenceDiagram
@@ -404,6 +412,67 @@ is what the working implementation does, so it is what we do; `padToHead` surviv
 as a diagnostic for addressing a specific head column, off by default.
 
 Head width still is not queryable, so it stays per-printer configuration.
+
+## The rest of the family — [tier 4]
+
+**Everything in this section is tier 4** unless it says otherwise: it comes from reading
+[tomLadder/thermoprint](https://github.com/tomLadder/thermoprint), another browser app
+for these printers, whose own protocol notes derive from a JADX decompile of the vendor
+Android app (`com.feioou.deliprint.yxq` v3.6.0). None of it has been seen on our wire,
+and we have no hardware but a P50S to check it against.
+
+MarkLife printers do not all speak one protocol. There are at least two dialects:
+
+| Dialect | Models                   | Raster                                           | Us              |
+| ------- | ------------------------ | ------------------------------------------------ | --------------- |
+| **x2**  | P50, P50S, M60, X2       | `1F 10`, zlib-compressed, big-endian dims        | implemented     |
+| **L11** | P15, P12, P7 and aliases | `1D 76 30`, **uncompressed**, little-endian dims | not implemented |
+
+L11's command vocabulary differs throughout, not just in the raster: `10 FF F1 02` to
+enable, `1B 4A n` to feed, `1D 0C` to seek the gap, `10 FF 10 00 t` for thickness. A
+P15 sent our commands would ignore all of them. `src/printer/profiles.ts` recognises the
+L11 name prefixes and refuses to connect, which is the only responsible thing to do with
+a printer we cannot drive.
+
+### The x2 correspondence, which is worth more than it looks
+
+thermoprint's x2 dialect and our captured P50 sequence agree byte for byte on the
+service and characteristics (`ff00`/`ff01`/`ff02`/`ff03`), the credit-based flow
+control, the `1F 10 <rowBytesHi> <rowBytesLo> <heightHi> <heightLo> <payloadLen BE32>`
+raster header, and the job bracketing — `1F 80 02 20`, `1F C0 01 00`, `1F 11 51`,
+`1F 12 20 00`, `1F C0 01 01`, `1F 11 50`.
+
+That is two independent routes to the same bytes: theirs from decompiling the Android
+app, ours from an HCI capture of it. It does not upgrade anything to tier 3, but it is
+the strongest corroboration this reconstruction has had, and it arrived after the fact
+rather than being what the reconstruction was built from.
+
+### Three places we disagree, and keep our own
+
+Recorded rather than reconciled, because in each case a tier-4 claim contradicts
+something we confirmed ourselves.
+
+- **A wakeup frame.** thermoprint sends six zero bytes before `startPrintJob` on the x2
+  path. Our capture of the vendor app printing the same label three times shows no such
+  frame, and printing works without it. We do not send it.
+- **A shorter `setPrintParams`.** thermoprint uses a 4-byte `1F 70 02 <d>` with the
+  density remapped through `{1: 3, 2: 8, 3: 14}`. Our capture shows the 10-byte
+  `1F 70 02 <d> 00×6` with the density passed straight through. We send what we
+  captured.
+- **zlib parameters.** thermoprint compresses with fflate at `level: 6`; its notes
+  claim `windowBits 14`. Our golden fixtures, taken from the vendor SDK's own encoder,
+  pin `windowBits: 10` — a different CMF byte, so the streams are not interchangeable.
+  Ours is evidenced for this printer and theirs is not, so ours stands. Whether a P50S
+  would also accept a wider window is untested and uninteresting until something needs
+  it.
+
+### What this buys, and what it does not
+
+An `m60` profile ships, marked **unverified** in the UI and in
+`src/printer/profiles.ts`. It claims only that the M60 uses the dialect we already
+implement; its head width and chunk size are the P50's numbers because nobody has
+measured an M60. It exists to be disproved by someone with the hardware. The L11
+refusal, by contrast, is certainly correct: we know we cannot drive those printers.
 
 ## What is left, and how to find it
 

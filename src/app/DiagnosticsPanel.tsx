@@ -12,6 +12,7 @@ import { DEFAULT_PRINT_SETTINGS } from '../printer/types'
 import { decodeText, toHex } from '../printer/protocol/responses'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import type { DiagnosticFlagsHandle } from './useDiagnosticFlags'
+import { PROFILES } from '../printer/profiles'
 import type { PrinterConnection, WireEntry } from './usePrinter'
 
 /** Densities to walk when finding a good darkness. One label each. */
@@ -158,6 +159,43 @@ export function DiagnosticsPanel({
       <p className="hint">
         Adds the speed selector and the test-pattern buttons to the Print panel. The capture shows
         the vendor app sends no speed command at all, so that selector may do nothing.
+      </p>
+
+      <h3 className="subhead">Printer model</h3>
+      <div className="row">
+        <label className="field">
+          <span style={{ minWidth: '5rem' }}>Force model</span>
+          <select
+            value={connection.profileOverride ?? ''}
+            onChange={(e) => connection.setProfileOverride(e.target.value || null)}
+          >
+            <option value="">Detect from the printer&rsquo;s name</option>
+            {PROFILES.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+                {p.support === 'confirmed'
+                  ? ''
+                  : p.support === 'unverified'
+                    ? ' — unverified'
+                    : ' — incompatible'}
+              </option>
+            ))}
+          </select>
+        </label>
+        {connection.capabilities && (
+          <span className="hint">
+            Connected as <code>{connection.capabilities.profileId}</code>
+            {connection.capabilities.profileAssumed && ' (assumed)'}
+          </span>
+        )}
+      </div>
+      <p className="hint">
+        Normally leave this on Detect. The model is worked out from the advertised Bluetooth name,
+        and those prefixes come from reverse engineering rather than a specification — so this
+        exists for the case where the guess is wrong. Forcing a model skips the name check, not the
+        compatibility one — an incompatible model is still refused, because there is no useful
+        experiment in sending a printer commands it certainly ignores. Changing this drops the
+        connection.
       </p>
 
       <details className="advanced">

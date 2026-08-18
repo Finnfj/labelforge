@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { BlePrinterDriver } from './BlePrinterDriver'
+import { BlePrinterDriver, IncompatiblePrinterError } from './BlePrinterDriver'
 import { MockTransport } from '../transport/MockTransport'
 import { encodeImage } from '../protocol/encodeImage'
 import { checkerboard } from '../diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { CreditWindow } from '../protocol/CreditWindow'
+import { findProfile } from '../profiles'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
 
@@ -66,6 +67,96 @@ describe('BlePrinterDriver', () => {
     expect(capabilities.firmware).toBe('V2.10')
     expect(capabilities.serial).toBe('SN12345678')
     expect(driver.state).toBe('connected')
+    expect(capabilities.profileId).toBe('p50')
+    expect(capabilities.support).toBe('confirmed')
+    expect(capabilities.profileAssumed).toBe(false)
+  })
+
+  it('refuses an L11-family printer without writing anything to it', async () => {
+    // The assertion that matters is the write count. Refusing *after* sending
+    // bytes would be no better than the behaviour this replaced: a P15 would
+    // still receive a job it cannot parse, and still do nothing about it.
+    const transport = new MockTransport({
+      autoRespond: identityResponder(),
+      deviceName: 'P15R_0042_BLE',
+    })
+    const driver = new BlePrinterDriver(transport)
+
+    await expect(driver.connect()).rejects.toThrow(IncompatiblePrinterError)
+    expect(transport.writes).toHaveLength(0)
+    expect(driver.state).toBe('error')
+  })
+
+  it('names the model it is refusing', async () => {
+    const transport = new MockTransport({
+      autoRespond: identityResponder(),
+      deviceName: 'P12_0001',
+    })
+    const driver = new BlePrinterDriver(transport)
+
+    await expect(driver.connect()).rejects.toThrow(/P15 \/ P12 \/ P7/)
+  })
+
+  it('connects an M60 on the shared dialect, and says it is unverified', async () => {
+    const transport = new MockTransport({
+      autoRespond: identityResponder(),
+      deviceName: 'M60_7788_BLE',
+    })
+    const driver = new BlePrinterDriver(transport)
+    const capabilities = await driver.connect()
+
+    expect(capabilities.profileId).toBe('m60')
+    expect(capabilities.support).toBe('unverified')
+    expect(capabilities.profileAssumed).toBe(false)
+    // Same dialect means the same opening command; nothing about the sequence
+    // changes for a model in the x2 family.
+    expect(hex(transport.writes[0])).toBe('1f b2 00')
+  })
+
+  it('assumes a P50 for a name it does not recognise, and admits it', async () => {
+    // The prefixes are reverse-engineered, so an unexpected P50 variant is far
+    // likelier than a genuinely foreign device. Refusing here would lock people
+    // out of printers that work.
+    const transport = new MockTransport({
+      autoRespond: identityResponder(),
+      deviceName: 'Wireless-Thing-9000',
+    })
+    const driver = new BlePrinterDriver(transport)
+    const capabilities = await driver.connect()
+
+    expect(capabilities.profileId).toBe('p50')
+    expect(capabilities.profileAssumed).toBe(true)
+    expect(driver.state).toBe('connected')
+  })
+
+  it('still refuses an incompatible model even when it was forced', async () => {
+    // Locking is for a printer that was misidentified, not a way to talk to one
+    // that cannot listen.
+    const transport = new MockTransport({ autoRespond: identityResponder() })
+    const driver = new BlePrinterDriver(transport, {
+      profile: findProfile('l11'),
+      lockProfile: true,
+    })
+
+    await expect(driver.connect()).rejects.toThrow(IncompatiblePrinterError)
+    expect(transport.writes).toHaveLength(0)
+  })
+
+  it('honours a locked profile over what the printer calls itself', async () => {
+    // The Diagnostics override: detection is a guess from an advertised name,
+    // so someone whose printer is misidentified needs a way past it.
+    const transport = new MockTransport({
+      autoRespond: identityResponder(),
+      deviceName: 'P15R_0042_BLE',
+    })
+    const driver = new BlePrinterDriver(transport, {
+      profile: findProfile('p50'),
+      lockProfile: true,
+    })
+    const capabilities = await driver.connect()
+
+    expect(capabilities.profileId).toBe('p50')
+    expect(transport.writes.length).toBeGreaterThan(0)
   })
 
   it('still connects when the printer answers nothing', async () => {
