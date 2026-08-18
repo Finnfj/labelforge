@@ -4,7 +4,7 @@ import { mmToDots, dotsToMm } from '../model/units'
 import { pack1bpp, unpack1bpp } from './pack1bpp'
 import { padToHead, LabelTooWideError } from './padToHead'
 import { threshold } from './threshold'
-import { floydSteinberg } from './dither'
+import { dither, floydSteinberg } from './dither'
 import { composite } from './composite'
 import { toLuminance, toAlphaMask } from './luminance'
 
@@ -145,6 +145,99 @@ describe('floydSteinberg', () => {
     const h = 16
     expect(floydSteinberg(new Uint8Array(w * h).fill(0), w, h).every((v) => v === 1)).toBe(true)
     expect(floydSteinberg(new Uint8Array(w * h).fill(255), w, h).every((v) => v === 0)).toBe(true)
+  })
+
+  /*
+   * This is what lets the dither move into `toFabric.applyImageTone` without the
+   * tone plane in `rasterize` undoing it: the plane pass still runs, but over
+   * pixels that are already 0 or 255, where it is the identity. If this ever
+   * stops holding, per-image dithering silently gets diffused a second time.
+   */
+  it('is idempotent over an already-binary plane', () => {
+    const w = 32
+    const h = 32
+    const source = new Uint8Array(w * h)
+    for (let i = 0; i < source.length; i++) source[i] = (i * 7) % 5 === 0 ? 0 : 255
+    const once = floydSteinberg(source, w, h)
+    const binary = Uint8Array.from(once, (v) => (v === 1 ? 0 : 255))
+    expect(Array.from(floydSteinberg(binary, w, h))).toEqual(Array.from(once))
+  })
+})
+
+describe('dither', () => {
+  const flat = (n: number, value: number) => new Uint8Array(n).fill(value)
+
+  it('defaults to Floyd–Steinberg', () => {
+    const w = 32
+    const h = 32
+    expect(Array.from(dither(flat(w * h, 128), w, h))).toEqual(
+      Array.from(floydSteinberg(flat(w * h, 128), w, h)),
+    )
+  })
+
+  it.each(['atkinson', 'bayer'] as const)(
+    'renders mid-grey as roughly half black: %s',
+    (algorithm) => {
+      const w = 64
+      const h = 64
+      const out = dither(flat(w * h, 128), w, h, { algorithm })
+      const black = out.reduce((n, v) => n + v, 0)
+      expect(black / out.length).toBeGreaterThan(0.4)
+      expect(black / out.length).toBeLessThan(0.6)
+    },
+  )
+
+  it.each(['atkinson', 'bayer'] as const)('differs from Floyd–Steinberg: %s', (algorithm) => {
+    const w = 32
+    const h = 32
+    const ramp = Uint8Array.from({ length: w * h }, (_, i) => (i % w) * 8)
+    const fs = dither(ramp, w, h, { algorithm: 'floyd-steinberg' })
+    const other = dither(ramp, w, h, { algorithm })
+    expect(Array.from(other)).not.toEqual(Array.from(fs))
+  })
+
+  it('carries less error under Atkinson than Floyd–Steinberg', () => {
+    // Atkinson discards a quarter of the error, so a near-white field keeps more
+    // of its highlights instead of having stray dots diffused into them.
+    const w = 64
+    const h = 64
+    const nearWhite = flat(w * h, 200)
+    const fs = dither(nearWhite, w, h, { algorithm: 'floyd-steinberg' })
+    const atkinson = dither(nearWhite, w, h, { algorithm: 'atkinson' })
+    const ink = (out: Uint8Array) => out.reduce((n, v) => n + v, 0)
+    expect(ink(atkinson)).toBeLessThan(ink(fs))
+  })
+
+  it('degenerates to a flat cut at strength 0', () => {
+    const w = 16
+    const h = 16
+    const ramp = Uint8Array.from({ length: w * h }, (_, i) => (i % w) * 17)
+    for (const algorithm of ['floyd-steinberg', 'atkinson'] as const) {
+      const out = dither(ramp, w, h, { algorithm, strength: 0 })
+      expect(Array.from(out)).toEqual(Array.from(ramp, (v) => (v <= 127 ? 1 : 0)))
+    }
+    // The ordered matrix collapses at 128 rather than 127 — see DitherOptions.
+    const ordered = dither(ramp, w, h, { algorithm: 'bayer', strength: 0 })
+    expect(Array.from(ordered)).toEqual(Array.from(ramp, (v) => (v <= 128 ? 1 : 0)))
+  })
+
+  it('tiles the ordered matrix on an 8-dot grid', () => {
+    // Same luminance everywhere, so any variation in the output is the matrix.
+    // Every 8x8 tile must therefore be identical to its neighbour.
+    const w = 32
+    const h = 16
+    const out = dither(flat(w * h, 128), w, h, { algorithm: 'bayer' })
+    const tile = (tx: number, ty: number) => {
+      const cells: number[] = []
+      for (let y = 0; y < 8; y++) {
+        for (let x = 0; x < 8; x++) cells.push(out[(ty * 8 + y) * w + tx * 8 + x])
+      }
+      return cells.join('')
+    }
+    expect(tile(1, 0)).toBe(tile(0, 0))
+    expect(tile(0, 1)).toBe(tile(0, 0))
+    // ...and it is a real pattern, not a flat field.
+    expect(new Set(tile(0, 0).split('')).size).toBe(2)
   })
 })
 

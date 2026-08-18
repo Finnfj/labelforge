@@ -10,6 +10,7 @@ import type {
   TextElement,
 } from '../model/labelDoc'
 import { renderCode } from './barcode'
+import { dither } from './dither'
 import { findIcon, iconToDataUrl } from './icons'
 
 /** Resolves an image asset id to a URL the browser can load. */
@@ -88,10 +89,9 @@ async function iconToFabric(element: IconElement): Promise<FabricObject | null> 
  * occupy, rather than handed to Fabric and scaled.
  *
  * Doing the fit ourselves keeps line art on whole-pixel boundaries, and lets
- * each image carry its own threshold: line art is binarised right here, so by
- * the time the crisp plane is thresholded the pixels are already pure black or
- * white and the global setting cannot second-guess them. Photographs are left
- * in greyscale for the dithering stage.
+ * each image carry its own settings: both modes are binarised right here, so by
+ * the time the planes are thresholded the pixels are already pure black or
+ * white and nothing downstream can second-guess them.
  */
 async function imageToFabric(
   element: ImageElement,
@@ -113,7 +113,7 @@ async function imageToFabric(
   ctx.drawImage(source, dx, dy, dw, dh)
 
   const pixels = ctx.getImageData(0, 0, width, height)
-  applyImageTone(pixels.data, element)
+  applyImageTone(pixels.data, element, width, height)
   ctx.putImageData(pixels, 0, 0)
 
   return new FabricImage(canvas, {
@@ -141,24 +141,77 @@ function fitRect(
   return { dx: (boxWidth - dw) / 2, dy: (boxHeight - dh) / 2, dw, dh }
 }
 
-function applyImageTone(data: Uint8ClampedArray, element: ImageElement): void {
+/**
+ * Binarise one image in place, in its own pixel buffer.
+ *
+ * Photographs are dithered *here*, per image, rather than once over the shared
+ * tone plane in `rasterize.ts`. That plane pass cannot honour per-image settings
+ * — two photos on one label would have to share one algorithm — and it is what
+ * these controls exist to vary. Doing it here is also safe: the plane pass stays
+ * where it is, and error diffusion over an already-binary input reproduces it
+ * with zero error, so it becomes a no-op for anything that came through this
+ * function. It still earns its keep for the one case that does reach it as
+ * greyscale — a *rotated* photo, which Fabric resamples into soft greys along
+ * its edges — and for that it is the right fallback.
+ *
+ * The happy side effect is that the editor canvas, which goes through this same
+ * function, now shows a photo's real dithered output while you design rather
+ * than a greyscale stand-in.
+ */
+function applyImageTone(
+  data: Uint8ClampedArray,
+  element: ImageElement,
+  width: number,
+  height: number,
+): void {
   const level = element.threshold ?? 128
-  for (let i = 0; i < data.length; i += 4) {
-    // Leave untouched area transparent. With `contain` the letterbox bars would
-    // otherwise become opaque white and mask out whatever sits beneath the
-    // image, which is not what "fit inside this box" should mean.
-    if (data[i + 3] === 0) continue
+  const contrast = contrastFactor(element.contrast ?? 0)
+  const brightness = element.brightness ?? 0
+  const lineart = element.mode === 'lineart'
+  // Greyscale for the dither stage; also doubles as the lineart source.
+  const luma = new Uint8Array(width * height)
+
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    // Fully transparent pixels are left alone below. With `contain` the letterbox
+    // bars would otherwise become opaque white and mask out whatever sits beneath
+    // the image, which is not what "fit inside this box" should mean.
     const alpha = data[i + 3] / 255
     // Composite over white paper first, so transparency does not read as black.
-    let luma =
+    let value =
       (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) * alpha + 255 * (1 - alpha)
-    if (element.invert) luma = 255 - luma
-    const value = element.mode === 'lineart' ? (luma <= level ? 0 : 255) : luma
+    if (element.invert) value = 255 - value
+    // Tone before binarising: afterwards there are only two levels left to move.
+    value = contrast * (value - 128) + 128 + brightness
+    luma[p] = value < 0 ? 0 : value > 255 ? 255 : value
+  }
+
+  const bits = lineart
+    ? null
+    : dither(luma, width, height, {
+        algorithm: element.dither,
+        strength: element.ditherStrength,
+      })
+
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    if (data[i + 3] === 0) continue
+    const black = bits ? bits[p] === 1 : luma[p] <= level
+    const value = black ? 0 : 255
     data[i] = value
     data[i + 1] = value
     data[i + 2] = value
     data[i + 3] = 255
   }
+}
+
+/**
+ * Standard contrast multiplier about mid-grey, for a −100…100 control.
+ *
+ * The 259 constants are the usual formulation: it maps +100 to a hard step at 128
+ * and −100 to flat mid-grey, with 0 an exact identity.
+ */
+function contrastFactor(contrast: number): number {
+  const c = Math.max(-100, Math.min(100, contrast))
+  return (259 * (c + 255)) / (255 * (259 - c))
 }
 
 /**

@@ -59,6 +59,10 @@ const imageElement = z.object({
   assetId: z.string().min(1),
   mode: z.enum(['lineart', 'photo']),
   threshold: z.number().min(0).max(255).optional(),
+  dither: z.enum(['floyd-steinberg', 'atkinson', 'bayer']).optional(),
+  ditherStrength: z.number().min(0).max(1).optional(),
+  brightness: z.number().min(-100).max(100).optional(),
+  contrast: z.number().min(-100).max(100).optional(),
   invert: z.boolean().optional(),
   fit: z.enum(['contain', 'cover', 'stretch']),
 })

@@ -30,13 +30,15 @@ export function Toolbar({ editor }: { editor: LabelEditor }) {
     setUploadError(null)
     try {
       const assetId = await putAsset(file)
-      // Line art by default: most things people drop onto a label are logos or
-      // diagrams, and dithering those muddies them. Photographs are one checkbox
-      // away in the Inspector.
+      // Photo by default. A photograph thresholded flat collapses to a few black
+      // blobs — unrecognisable, and not obviously a *setting* being wrong. Line
+      // art dithered is merely a bit noisy, and still plainly the right picture.
+      // So the failure this default cannot cause is the worse of the two, and the
+      // Render select in the Inspector switches modes either way.
       add({
         kind: 'image',
         assetId,
-        mode: 'lineart',
+        mode: 'photo',
         fit: 'contain',
         x: 2,
         y: 2,

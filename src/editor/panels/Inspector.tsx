@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import type {
   BarcodeElement,
+  DitherAlgorithm,
   IconElement,
   ImageElement,
   QrElement,
@@ -22,6 +23,12 @@ const SYMBOLOGIES: Array<{ value: BarcodeElement['symbology']; label: string }> 
   { value: 'datamatrix', label: 'Data Matrix' },
 ]
 
+const DITHERS: Array<{ value: DitherAlgorithm; label: string }> = [
+  { value: 'floyd-steinberg', label: 'Floyd–Steinberg' },
+  { value: 'atkinson', label: 'Atkinson' },
+  { value: 'bayer', label: 'Ordered' },
+]
+
 const FONTS = [
   { value: 'sans-serif', label: 'Sans' },
   { value: 'serif', label: 'Serif' },
@@ -34,6 +41,7 @@ function NumberField({
   onChange,
   step = 0.5,
   min,
+  max,
   suffix,
 }: {
   label: string
@@ -41,6 +49,7 @@ function NumberField({
   onChange(next: number): void
   step?: number
   min?: number
+  max?: number
   suffix?: string
 }) {
   return (
@@ -51,9 +60,15 @@ function NumberField({
         value={Number.isFinite(value) ? Math.round(value * 100) / 100 : 0}
         step={step}
         min={min}
+        max={max}
         onChange={(e) => {
+          // Clamped here as well as on the input: `max` stops the spinner, not
+          // the keyboard, and an out-of-range value would fail schema validation
+          // only later, on export.
           const next = Number(e.target.value)
-          if (Number.isFinite(next)) onChange(next)
+          if (!Number.isFinite(next)) return
+          const lower = min != null ? Math.max(min, next) : next
+          onChange(max != null ? Math.min(max, lower) : lower)
         }}
       />
       {suffix && <em>{suffix}</em>}
@@ -274,14 +289,62 @@ export function Inspector({ editor }: { editor: LabelEditor }) {
                 <option value="stretch">Stretch</option>
               </select>
             </label>
-            {(element as ImageElement).mode === 'lineart' && (
+            {(element as ImageElement).mode === 'lineart' ? (
               <NumberField
                 label="Threshold"
                 value={(element as ImageElement).threshold ?? 128}
                 step={8}
                 min={0}
+                max={255}
                 onChange={(threshold) => set({ threshold } as Partial<ImageElement>)}
               />
+            ) : (
+              <>
+                <label className="field">
+                  <span>Dither</span>
+                  <select
+                    value={(element as ImageElement).dither ?? 'floyd-steinberg'}
+                    onChange={(e) =>
+                      set({ dither: e.target.value as DitherAlgorithm } as Partial<ImageElement>)
+                    }
+                  >
+                    {DITHERS.map((d) => (
+                      <option key={d.value} value={d.value}>
+                        {d.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {/* Stored 0–1, shown as a percentage: nobody thinks in fractions
+                    of a quantisation error. */}
+                <NumberField
+                  label="Strength"
+                  value={((element as ImageElement).ditherStrength ?? 1) * 100}
+                  step={10}
+                  min={0}
+                  max={100}
+                  suffix="%"
+                  onChange={(percent) =>
+                    set({ ditherStrength: percent / 100 } as Partial<ImageElement>)
+                  }
+                />
+                <NumberField
+                  label="Bright"
+                  value={(element as ImageElement).brightness ?? 0}
+                  step={5}
+                  min={-100}
+                  max={100}
+                  onChange={(brightness) => set({ brightness } as Partial<ImageElement>)}
+                />
+                <NumberField
+                  label="Contrast"
+                  value={(element as ImageElement).contrast ?? 0}
+                  step={5}
+                  min={-100}
+                  max={100}
+                  onChange={(contrast) => set({ contrast } as Partial<ImageElement>)}
+                />
+              </>
             )}
             <label className="field field--check">
               <input
@@ -294,7 +357,9 @@ export function Inspector({ editor }: { editor: LabelEditor }) {
           </div>
           <p className="hint">
             {(element as ImageElement).mode === 'photo'
-              ? 'Dithered for tone. Check the thermal preview — dithering can print muddy.'
+              ? 'Dithered for tone. If it prints muddy, try Atkinson or Ordered and lift the ' +
+                'contrast — the head gains, so mid greys close up on paper. Judge it in the ' +
+                'thermal preview, not here.'
               : 'Thresholded for sharp edges. Raise the threshold to catch faint lines.'}
           </p>
         </>

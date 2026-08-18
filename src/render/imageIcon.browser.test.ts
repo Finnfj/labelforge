@@ -123,6 +123,108 @@ describe('images', () => {
     expect(distinctRowsInside(photo)).toBeGreaterThan(1)
   })
 
+  it('dithers a photo per image, so the tone plane has nothing left to do', async () => {
+    // The dither now runs in `applyImageTone`, at the image's own dot size. The
+    // proof is that the *element's* own pixels are already scattered before the
+    // shared tone plane ever sees them — which the row-variation check below
+    // demonstrates, and which the idempotency test in render.test.ts pins from
+    // the other side.
+    const { bitmap } = await rasterize(
+      docWith({ kind: 'image', assetId: 'ramp', mode: 'photo', fit: 'stretch' }),
+      { resolveAsset },
+    )
+    const bits = unpack1bpp(bitmap)
+    // Every value is 0 or 1 by construction; what matters is that a mid-grey
+    // column is *mixed* rather than uniformly one or the other.
+    const column = 80
+    const values = new Set<number>()
+    for (let y = 40; y < 140; y++) values.add(bits[y * bitmap.widthDots + column])
+    expect(values.size).toBe(2)
+  })
+
+  it('honours the per-image dither algorithm', async () => {
+    const render = async (dither: 'floyd-steinberg' | 'atkinson' | 'bayer') =>
+      unpack1bpp(
+        (
+          await rasterize(
+            docWith({ kind: 'image', assetId: 'ramp', mode: 'photo', fit: 'stretch', dither }),
+            { resolveAsset },
+          )
+        ).bitmap,
+      ).join('')
+
+    const fs = await render('floyd-steinberg')
+    expect(await render('atkinson')).not.toBe(fs)
+    expect(await render('bayer')).not.toBe(fs)
+  })
+
+  it('lets two photos on one label dither differently', async () => {
+    // The whole reason the dither moved out of the shared tone plane: that plane
+    // is single-pass, so before this it was one algorithm for the entire label.
+    const doc = docWith({ kind: 'image', assetId: 'ramp', mode: 'photo', fit: 'stretch' }, 60, 30)
+    doc.elements = [
+      { ...doc.elements[0], id: 'a', dither: 'bayer' },
+      { ...doc.elements[0], id: 'b', x: 26, z: 2, dither: 'floyd-steinberg' },
+    ] as typeof doc.elements
+    const { bitmap } = await rasterize(doc, { resolveAsset })
+    const bits = unpack1bpp(bitmap)
+
+    // The ordered matrix repeats on an 8-dot grid; error diffusion does not. So
+    // the left image has far fewer distinct row patterns than the right one.
+    const distinctRows = (from: number, to: number) => {
+      const rows = new Set<string>()
+      for (let y = 40; y < 140; y++) {
+        rows.add(bits.slice(y * bitmap.widthDots + from, y * bitmap.widthDots + to).join(''))
+      }
+      return rows.size
+    }
+    expect(distinctRows(30, 140)).toBeLessThan(distinctRows(240, 350))
+  })
+
+  it('applies brightness and contrast before dithering', async () => {
+    const ink = async (tone: { brightness?: number; contrast?: number }) =>
+      inkCount(
+        unpack1bpp(
+          (
+            await rasterize(
+              docWith({
+                kind: 'image',
+                assetId: 'ramp',
+                mode: 'photo',
+                fit: 'stretch',
+                dither: 'bayer',
+                ...tone,
+              }),
+              { resolveAsset },
+            )
+          ).bitmap,
+        ),
+      )
+
+    const plain = await ink({})
+    // Brightness moves the whole ramp, so darkening it must add ink.
+    expect(await ink({ brightness: -60 })).toBeGreaterThan(plain)
+    expect(await ink({ brightness: 60 })).toBeLessThan(plain)
+    // Contrast pivots about mid-grey, so on a symmetric ramp the total barely
+    // moves — but the pattern must, or the control is doing nothing.
+    const contrasted = await rasterize(
+      docWith({
+        kind: 'image',
+        assetId: 'ramp',
+        mode: 'photo',
+        fit: 'stretch',
+        dither: 'bayer',
+        contrast: 80,
+      }),
+      { resolveAsset },
+    )
+    const flat = await rasterize(
+      docWith({ kind: 'image', assetId: 'ramp', mode: 'photo', fit: 'stretch', dither: 'bayer' }),
+      { resolveAsset },
+    )
+    expect(unpack1bpp(contrasted.bitmap).join('')).not.toBe(unpack1bpp(flat.bitmap).join(''))
+  })
+
   it('honours the per-image threshold', async () => {
     const dark = await rasterize(
       docWith({ kind: 'image', assetId: 'ramp', mode: 'lineart', fit: 'stretch', threshold: 40 }),

@@ -60,6 +60,14 @@ export interface QrElement extends ElementBase {
   ecLevel: 'L' | 'M' | 'Q' | 'H'
 }
 
+/**
+ * How a photograph's greyscale is reduced to the one bit a thermal head prints.
+ *
+ * Named here, in the leaf layer, because both the document model and the renderer
+ * need the same vocabulary and `model/` is the only layer everything may import.
+ */
+export type DitherAlgorithm = 'floyd-steinberg' | 'atkinson' | 'bayer'
+
 export interface ImageElement extends ElementBase {
   kind: 'image'
   assetId: string
@@ -69,7 +77,27 @@ export interface ImageElement extends ElementBase {
    * thresholding a photo reduces it to blobs.
    */
   mode: 'lineart' | 'photo'
+  /** Cutting point for `lineart`, 0–255. Ignored by `photo`. */
   threshold?: number
+  /**
+   * Diffusion kernel for `photo`, defaulting to Floyd–Steinberg.
+   *
+   * Optional rather than defaulted in the document so labels saved before these
+   * controls existed render exactly as they did then.
+   */
+  dither?: DitherAlgorithm
+  /** Fraction of the quantisation error diffused, 0–1. Defaults to 1. */
+  ditherStrength?: number
+  /**
+   * Tone applied before dithering, both −100…100 and defaulting to 0.
+   *
+   * A thermal head gains: mid greys come out darker than the source, which is
+   * most of what makes a dithered photo look muddy. Lifting contrast before the
+   * dither is the correction, and it has to happen here rather than after, since
+   * after the dither there are only two tones left to adjust.
+   */
+  brightness?: number
+  contrast?: number
   invert?: boolean
   fit: 'contain' | 'cover' | 'stretch'
 }
