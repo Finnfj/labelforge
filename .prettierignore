@@ -1,0 +1,7 @@
+# Captured evidence, not source. These are the vendor SDK's own output, byte for
+# byte, and the encoder is asserted against them — so a formatter reflowing the
+# file is at best noise in a diff and at worst a reason to doubt the fixture.
+src/printer/protocol/__fixtures__/
+
+# Build output.
+dist/
