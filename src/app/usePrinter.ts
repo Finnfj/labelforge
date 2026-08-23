@@ -107,8 +107,16 @@ export interface WireEntry {
   note?: string
 }
 
-/** Enough recent traffic to diagnose a failed print without unbounded growth. */
-const WIRE_LOG_LIMIT = 500
+/**
+ * Enough recent traffic to diagnose a failed print without unbounded growth.
+ *
+ * 500 was not. A single 80 mm label is ~250 chunks and ~250 credit
+ * notifications, so the one job the log was asked to explain filled the ring
+ * exactly and pushed its own opening commands out — leaving a log that showed
+ * the density and paper type had been set to *something*. 4000 holds several
+ * copies of the largest stock the app offers, at a few hundred KB.
+ */
+const WIRE_LOG_LIMIT = 4000
 
 export interface PrinterConnection {
   kind: PrinterKind
