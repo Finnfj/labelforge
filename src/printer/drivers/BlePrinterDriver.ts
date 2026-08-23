@@ -98,6 +98,16 @@ export class BlePrinterDriver implements PrinterDriver {
   #pendingReply: ((bytes: Uint8Array) => void) | null = null
   /** Resolved by an end-of-job "OK" on the status channel. */
   #doneWaiter: (() => void) | null = null
+  /**
+   * An acknowledgement that arrived before anything was waiting for it.
+   *
+   * `4F 4B` answers the stream, and there is no rule saying it cannot land in the
+   * gap between the last write and the driver settling down to wait — the inter-chunk
+   * delay alone is a window it could fall into. Latching it means the wait returns
+   * at once instead of running to a timeout that is now tens of seconds long, and
+   * concluding from that the printer never finished.
+   */
+  #donePending = false
   #lastStatusBytes: Uint8Array | null = null
 
   constructor(transport: Transport, options: BlePrinterOptions = {}) {
@@ -162,7 +172,8 @@ export class BlePrinterDriver implements PrinterDriver {
           if (decodeText(bytes) === DONE_REPLY) {
             const done = this.#doneWaiter
             this.#doneWaiter = null
-            done?.()
+            if (done) done()
+            else this.#donePending = true
           }
           const pending = this.#pendingReply
           this.#pendingReply = null
@@ -298,6 +309,8 @@ export class BlePrinterDriver implements PrinterDriver {
   async print(job: PrintJob, opts: { signal?: AbortSignal } = {}): Promise<void> {
     if (this.#state === 'disconnected') throw new Error('Not connected to a printer.')
     this.#setState('printing')
+    // Anything latched before this print belongs to the last one.
+    this.#donePending = false
 
     try {
       const image = encodeImage(job.bitmap)
@@ -342,7 +355,11 @@ export class BlePrinterDriver implements PrinterDriver {
         // Configuration is re-sent per copy, inside the job, exactly as the vendor
         // app does it. The sequence itself lives in cmd.printJobFraming, shared
         // with the virtual printer so the two cannot drift.
-        await this.#sendJob(stream, framing.epilogue, opts.signal, (written) => {
+        // No epilogue when a follow-up is coming: `alignPaperEnd` advances to the
+        // tear-off position, and doing that here means the paper walks out past the
+        // boundary and back before the seek runs. One label is one print, so the
+        // tear advance happens once, on whichever job ends it.
+        await this.#sendJob(stream, seekJob ? [] : framing.epilogue, opts.signal, (written) => {
           sent += written
           progress('transfer', copy)
         })
@@ -464,6 +481,10 @@ export class BlePrinterDriver implements PrinterDriver {
    */
   async #waitForDone(signal?: AbortSignal, timeoutMs?: number): Promise<boolean> {
     signal?.throwIfAborted()
+    if (this.#donePending) {
+      this.#donePending = false
+      return true
+    }
     return new Promise<boolean>((resolve) => {
       const timer = setTimeout(
         () => {

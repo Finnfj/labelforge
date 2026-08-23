@@ -23,12 +23,43 @@ function identityResponder() {
     if (key === '10 ff 30 11') return text('AA:BB:CC:DD:EE:FF')
     if (key === '10 ff 50 f1') return Uint8Array.of(0x00, 0x5a) // 90
     if (key === '1f 20 00') return Uint8Array.of(0xff, 0x00)
-    // The end-of-job acknowledgement. A real printer sends this and the driver
-    // waits for it before anything else goes out; a mock that stays silent makes
-    // every test pay the timeout instead, and hides the ordering entirely.
-    if (key === '1f 11 50') return Uint8Array.of(0x4f, 0x4b)
     return undefined
   }
+}
+
+/**
+ * Identity queries, plus the end-of-job acknowledgement.
+ *
+ * `4F 4B` answers a stream, not an opcode. A 30 mm label is acknowledged about
+ * 300 ms after its last byte while it is still printing, and a tall one only when
+ * the buffer finally drains — both are "I have consumed everything you sent". This
+ * fires on a short quiet period after a stream that ends a job, rather than keying
+ * on `1F 11 50`, which is merely what usually happens to be last and stopped being
+ * last the moment the tear advance moved to the follow-up.
+ */
+function printerResponder(transport: MockTransport) {
+  const identity = identityResponder()
+  let tail: string[] = []
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return (bytes: Uint8Array) => {
+    const reply = identity(bytes)
+    if (reply) return reply
+    tail = [...tail, ...hex(bytes).split(' ')].slice(-4)
+    const end = tail.join(' ')
+    if (end.endsWith('1f c0 01 01') || end.endsWith('1f 11 50')) {
+      clearTimeout(timer)
+      timer = setTimeout(() => transport.emit('status', Uint8Array.of(0x4f, 0x4b)), 5)
+    }
+    return undefined
+  }
+}
+
+/** A connected driver whose printer answers identity and acknowledges its jobs. */
+function acknowledging(options: { doneTimeoutMs?: number } = {}) {
+  const transport = new MockTransport()
+  transport.autoRespond = printerResponder(transport)
+  transport.creditsPerWrite = 1
+  return { transport, driver: new BlePrinterDriver(transport, options) }
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {
@@ -137,7 +168,8 @@ function noisyBitmap(widthDots: number, heightDots: number) {
 }
 
 async function connected(options?: { credits?: number; doneTimeoutMs?: number }) {
-  const transport = new MockTransport({ autoRespond: identityResponder() })
+  const transport = new MockTransport()
+  transport.autoRespond = printerResponder(transport)
   if (options?.credits) transport.creditsPerWrite = options.credits
   const driver = new BlePrinterDriver(transport, { doneTimeoutMs: options?.doneTimeoutMs })
   await driver.connect()
@@ -303,10 +335,10 @@ describe('BlePrinterDriver', () => {
     //
     // Short labels never reached that state, which is why it took an 80 mm one to
     // find. The window here is deliberately small so any job is long enough.
-    const transport = new MockTransport({ autoRespond: identityResponder() })
-    const driver = new BlePrinterDriver(transport, { doneTimeoutMs: 5 })
+    const { transport, driver } = acknowledging({ doneTimeoutMs: 5 })
     await driver.connect()
     transport.reset()
+    transport.creditsPerWrite = 0
     transport.openCreditWindow(2)
 
     await driver.print({
@@ -340,29 +372,41 @@ describe('BlePrinterDriver', () => {
     const second = stream.subarray(hex(stream).indexOf('1f 12 20 00') / 3 + 4)
     expect(second.length).toBeLessThan(200)
     expect(hex(second)).toContain('1f 10')
+
+    // The tear-off advance happens once, at the very end. Twice, with the retract
+    // between them, walked the paper past the boundary before the seek ran.
+    expect(occurrences(transport.writes, '1f 11 50')).toBe(1)
+    expect(hex(stream).endsWith('1f 11 50')).toBe(true)
+    // And the retract happens only for the label, never before the seek.
+    expect(occurrences(transport.writes, '1f 11 51')).toBe(1)
   })
 
   it('sends each follow-up only after the printer says it has finished', async () => {
     // The bug the first hardware trial found. An 80 mm label takes ~8.5 s to print
     // after the last byte lands, the wait was a flat 5 s, and the follow-up went
     // out mid-print — queued behind the raster it exists to get past. What has to
-    // hold is the ordering, whatever the timings: OK, then the next job.
-    const { transport, driver } = await connected({ credits: 1 })
+    // hold is the ordering, whatever the timings: no job starts before the one
+    // before it has been acknowledged.
+    const { transport, driver } = acknowledging()
+    await driver.connect()
+    transport.reset()
+
     const order: string[] = []
-    const identity = identityResponder()
+    const underlying = transport.autoRespond!
     transport.autoRespond = (bytes) => {
-      const reply = identity(bytes)
-      if (hex(bytes) === '1f 11 50') order.push('epilogue')
-      if (reply && hex(reply) === '4f 4b') order.push('ok')
-      return reply
+      if (hex(bytes).includes('1f c0 01 00')) order.push('job')
+      return underlying(bytes)
     }
+    transport.on('wire', (w) => {
+      if (w.direction === 'in' && hex(w.bytes) === '4f 4b') order.push('ok')
+    })
+
     await driver.print({
       bitmap: noisyBitmap(384, 360),
       settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true },
     })
 
-    // One epilogue per job, each immediately acknowledged, never two in a row.
-    expect(order).toEqual(['epilogue', 'ok', 'epilogue', 'ok'])
+    expect(order).toEqual(['job', 'ok', 'job', 'ok'])
   }, 30_000)
 
   it('can be told to leave the roll where the label ended', async () => {
@@ -441,6 +485,25 @@ describe('BlePrinterDriver', () => {
     expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1)
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
   })
+
+  it('emits the same bytes as the virtual printer for an oversized label too', async () => {
+    // The small-label case below did not cover the follow-up, and the drivers
+    // promptly disagreed about it: the virtual one sent the seek job's stream and
+    // stopped, leaving off the tear advance that ends the print. Anything the
+    // oversize path does has to be in both.
+    const { transport, driver } = acknowledging()
+    await driver.connect()
+    transport.reset()
+    const bitmap = noisyBitmap(384, 360)
+    const settings = { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true }
+    await driver.print({ bitmap, settings })
+
+    const virtual = new VirtualPrinterDriver(Infinity)
+    await virtual.connect()
+    await virtual.print({ bitmap, settings })
+
+    expect(hex(concat([...virtual.printouts[0].wire]))).toBe(hex(concat(transport.writes)))
+  }, 30_000)
 
   it('emits the same bytes as the virtual printer, in the same order', async () => {
     // Both build from cmd.printJobFraming, so this cannot drift — but only the

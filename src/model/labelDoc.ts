@@ -158,6 +158,42 @@ export function isToneElement(element: LabelElement): boolean {
   return element.kind === 'image' && element.mode === 'photo'
 }
 
+/**
+ * Photo elements whose dithering is costing the label its self-registration.
+ *
+ * Error diffusion turns a photograph into something close to random bits, which
+ * deflate cannot compress: a 384 x 640 raster comes out around 23 KB either way,
+ * Floyd–Steinberg or Atkinson. Ordered dithering is periodic, and the same raster
+ * compresses to between 6 and 21 KB depending on how much detail the picture has.
+ *
+ * That matters well beyond file size. A printer reads a job under about 16 KB in
+ * full before the motor starts and honours the gap seek at the end of it; above
+ * that it is still receiving while it prints, never reads the seek, and the roll
+ * stops wherever the label ended. So for a tall photograph the choice of dither
+ * decides whether the label registers itself.
+ *
+ * Names candidates rather than deciding: how a photograph looks is not something
+ * a byte count should settle, and the saving is large enough to be worth showing
+ * but not always enough to cross the line.
+ */
+export function orderedDitherCandidates(doc: LabelDoc): string[] {
+  return doc.elements
+    .filter((e) => e.kind === 'image' && e.mode === 'photo' && e.dither !== 'bayer')
+    .map((e) => e.id)
+}
+
+/** The same document with {@link orderedDitherCandidates} switched over. */
+export function withOrderedDither(doc: LabelDoc): LabelDoc {
+  const candidates = new Set(orderedDitherCandidates(doc))
+  if (candidates.size === 0) return doc
+  return {
+    ...doc,
+    elements: doc.elements.map((e) =>
+      candidates.has(e.id) && e.kind === 'image' ? { ...e, dither: 'bayer' as const } : e,
+    ),
+  }
+}
+
 export const CURRENT_SCHEMA_VERSION = 1 as const
 
 export function createEmptyDoc(widthMm: Mm, heightMm: Mm, name = 'Untitled label'): LabelDoc {

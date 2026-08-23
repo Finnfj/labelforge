@@ -168,14 +168,24 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-        for (const { bytes, note } of [...framing.trailer, ...framing.epilogue]) send(bytes, note)
-
-        // The oversized-label workaround, shown here for the same reason the rest
-        // of the sequence is: so the byte log says what the printer would get.
-        // Both drivers ask cmd for the condition and the job, so neither can
-        // decide to send it on its own.
-        if (job.settings.followUpSeek !== false && cmd.needsFollowUpSeek(image.length)) {
+        // The oversized-label workaround, shown here for the same reason the rest of
+        // the sequence is: so the byte log says what the printer would get. Both
+        // drivers ask cmd for the condition and the job, so neither can decide to
+        // send it on its own — and both hold the tear-off advance back to whichever
+        // job ends the print, so the paper does not walk past the boundary between
+        // the label and its seek.
+        const seeking = job.settings.followUpSeek !== false && cmd.needsFollowUpSeek(image.length)
+        for (const { bytes, note } of seeking
+          ? framing.trailer
+          : [...framing.trailer, ...framing.epilogue]) {
+          send(bytes, note)
+        }
+        if (seeking) {
           send(cmd.followUpSeekJob(framing, job.bitmap.widthDots), 'follow-up seek job')
+          // The tear advance ends the print, and it ends this job because this is
+          // the job that ends the print. Omitting it here once let the two drivers
+          // disagree about the last three bytes of an oversized label.
+          for (const { bytes, note } of framing.epilogue) send(bytes, note)
         }
       }
 

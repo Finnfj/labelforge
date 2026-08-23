@@ -322,20 +322,19 @@ export const SEEK_JOB_ROWS = 8
  *
  * The reasoning was that `1F 11 51` undoes the tear-off advance exactly, landing a
  * registered roll on the gap, so winding back 5 mm before the seek would put the
- * paper on the label side of the boundary and the seek would stop at the gap just
- * ahead instead of the one after. It was sent as `1F 11 10 00 28`, the printer
- * honoured it — the paper visibly pulled back — and a whole blank label came out
- * anyway.
+ * paper on the label side of the boundary. It was sent as `1F 11 10 00 28`, the
+ * printer honoured it — the paper visibly pulled back — and a whole blank label
+ * came out anyway.
  *
- * So the seek does not stop at the next boundary in front of it. It advances a
- * label, wherever within one it starts from, which is a form feed. Nothing done to
- * the starting position changes that, and the rewind was 5 mm of travel buying
- * nothing.
+ * Five millimetres was the wrong size of correction: the excursion it was trying to
+ * undo is the tear-off round trip, which is about twenty. The follow-up now avoids
+ * making that excursion at all rather than trying to walk it back — see
+ * {@link followUpSeekJob}.
  *
- * What it did establish is that `adjustPosition` works inside a job with a raster
- * behind it. That contradicts "every dedicated motion command is inert" — which
- * was only ever tested standalone — and makes `1F 11 00` a real alternative to
- * blank rows for crossing a gap, should the blank-row feed ever prove wanting.
+ * What the attempt did establish is that `adjustPosition` works inside a job with a
+ * raster behind it. That contradicts "every dedicated motion command is inert",
+ * which was only ever tested standalone, and makes `1F 11 00` a real alternative to
+ * blank rows for crossing a gap should the blank-row feed ever prove wanting.
  */
 
 /**
@@ -362,9 +361,22 @@ export function needsFollowUpSeek(encodedImageBytes: number): boolean {
  *
  * Blank rows compress to nothing, so this is a couple of dozen bytes on the wire
  * however wide the stock is.
+ *
+ * **`alignPaperStart` is left out, and the label job's `alignPaperEnd` with it.**
+ * Those two are the tear-off round trip — forward about twenty millimetres at the
+ * end of a job, back again at the start of the next — and having them between the
+ * label and its seek walks the paper out past the boundary and back before the seek
+ * runs. A small label's in-job seek registers correctly precisely because nothing
+ * moves the paper between the raster and the seek; this makes the follow-up the
+ * same shape. One label is one print, so the tear advance happens once, at the end
+ * of the whole thing, which the driver arranges by handing the label job an empty
+ * epilogue.
  */
 export function followUpSeekJob(framing: PrintJobFraming, widthDots: number): Uint8Array {
-  return printJobStream(framing, encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)))
+  return printJobStream(
+    { ...framing, preamble: framing.preamble.filter((c) => c.note !== 'alignPaperStart') },
+    encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)),
+  )
 }
 
 /**

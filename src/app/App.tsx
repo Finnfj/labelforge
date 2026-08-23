@@ -194,7 +194,12 @@ export default function App() {
 
       <TemplatesPanel doc={editor.doc} onLoad={editor.replaceDoc} />
 
-      <PrintPanel doc={editor.doc} connection={connection} flags={diagnostics.flags} />
+      <PrintPanel
+        doc={editor.doc}
+        connection={connection}
+        flags={diagnostics.flags}
+        updateElement={editor.updateElement}
+      />
 
       <footer className="app__footer">
         <DiagnosticsPanel connection={connection} diagnostics={diagnostics} />

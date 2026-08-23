@@ -483,7 +483,17 @@ the head, and about 20 mm of travel on a P50S.
   cut off at 80%, which is a separate fault — see `4F 4B` below — and not a
   positioning one: the label started in the right place and stopped early.
 
-**The obvious repair does not work, and the failure is informative.** If the
+**The tear-off round trip has been taken out from between them.** A small label's
+in-job seek registers correctly because nothing moves the paper between the raster
+and the seek. The follow-up used to have `alignPaperEnd` (forward to the tear
+position) and then `alignPaperStart` (back again) in that gap, which is an excursion
+of about twenty millimetres each way over ground nobody has measured. One label is
+one print, so the tear advance now happens once, on whichever job ends it: the label
+job is sent with an empty epilogue when a follow-up is coming, and the follow-up
+drops `alignPaperStart`. Whether that is what was costing a blank label is for
+hardware to say, but the round trip was wrong on its own terms.
+
+**An earlier repair did not work, and the failure is informative.** If the
 retract lands a registered roll on the gap, winding back before the seek should
 put the paper on the label side of the boundary and let the seek stop at the gap
 just ahead. It was tried: `1F 11 10 00 28`, five millimetres backwards, after the
@@ -554,6 +564,37 @@ battery, so a flat one is the first thing to rule out when a print is slow or
 cut short — the connection panel now says so below 20%. `00 00` seems to mean
 charging as well as empty; nothing distinguishes them.
 
+### The dither decides whether a tall label can register itself
+
+The threshold is on _compressed_ bytes and the compressor's input is a dithered
+bitmap, so the choice of dither decides which side of it a photograph lands on.
+Error diffusion scatters a picture into nearly random dots that deflate cannot
+touch; ordered dithering lays them on a grid, which compresses. Measured on a
+384 x 640 raster — the failing 50 x 80 label exactly — at the app's own zlib
+settings:
+
+| source         | Floyd–Steinberg | Atkinson | Bayer 8x8  |
+| -------------- | --------------- | -------- | ---------- |
+| smooth photo   | 23,140          | 25,266   | **6,422**  |
+| textured photo | 25,519          | 27,397   | **13,780** |
+| heavy grain    | 28,861          | 29,344   | 21,396     |
+
+`SEEK_SAFE_JOB_BYTES` is 16,384, and the real payloads from the wire logs were
+23,051–25,095. So for most photographs ordered dithering takes a tall label under
+the line, and **then none of the rest of this section applies** — the job is
+ordinary, the printer reads it whole, and its own `1F 12 20 00` registers the label
+exactly as it does at 30 mm. Not for all of them, which is why the print panel
+rasterises the alternative and reports the real number rather than promising one.
+
+`src/printer/protocol/encodeImage.test.ts` pins the ratio and the threshold
+crossing, since the advice is worthless if either stops holding.
+
+**`windowBits` is not a lever here, and this is where that gets settled.** The note
+under "Three places we disagree" called a wider window "untested and uninteresting
+until something needs it". Something needed it, and the answer is no: 10 → 15 moves
+Floyd–Steinberg from 23,140 to 22,829 bytes, 1.3%. The parameter the goldens pin can
+stay pinned.
+
 ### The follow-up seek job — confirmed working
 
 The seek is honoured by any job the printer reads in full, so the fix is to send one
@@ -608,11 +649,10 @@ into a printer that had not said it was finished. The paper went through the gap
 position nobody knows is not, so a timed-out wait now skips the follow-up and says
 so.
 
-**For keeping a tall label registered print to print, `feedAfterDots` is the
-mechanism that behaves.** Blank rows move paper by exactly as many as you send.
-Open-loop, so a wrong gap accumulates — but it accumulates predictably, and one pass
-with the +/-1 mm buttons settles it for a given stock. That is worth more here than
-a sensor that lands somewhere different each time.
+**`feedAfterDots` is the fallback, not the answer.** Blank rows move paper by exactly
+as many as you send, which is predictable in a way the seek has not been — but it
+means measuring the stock, and the printer has a sensor that works. It comes last in
+the print panel for that reason, behind the dither and behind the follow-up.
 
 **Answered: a registered roll does need something, and `1F 11 51` is not it.**
 Consecutive full-height prints with the follow-up off and `feedAfterDots` at zero

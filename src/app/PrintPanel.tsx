@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { LabelDoc } from '../model/labelDoc'
+import {
+  orderedDitherCandidates,
+  withOrderedDither,
+  type ImageElement,
+  type LabelDoc,
+} from '../model/labelDoc'
 import type { PackedBitmap } from '../model/bitmap'
 import { DOTS_PER_MM, dotsToMm, mmToDots } from '../model/units'
 import { rasterize, type SkippedElement } from '../render/rasterize'
 import { LabelTooWideError, headOriginDots } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
-import { MAX_DENSITY, MIN_DENSITY } from '../printer/protocol/constants'
+import { MAX_DENSITY, MIN_DENSITY, SEEK_SAFE_JOB_BYTES } from '../printer/protocol/constants'
 import { needsFollowUpSeek } from '../printer/protocol/commands'
 import { encodeImage } from '../printer/protocol/encodeImage'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../printer/types'
@@ -33,10 +38,13 @@ export function PrintPanel({
   doc,
   connection,
   flags,
+  updateElement,
 }: {
   doc: LabelDoc
   connection: PrinterConnection
   flags: DiagnosticFlags
+  /** So the size warning can offer the one change that resolves it. */
+  updateElement(id: string, patch: Partial<ImageElement>): void
 }) {
   const printer = connection.driver
 
@@ -53,6 +61,7 @@ export function PrintPanel({
   const [error, setError] = useState<string | null>(null)
   const [clipped, setClipped] = useState(false)
   const [jobBytes, setJobBytes] = useState(0)
+  const [orderedBytes, setOrderedBytes] = useState<number | null>(null)
   const [skipped, setSkipped] = useState<SkippedElement[]>([])
   const [fontFallbacks, setFontFallbacks] = useState<string[]>([])
   const [warnings, setWarnings] = useState<string[]>([])
@@ -145,6 +154,45 @@ export function PrintPanel({
     }
   }, [doc, headWidth, padToHead, align, offsetDots, feedAfterDots])
 
+  // What the same label would cost with ordered dithering, asked only when the
+  // answer could matter. It is a second full rasterise, so it stays behind the
+  // size check rather than running on every keystroke — and there is no
+  // estimating it from the first one, because how well a dither compresses
+  // depends entirely on how much detail the picture has.
+  const ditherCandidates = orderedDitherCandidates(doc)
+  const wantsTrial = needsFollowUpSeek(jobBytes) && ditherCandidates.length > 0
+  useEffect(() => {
+    if (!wantsTrial) {
+      setOrderedBytes(null)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await rasterize(withOrderedDither(doc), {
+          headWidthDots: padToHead ? headWidth : undefined,
+          maxWidthDots: headWidth,
+          align,
+          offsetDots,
+          resolveAsset: resolveAssetUrl,
+          clipToHead: true,
+          feedAfterDots,
+        })
+        if (!cancelled) setOrderedBytes(encodeImage(result.bitmap).length)
+      } catch {
+        // The real raster already succeeded, so this failing says nothing useful
+        // to the user. Offering no advice beats offering wrong advice.
+        if (!cancelled) setOrderedBytes(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [wantsTrial, doc, padToHead, headWidth, align, offsetDots, feedAfterDots])
+
+  /** True when switching to ordered dithering would take the job under the line. */
+  const ordersWell = orderedBytes != null && !needsFollowUpSeek(orderedBytes)
+
   const send = useCallback(
     async (target: PackedBitmap) => {
       setError(null)
@@ -216,14 +264,50 @@ export function PrintPanel({
       </div>
 
       {needsFollowUpSeek(jobBytes) && (
-        <div className={feedAfterDots === 0 && settings.followUpSeek !== true ? 'warn' : 'hint'}>
+        <div className={ordersWell || feedAfterDots > 0 ? 'hint' : 'warn'}>
           <p>
             This label is {(jobBytes / 1024).toFixed(1)} KB, which is more than the printer reads
             before it starts printing &mdash; so the gap seek at the end of the job goes unread and
             it will not find the next label on its own. Confirmed on hardware: left to itself, every
             print of a label this size starts a gap-width earlier than the last.
           </p>
+
+          {ordersWell && (
+            <p>
+              <strong>Ordered dithering would fix that outright.</strong> The same label comes to{' '}
+              {(orderedBytes! / 1024).toFixed(1)} KB that way &mdash; under the{' '}
+              {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full &mdash; so it would register
+              itself, print after print, with nothing below needed at all. Error diffusion scatters
+              a photograph into nearly random dots that will not compress; ordered dithering lays
+              them on a grid, which does. It is a coarser, more mechanical look, and at 203 dpi it
+              also survives thermal bleed better.{' '}
+              <button
+                className="linklike"
+                onClick={() =>
+                  ditherCandidates.forEach((id) => updateElement(id, { dither: 'bayer' }))
+                }
+              >
+                Switch {ditherCandidates.length === 1 ? 'the photo' : 'the photos'} to ordered
+              </button>
+            </p>
+          )}
+          {orderedBytes != null && !ordersWell && (
+            <p>
+              Ordered dithering would bring it to {(orderedBytes / 1024).toFixed(1)} KB, still over
+              the {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full, so it would not help
+              here. This picture has too much fine detail to compress. One of the two below, then.
+            </p>
+          )}
+
           <div className="row">
+            <label className="field field--check">
+              <input
+                type="checkbox"
+                checked={settings.followUpSeek === true}
+                onChange={(e) => setSettings((s) => ({ ...s, followUpSeek: e.target.checked }))}
+              />
+              <span>Register the roll after this print</span>
+            </label>
             <label className="field">
               <span style={{ minWidth: '5.5rem' }}>Gap feed</span>
               <input
@@ -242,25 +326,15 @@ export function PrintPanel({
               />
               <em>mm</em>
             </label>
-            <label className="field field--check">
-              <input
-                type="checkbox"
-                checked={settings.followUpSeek === true}
-                onChange={(e) => setSettings((s) => ({ ...s, followUpSeek: e.target.checked }))}
-              />
-              <span>Advance to the next label after this print</span>
-            </label>
           </div>
           <p>
-            <strong>Gap feed</strong> is the one to leave set. Blank rows advance the paper by
-            exactly as many as you send, so setting it to your inter-label gap crosses the gap the
-            same amount every time. Step the paper with <strong>Feed by printing blank</strong>
-            under Diagnostics to measure yours, then put that number here.
+            <strong>Register</strong> sends a second, tiny job carrying the seek, small enough for
+            the printer to read whole. It used to walk the paper out to the tear-off position and
+            back before seeking, which cost a blank label; it no longer does.
             <br />
-            <strong>Advance</strong> sends a small second job carrying the gap seek. On this
-            firmware that behaves as a form feed &mdash; it moves on a whole label from wherever it
-            starts, so it costs one blank. Use it to get a lost roll back onto a boundary, not as a
-            routine.
+            <strong>Gap feed</strong> is the fallback that needs no sensor: blank rows advance the
+            paper by exactly as many as you send. It means measuring your stock, which is why it is
+            last here rather than first.
           </p>
         </div>
       )}

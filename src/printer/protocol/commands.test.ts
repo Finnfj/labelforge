@@ -72,17 +72,19 @@ describe('printJobFraming', () => {
 })
 
 describe('followUpSeekJob', () => {
-  it('is an ordinary small job with a seek at the end of it', () => {
-    // No rewind before the seek, though there was one briefly. The idea was that
-    // the printer's own retract lands a registered roll on the gap, so winding
-    // back would let the seek stop at the boundary just ahead. The printer
-    // honoured the rewind and took a whole blank label regardless: the seek
-    // advances a label wherever it starts from, and the starting position is not
-    // the lever.
+  it('does not walk the paper out to the tear position before seeking', () => {
+    // A small label's in-job seek registers correctly because nothing moves the
+    // paper between the raster and the seek. This job is the same shape: no
+    // `alignPaperStart`, and the driver withholds the label job's `alignPaperEnd`
+    // to match, so the tear-off round trip does not happen in the middle of what
+    // is really one print. A 5 mm rewind was tried first and did nothing, which is
+    // unsurprising against an excursion of about twenty.
     const framing = printJobFraming({ paperType: PaperType.Gap, density: 8 })
     const stream = hex(followUpSeekJob(framing, 384))
 
-    expect(stream).not.toContain('1f 11 10')
+    expect(stream).not.toContain('1f 11 51') //   no retract
+    expect(stream).not.toContain('1f 11 10') //   and no rewind either
+    expect(stream).toContain('1f c0 01 00') //    still an ordinary job
     expect(stream.indexOf('1f 10 00 30')).toBeLessThan(stream.indexOf('1f 12 20 00'))
   })
 

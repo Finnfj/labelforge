@@ -38,10 +38,15 @@ and the reasoning that failed.
 Tall labels needed one more thing. The printer honours that seek only in a job it has
 read in full, and it starts printing once its ~18 KB buffer fills — so on an 80 mm
 photo label the seek is still unread when the label comes out, and the roll stops
-mid-label. The vendor app has the same problem and does nothing about it. LabelForge
-follows an oversized job with a 52-byte one carrying nothing but a millimetre of blank
-raster and the same seek, sent once the printer acknowledges it has finished. Tall
-labels register.
+mid-label. The vendor app has the same problem and does nothing about it.
+
+The size is the whole constraint, and the dither is what decides it: error diffusion
+scatters a photograph into nearly random dots that will not compress, while ordered
+dithering compresses the same 384 × 640 raster from about 23 KB to 6. So when a label
+is too big, the print panel rasterises it both ways and offers the swap with the real
+figures — and under the line the label is simply an ordinary job that registers
+itself. For pictures too detailed for that to help, an oversized job can be followed
+by a 52-byte one carrying nothing but the seek, small enough to be read whole.
 
 Working today:
 
