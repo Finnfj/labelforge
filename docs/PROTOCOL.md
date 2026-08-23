@@ -478,8 +478,10 @@ the head, and about 20 mm of travel on a P50S.
   paper just past it; the seek has nowhere to stop before the next gap, a full
   pitch away.
 - A second consecutive print "fed some of the label back into the printer before
-  printing". That is the retract, working as intended — it only looked wrong
-  because the paper was not at the tear position to begin with.
+  printing", from paper that _was_ at the tear position and had not been pulled.
+  That is the retract doing exactly what it should. The print that followed was
+  cut off at 80%, which is a separate fault — see `4F 4B` below — and not a
+  positioning one: the label started in the right place and stopped early.
 
 If this is right, the 1 mm blank raster is what breaks the follow-up on a
 registered roll, and a follow-up job without `1F 11 51`/`1F 11 50` would be a pure
@@ -502,14 +504,36 @@ purpose is moving paper rather than printing a label.
 Worth noting what the same log confirms in passing: that 44-byte job's seek was
 honoured, first time. Every small job's seek has been.
 
+### `4F 4B` is the only sign a label finished
+
+A healthy job answers `4F 4B` on `ff01` once the printer works through it — a
+fraction of a second for a short label, ten seconds for a full-height one, since
+the reply comes when the stream has been consumed rather than when the bytes
+landed. `printDurationMs()` sizes the wait from the row count.
+
+**A job that does not answer did not finish.** One run printed a 50 x 80 label at
+a third of the usual rate, cut the image off about 80% of the way down, and sent
+nothing. Flow control was clean throughout — 280 credits for 281 writes, no gap
+over a second — so every byte was accepted; the printer simply stopped putting
+them on paper.
+
+Two things followed from that being invisible:
+
+- The driver only waited for the acknowledgement _between_ copies, so a single
+  print reported `done` while the printer still had ten seconds of label to go,
+  and a job it never finished looked exactly like one it did. Every copy now
+  waits, and a missing reply is reported rather than shrugged off.
+- Nothing in the app consumed the driver's `log` events, so the one channel it
+  had for saying "that label may be incomplete" went nowhere. The print panel
+  shows them.
+
 ### Battery
 
-`10 FF 50 F1` answers `00 <percent>`. A run where a long label printed at a third
-of the usual rate and stopped part-way through reported `00 00`, and nothing in
-the UI drew attention to it. A thermal head takes its heat from the battery, so a
-flat one is the first thing to rule out when a print is slow or truncated — the
-connection panel now says so below 20%. `00 00` seems to mean charging as well as
-empty; nothing distinguishes them.
+`10 FF 50 F1` answers `00 <percent>`. The truncated run above reported `00 00`,
+and nothing in the UI drew attention to it. A thermal head takes its heat from the
+battery, so a flat one is the first thing to rule out when a print is slow or
+cut short — the connection panel now says so below 20%. `00 00` seems to mean
+charging as well as empty; nothing distinguishes them.
 
 ### The follow-up seek job — confirmed working
 

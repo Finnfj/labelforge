@@ -55,6 +55,7 @@ export function PrintPanel({
   const [jobBytes, setJobBytes] = useState(0)
   const [skipped, setSkipped] = useState<SkippedElement[]>([])
   const [fontFallbacks, setFontFallbacks] = useState<string[]>([])
+  const [warnings, setWarnings] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
 
   const {
@@ -68,9 +69,18 @@ export function PrintPanel({
   useEffect(() => {
     const offProgress = printer.on('progress', setProgress)
     const offWire = printer.on('wire', (w) => setWireBytes((n) => n + w.bytes.length))
+    // Nothing consumed these before, so the driver's one way of saying "that
+    // label may be incomplete" went nowhere. A truncated print that says nothing
+    // is worse than one that does.
+    const offLog = printer.on('log', (l) => {
+      if (l.level === 'warn' || l.level === 'error') {
+        setWarnings((current) => (current.includes(l.message) ? current : [...current, l.message]))
+      }
+    })
     return () => {
       offProgress()
       offWire()
+      offLog()
     }
   }, [printer])
 
@@ -139,6 +149,7 @@ export function PrintPanel({
     async (target: PackedBitmap) => {
       setError(null)
       setWireBytes(0)
+      setWarnings([])
       try {
         if (!printer.capabilities) {
           throw new Error('Connect a printer first.')
@@ -271,6 +282,11 @@ export function PrintPanel({
       {!connected && <p className="hint">Connect a printer above to enable printing.</p>}
 
       {error && <p className="error">{error}</p>}
+      {warnings.map((message) => (
+        <p className="warn" key={message}>
+          {message}
+        </p>
+      ))}
       {skipped.length > 0 && (
         <p className="warn">
           Left off this label because {skipped.length === 1 ? 'it' : 'they'} could not be rendered:

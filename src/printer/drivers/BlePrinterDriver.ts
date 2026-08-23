@@ -347,35 +347,44 @@ export class BlePrinterDriver implements PrinterDriver {
           progress('transfer', copy)
         })
 
+        // The printer is still printing — a full-height label for ten seconds
+        // after its last byte. Waiting here is what makes `done` mean done, and
+        // it is the only way a job the printer never finished becomes visible:
+        // a healthy one always answers `4F 4B`, and a truncated one has been seen
+        // to answer nothing at all. Reported rather than thrown, because the
+        // label may well be fine and refusing would be worse than saying so.
+        progress('feed', copy)
+        const acknowledged = await this.#waitForDone(opts.signal, printMs)
+        if (!acknowledged) {
+          this.#emitter.emit('log', {
+            level: 'warn',
+            message:
+              'The printer never confirmed it finished this label. It may have stopped part-way ' +
+              'through — check the label, and check the battery, since a flat one prints slowly ' +
+              'and can give up mid-raster.',
+          })
+        }
+
         if (seekJob) {
-          // Strictly after the label is out. Sent any earlier this is one more
-          // thing queued behind the raster the printer is still consuming, which
-          // is the whole problem being worked around — and it is what the first
-          // hardware trial did, because the wait was a flat 5 s against a label
-          // that needed 8.5.
-          progress('feed', copy)
-          if (await this.#waitForDone(opts.signal, printMs)) {
+          if (acknowledged) {
+            // Strictly after the label is out. Sent any earlier this is one more
+            // thing queued behind the raster the printer is still consuming,
+            // which is the whole problem being worked around.
             await this.#sendJob(seekJob, framing.epilogue, opts.signal)
+            await this.#waitForDone(opts.signal)
           } else {
-            // No acknowledgement, so we do not know the printer has stopped, and
-            // a seek sent into that lands somewhere nobody can predict. A trial
-            // where the `4F 4B` never came ran the full wait and then fired
-            // anyway: the paper went through the gap and 20 mm into the next
-            // label. Not registering is recoverable; that is not.
+            // Without the acknowledgement there is nothing to say the printer has
+            // stopped, and a seek from an unknown position lands nowhere useful:
+            // a trial that fired anyway sent the paper through the gap and 20 mm
+            // into the next label. Leaving a roll unregistered is recoverable.
             this.#emitter.emit('log', {
               level: 'warn',
               message:
-                'The printer did not acknowledge the end of the job, so the roll was left where ' +
-                'the label ended rather than being registered from an unknown position.',
+                'The roll was left where the label ended rather than registered, because seeking ' +
+                'from a position the printer has not confirmed lands somewhere unpredictable.',
             })
           }
         }
-
-        // The printer answers "OK" on the status channel a fraction of a second
-        // after the job ends. Waiting for it keeps a multi-copy run from stacking
-        // jobs on top of each other; a printer that stays quiet is not an error,
-        // so a timeout just carries on.
-        if (copy < job.settings.copies) await this.#waitForDone(opts.signal)
       }
 
       sent = total

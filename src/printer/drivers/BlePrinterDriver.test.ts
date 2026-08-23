@@ -408,8 +408,32 @@ describe('BlePrinterDriver', () => {
     })
 
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
-    expect(warnings.join(' ')).toMatch(/did not acknowledge/i)
+    // Both halves of it: the label may be incomplete, and the roll was left alone.
+    expect(warnings.join(' ')).toMatch(/never confirmed it finished/i)
+    expect(warnings.join(' ')).toMatch(/left where the label ended/i)
   }, 40_000)
+
+  it('waits for the printer to finish even when nothing follows', async () => {
+    // Without this, `done` fired while a full-height label still had ten seconds
+    // to print, and a job the printer never finished looked exactly like one it
+    // did. A truncated label with nothing said about it is the worst of the two.
+    const identity = identityResponder()
+    const transport = new MockTransport({
+      autoRespond: (bytes) => (hex(bytes) === '1f 11 50' ? undefined : identity(bytes)),
+    })
+    transport.creditsPerWrite = 1
+    const driver = new BlePrinterDriver(transport, { doneTimeoutMs: 1 })
+    await driver.connect()
+    transport.reset()
+
+    const warnings: string[] = []
+    driver.on('log', (l) => {
+      if (l.level === 'warn') warnings.push(l.message)
+    })
+    // Small, so no follow-up is in play: the wait is the only thing under test.
+    await driver.print({ bitmap: checkerboard(384, 64), settings: DEFAULT_PRINT_SETTINGS })
+    expect(warnings.join(' ')).toMatch(/never confirmed it finished/i)
+  })
 
   it('leaves a normal-sized job alone', async () => {
     const { transport, driver } = await connected()
