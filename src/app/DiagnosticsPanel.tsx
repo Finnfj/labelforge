@@ -13,7 +13,11 @@ import { decodeText, toHex } from '../printer/protocol/responses'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import type { DiagnosticFlagsHandle } from './useDiagnosticFlags'
 import { PROFILES } from '../printer/profiles'
+import { WIRE_LOG_LIMIT } from './usePrinter'
 import type { PrinterConnection, WireEntry } from './usePrinter'
+
+/** Lines rendered. The full ring is what Copy and Download hand over. */
+const LOG_LINES_SHOWN = 200
 
 /** Densities to walk when finding a good darkness. One label each. */
 const DENSITY_LADDER = [3, 6, 9, 12, 15]
@@ -528,7 +532,7 @@ export function DiagnosticsPanel({
       <div className="row">
         <span className="hint">
           {connection.wireLog.length} entries
-          {connection.wireLog.length >= 500 && ' (oldest trimmed)'}
+          {connection.wireLog.length >= WIRE_LOG_LIMIT && ' (oldest trimmed)'}
         </span>
         <button onClick={() => void copyLog(connection.wireLog)}>Copy</button>
         <button onClick={() => downloadLog(connection.wireLog, connection.capabilities?.model)}>
@@ -536,7 +540,10 @@ export function DiagnosticsPanel({
         </button>
         <button onClick={connection.clearWireLog}>Clear</button>
       </div>
-      <pre className="log">{formatLog(connection.wireLog.slice(-200))}</pre>
+      {/* Shown: the tail. Copy and Download take the whole ring — a job's opening
+          commands are the interesting part and are hundreds of chunks back by the
+          time it ends. */}
+      <pre className="log">{formatLog(connection.wireLog.slice(-LOG_LINES_SHOWN))}</pre>
       <p className="hint">
         Every byte in and out. This is the artifact worth keeping if something goes wrong — it is
         the actual wire protocol, which matters because the reply formats in this app are inferred

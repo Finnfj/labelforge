@@ -116,7 +116,7 @@ export interface WireEntry {
  * the density and paper type had been set to *something*. 4000 holds several
  * copies of the largest stock the app offers, at a few hundred KB.
  */
-const WIRE_LOG_LIMIT = 4000
+export const WIRE_LOG_LIMIT = 4000
 
 export interface PrinterConnection {
   kind: PrinterKind
