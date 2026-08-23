@@ -483,12 +483,24 @@ the head, and about 20 mm of travel on a P50S.
   cut off at 80%, which is a separate fault — see `4F 4B` below — and not a
   positioning one: the label started in the right place and stopped early.
 
-If this is right, the 1 mm blank raster is what breaks the follow-up on a
-registered roll, and a follow-up job without `1F 11 51`/`1F 11 50` would be a pure
-seek from wherever the paper is. That is worth trying, but it has not been, and
-the current shape is confirmed to work on the roll it exists for — an unregistered
-one. Changing it on the strength of a model that is itself unconfirmed would trade
-a known good case for a plausible one.
+The reading also says what to do about the blank label, and the fix is a rewind
+rather than a subtraction. `1F 11 51` feeds backwards already — that is its job —
+but it undoes the tear advance _exactly_, so on a registered roll it lands the
+paper on the gap and `SEEK_JOB_ROWS` of blank nudges it just past. The seek then
+has nothing to stop at before the next boundary.
+
+`SEEK_JOB_REWIND_DOTS` adds 5 mm of `1F 11 10` (adjust backwards, in dots) after
+the retract and before the raster, putting the paper back on the label side of the
+boundary so the seek finds the gap immediately ahead. It also removes the
+dependency on the retract being exact, which has never been measured — one
+millimetre of error or nineteen come out the same. The follow-up only runs above
+`SEEK_SAFE_JOB_BYTES`, and a raster that large is at least forty millimetres tall,
+so five never reaches the gap behind.
+
+`1F 11 10` itself is untested. Every _dedicated_ motion command on this firmware
+is inert, but the `1F 11` family plainly is not — `51` and `50` move paper — and
+`adjustPosition` is the same family, sent inside a job with a raster behind it.
+If it turns out to be ignored, the follow-up behaves exactly as it did before.
 
 The reading is testable directly: `1F 11 50` on its own should move the paper
 about 20 mm, and `1F 11 51` should pull it back. Neither has been sent alone.

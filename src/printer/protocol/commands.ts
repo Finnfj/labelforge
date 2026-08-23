@@ -318,6 +318,28 @@ export function printJobStream(framing: PrintJobFraming, image: Uint8Array): Uin
 export const SEEK_JOB_ROWS = 8
 
 /**
+ * How far the follow-up job winds back before it seeks.
+ *
+ * `alignPaperStart` already feeds backwards — that is what it is for, undoing the
+ * tear-off advance `alignPaperEnd` made at the end of the last job. The trouble is
+ * that it undoes it *exactly*, so on a registered roll it lands the paper on the
+ * gap, and {@link SEEK_JOB_ROWS} of blank then nudges it just past. A seek from
+ * there has nothing to stop at before the next boundary, and a blank label comes
+ * out with it. Observed twice.
+ *
+ * Five millimetres puts the paper back on the label side of the boundary with room
+ * to spare, so the seek finds the gap immediately ahead of it instead of the one
+ * after. It also stops the whole thing depending on the retract being exact, which
+ * has never been measured — anything from one to nineteen millimetres of error
+ * comes out the same.
+ *
+ * Safe against the other end too: the follow-up only runs for jobs over
+ * `SEEK_SAFE_JOB_BYTES`, and a raster that large is at least forty millimetres
+ * tall, so five never reaches the gap behind.
+ */
+export const SEEK_JOB_REWIND_DOTS = 5 * 8
+
+/**
  * Whether a raster this big will have its own gap seek read in time.
  *
  * Takes the encoded `1F 10` command's length rather than the whole job's, because
@@ -343,7 +365,17 @@ export function needsFollowUpSeek(encodedImageBytes: number): boolean {
  * however wide the stock is.
  */
 export function followUpSeekJob(framing: PrintJobFraming, widthDots: number): Uint8Array {
-  return printJobStream(framing, encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)))
+  const rewound: PrintJobFraming = {
+    ...framing,
+    preamble: [
+      ...framing.preamble,
+      {
+        bytes: adjustPosition(AdjustMode.BackwardDots, SEEK_JOB_REWIND_DOTS),
+        note: 'rewind',
+      },
+    ],
+  }
+  return printJobStream(rewound, encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)))
 }
 
 /**

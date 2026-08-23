@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PaperType, Speed } from './constants'
-import { printJobFraming, printJobStream } from './commands'
+import { followUpSeekJob, printJobFraming, printJobStream } from './commands'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
 
@@ -68,6 +68,33 @@ describe('printJobFraming', () => {
     expect(trailer(PaperType.Gap)).toEqual(['1f 12 20 00', '1f c0 01 01'])
     expect(trailer(PaperType.Continuous)).toEqual(['1f 12 10 00', '1f c0 01 01'])
     expect(trailer(PaperType.BlackMark)).toEqual(['1f 12 30 00', '1f c0 01 01'])
+  })
+})
+
+describe('followUpSeekJob', () => {
+  it('winds back past the boundary before seeking', () => {
+    // alignPaperStart already feeds backwards, but only exactly enough to undo the
+    // tear-off advance — which lands a registered roll on the gap, where the
+    // millimetre of blank raster then nudges it just past and the seek runs on to
+    // the next boundary, taking a blank label. The extra rewind puts the paper on
+    // the label side of it, and makes the whole thing independent of a retract
+    // distance nobody has measured.
+    const framing = printJobFraming({ paperType: PaperType.Gap, density: 8 })
+    const stream = hex(followUpSeekJob(framing, 384))
+
+    expect(stream).toContain('1f 11 51') //             the retract that already existed
+    expect(stream).toContain('1f 11 10 00 28') //       and 5 mm more, in dots
+    expect(stream).toContain('1f 12 20 00') //          then the seek
+    // Order is the whole point: wind back, put a raster in front of the seek, seek.
+    expect(stream.indexOf('1f 11 10 00 28')).toBeLessThan(stream.indexOf('1f 10 00 30'))
+    expect(stream.indexOf('1f 10 00 30')).toBeLessThan(stream.indexOf('1f 12 20 00'))
+  })
+
+  it('stays small enough for the printer to read in full', () => {
+    // Its whole reason for existing. A job the printer streams is one whose seek
+    // it never reads, which is the problem this is working around.
+    const framing = printJobFraming({ paperType: PaperType.Gap, density: 8 })
+    expect(followUpSeekJob(framing, 384).length).toBeLessThan(200)
   })
 })
 

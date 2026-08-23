@@ -257,9 +257,10 @@ export function PrintPanel({
             same amount every time. Step the paper with <strong>Feed by printing blank</strong>
             under Diagnostics to measure yours, then put that number here.
             <br />
-            <strong>Seek</strong> sends a small second job afterwards that hunts for the boundary.
-            Use it to recover a roll that has lost its place, then untick it &mdash; on a roll that
-            has not, it has been seen to run on and take a blank label with it.
+            <strong>Seek</strong> sends a small second job afterwards that winds the paper back 5 mm
+            and then hunts forward for the boundary. The wind-back is there because the
+            printer&rsquo;s own retract lands a registered roll exactly on the gap, from where a
+            seek runs on to the next one and takes a blank label with it.
           </p>
         </div>
       )}
