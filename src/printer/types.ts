@@ -62,6 +62,29 @@ export interface PrintSettings {
   speed?: SpeedValue
   paperType: PaperTypeValue
   copies: number
+  /**
+   * Register the roll after a label too large to do it itself.
+   *
+   * A P50S honours a job's own gap seek only when it read the whole job before
+   * starting the motor; above `SEEK_SAFE_JOB_BYTES` it did not, so an oversized
+   * label is followed by a 52-byte job carrying nothing but a millimetre of blank
+   * raster and the same seek. See `followUpSeekJob()`.
+   *
+   * On by default, and a per-print choice rather than a fixed behaviour because
+   * whether it is wanted depends on where the paper already is, which nothing on
+   * this firmware reports:
+   *
+   * - Roll out of registration — after loading paper, or after a label that
+   *   printed without one — the seek finds the next gap and fixes it.
+   * - Roll already registered, which is what a full-height label leaves behind,
+   *   the paper having stopped at the gap: the seek runs on to the *next* gap and
+   *   a blank label comes out with it.
+   *
+   * Costing a label is the better failure of the two, so it stays on unless
+   * turned off. Ignored for a label small enough to seek inside its own job,
+   * where the printer does this itself and gets it right.
+   */
+  followUpSeek?: boolean
 }
 
 export interface PrintJob {
@@ -135,4 +158,5 @@ export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   // Deliberately absent — see PrintSettings.speed.
   paperType: 0x20, // gap labels
   copies: 1,
+  followUpSeek: true,
 }

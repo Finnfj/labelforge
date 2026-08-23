@@ -362,6 +362,20 @@ describe('BlePrinterDriver', () => {
     expect(order).toEqual(['epilogue', 'ok', 'epilogue', 'ok'])
   }, 30_000)
 
+  it('can be told to leave the roll where the label ended', async () => {
+    // The follow-up registers a roll that needs it and costs a blank label on one
+    // that does not — a full-height label already ends at the gap, and seeking
+    // from there advances to the next one. Nothing on this firmware reports which
+    // case you are in, so it is a choice rather than a behaviour.
+    const { transport, driver } = await connected({ credits: 1 })
+    await driver.print({
+      bitmap: noisyBitmap(384, 360),
+      settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: false },
+    })
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1)
+    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
+  }, 20_000)
+
   it('leaves a normal-sized job alone', async () => {
     const { transport, driver } = await connected()
     await driver.print({ bitmap: checkerboard(384, 64), settings: DEFAULT_PRINT_SETTINGS })

@@ -7,6 +7,8 @@ import { LabelTooWideError, headOriginDots } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
 import { MAX_DENSITY, MIN_DENSITY } from '../printer/protocol/constants'
+import { needsFollowUpSeek } from '../printer/protocol/commands'
+import { encodeImage } from '../printer/protocol/encodeImage'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../printer/types'
 import { resolveAssetUrl } from '../storage/assets'
 import { registerStoredFonts } from '../storage/fonts'
@@ -50,6 +52,7 @@ export function PrintPanel({
   const [showHeadArea, setShowHeadArea] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [clipped, setClipped] = useState(false)
+  const [jobBytes, setJobBytes] = useState(0)
   const [skipped, setSkipped] = useState<SkippedElement[]>([])
   const [fontFallbacks, setFontFallbacks] = useState<string[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -96,6 +99,11 @@ export function PrintPanel({
           })
           if (cancelled) return
           setBitmap(result.bitmap)
+          // Whether the printer can seek this job itself turns on the compressed
+          // size, and there is no estimating that — a dithered photograph barely
+          // compresses while flat artwork collapses to nothing. Encoding is a
+          // millisecond here and the preview is already debounced.
+          setJobBytes(encodeImage(result.bitmap).length)
           setLabelWidthDots(result.labelWidthDots)
           setClipped(result.clipped)
           setSkipped(result.skipped)
@@ -108,6 +116,7 @@ export function PrintPanel({
           // document — a label printed with the QR payload you had just replaced.
           // No bitmap disables printing, which is the correct answer here.
           setBitmap(null)
+          setJobBytes(0)
           setSkipped([])
           setFontFallbacks([])
           setError(
@@ -194,6 +203,27 @@ export function PrintPanel({
           />
         </label>
       </div>
+
+      {needsFollowUpSeek(jobBytes) && (
+        <>
+          <label className="field field--check" style={{ marginTop: '0.6rem' }}>
+            <input
+              type="checkbox"
+              checked={settings.followUpSeek !== false}
+              onChange={(e) => setSettings((s) => ({ ...s, followUpSeek: e.target.checked }))}
+            />
+            <span>Register the roll after printing</span>
+          </label>
+          <p className="hint">
+            This label is {(jobBytes / 1024).toFixed(1)} KB, too large for the printer to seek the
+            gap inside the print itself, so a second 52-byte job goes out afterwards to do it.
+            <br />
+            Leave it on after loading a roll, or whenever a label has come out misregistered. Turn
+            it off once the roll is running true: a full-height label already ends at the gap, and
+            seeking from there advances to the <em>next</em> one, taking a blank label with it.
+          </p>
+        </>
+      )}
 
       <div className="row" style={{ marginTop: '0.75rem' }}>
         <button

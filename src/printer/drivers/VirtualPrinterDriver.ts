@@ -174,7 +174,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
         // of the sequence is: so the byte log says what the printer would get.
         // Both drivers ask cmd for the condition and the job, so neither can
         // decide to send it on its own.
-        if (cmd.needsFollowUpSeek(image.length)) {
+        if (job.settings.followUpSeek !== false && cmd.needsFollowUpSeek(image.length)) {
           send(cmd.followUpSeekJob(framing, job.bitmap.widthDots), 'follow-up seek job')
         }
       }

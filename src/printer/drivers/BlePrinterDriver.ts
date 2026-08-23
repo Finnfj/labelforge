@@ -322,9 +322,10 @@ export class BlePrinterDriver implements PrinterDriver {
       // seek will go unread. A second, tiny job carries one that will not.
       // Too big for the printer to read before it starts printing, so its own gap
       // seek goes unread. A second, tiny job carries one that does not.
-      const seekJob = cmd.needsFollowUpSeek(image.length)
-        ? cmd.followUpSeekJob(framing, job.bitmap.widthDots)
-        : null
+      const seekJob =
+        job.settings.followUpSeek !== false && cmd.needsFollowUpSeek(image.length)
+          ? cmd.followUpSeekJob(framing, job.bitmap.widthDots)
+          : null
 
       // How long the printer will still be working after the last byte lands.
       // The fixed 5 s this used to wait was shorter than an 80 mm label takes, so

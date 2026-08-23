@@ -501,6 +501,23 @@ that finds the gap would send the next one on to the label after it, and there i
 nothing to stop on — no status query on this firmware answers, and `4F 4B` says a
 job was processed, not where the paper stopped.
 
+**And that is not hypothetical, which is why the follow-up is a choice rather than a
+behaviour.** It registers a roll that needs registering, and costs a blank label on
+one that does not: a full-height label ends exactly at the gap, so seeking from there
+runs on to the next gap and takes the label between them with it. The two cases
+differ only in where the paper already is, and nothing reports that, so
+`PrintSettings.followUpSeek` asks. It defaults on, because a wasted label is the
+better of the two failures.
+
+Whether the second case needs _anything_ is open. Between prints the paper has to
+cross the gap somehow, and it is not known whether `1F 11 51` at the head of the next
+job already does that — it is called alignPaperStart, it sits between
+`startPrintJob` and the raster in the captured sequence, and what it actually does
+has never been isolated. If it does, a registered roll needs no follow-up at all and
+this could go back to being automatic. Two consecutive full-height prints with the
+follow-up turned off settle it: if the second is misregistered by a gap width, it
+does not.
+
 **The vendor app does not do this.** Printing the same stock from it leaves the
 paper mid-label with no seek at all, so this is a firmware limit rather than a trick
 the vendor knows, and the behaviour here is better than the reference implementation
