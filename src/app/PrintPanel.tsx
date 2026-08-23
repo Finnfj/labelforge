@@ -216,11 +216,16 @@ export function PrintPanel({
           </label>
           <p className="hint">
             This label is {(jobBytes / 1024).toFixed(1)} KB, too large for the printer to seek the
-            gap inside the print itself, so a second 52-byte job goes out afterwards to do it.
+            gap inside the print itself. Ticking this sends a second 52-byte job afterwards that
+            does nothing but seek, which will find the gap from wherever the paper is.
             <br />
-            Leave it on after loading a roll, or whenever a label has come out misregistered. Turn
-            it off once the roll is running true: a full-height label already ends at the gap, and
-            seeking from there advances to the <em>next</em> one, taking a blank label with it.
+            It is a repair, not a routine: use it when a roll has lost its place, then untick it. A
+            full-height label already ends at the gap, and seeking from there has been seen to run
+            on to the label after next.
+            <br />
+            To keep a tall label registered print to print, set <strong>Feed after</strong> under
+            Head geometry to your inter-label gap &mdash; 24 dots for 3 mm. Blank rows move the
+            paper by exactly as many as you send, so it is predictable in a way the seek is not.
           </p>
         </>
       )}

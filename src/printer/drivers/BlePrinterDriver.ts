@@ -354,8 +354,21 @@ export class BlePrinterDriver implements PrinterDriver {
           // hardware trial did, because the wait was a flat 5 s against a label
           // that needed 8.5.
           progress('feed', copy)
-          await this.#waitForDone(opts.signal, printMs)
-          await this.#sendJob(seekJob, framing.epilogue, opts.signal)
+          if (await this.#waitForDone(opts.signal, printMs)) {
+            await this.#sendJob(seekJob, framing.epilogue, opts.signal)
+          } else {
+            // No acknowledgement, so we do not know the printer has stopped, and
+            // a seek sent into that lands somewhere nobody can predict. A trial
+            // where the `4F 4B` never came ran the full wait and then fired
+            // anyway: the paper went through the gap and 20 mm into the next
+            // label. Not registering is recoverable; that is not.
+            this.#emitter.emit('log', {
+              level: 'warn',
+              message:
+                'The printer did not acknowledge the end of the job, so the roll was left where ' +
+                'the label ended rather than being registered from an unknown position.',
+            })
+          }
         }
 
         // The printer answers "OK" on the status channel a fraction of a second

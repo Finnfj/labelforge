@@ -501,22 +501,34 @@ that finds the gap would send the next one on to the label after it, and there i
 nothing to stop on — no status query on this firmware answers, and `4F 4B` says a
 job was processed, not where the paper stopped.
 
-**And that is not hypothetical, which is why the follow-up is a choice rather than a
-behaviour.** It registers a roll that needs registering, and costs a blank label on
-one that does not: a full-height label ends exactly at the gap, so seeking from there
-runs on to the next gap and takes the label between them with it. The two cases
-differ only in where the paper already is, and nothing reports that, so
-`PrintSettings.followUpSeek` asks. It defaults on, because a wasted label is the
-better of the two failures.
+**And that is not hypothetical, which is why the follow-up is off by default and a
+repair rather than a routine.** It registers a roll that has lost its place. On a
+roll that has not, it costs paper and does not settle — a full-height label ends at
+the gap, and seeking from there has been seen to run a whole pitch onto the label
+after next. Where it stops is not something the wire predicts, and nothing on this
+firmware reports where the paper is.
 
-Whether the second case needs _anything_ is open. Between prints the paper has to
-cross the gap somehow, and it is not known whether `1F 11 51` at the head of the next
-job already does that — it is called alignPaperStart, it sits between
-`startPrintJob` and the raster in the captured sequence, and what it actually does
-has never been isolated. If it does, a registered roll needs no follow-up at all and
-this could go back to being automatic. Two consecutive full-height prints with the
-follow-up turned off settle it: if the second is misregistered by a gap width, it
-does not.
+**It is also never sent without `4F 4B` first.** A trial where the acknowledgement
+never arrived ran the full `printDurationMs()` budget — 29,770 ms for 640 rows, the
+log shows the follow-up going out at exactly that offset — and then sent it anyway,
+into a printer that had not said it was finished. The paper went through the gap and
+20 mm into the next label. Leaving a roll unregistered is recoverable; seeking from a
+position nobody knows is not, so a timed-out wait now skips the follow-up and says
+so.
+
+**For keeping a tall label registered print to print, `feedAfterDots` is the
+mechanism that behaves.** Blank rows move paper by exactly as many as you send.
+Open-loop, so a wrong gap accumulates — but it accumulates predictably, and one pass
+with the +/-1 mm buttons settles it for a given stock. That is worth more here than
+a sensor that lands somewhere different each time.
+
+Whether a registered roll needs anything at all between prints is still open. The
+paper has to cross the gap somehow, and it is not known whether `1F 11 51` at the
+head of the next job already does that — it is called alignPaperStart, it sits
+between `startPrintJob` and the raster in the captured sequence, and what it actually
+does has never been isolated. Two consecutive full-height prints with the follow-up
+off and `feedAfterDots` at zero settle it: if the second is misregistered by a gap
+width, it does not.
 
 **The vendor app does not do this.** Printing the same stock from it leaves the
 paper mid-label with no seek at all, so this is a firmware limit rather than a trick

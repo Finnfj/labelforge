@@ -328,7 +328,7 @@ describe('BlePrinterDriver', () => {
     const { transport, driver } = await connected({ credits: 1, doneTimeoutMs: 5 })
     const bitmap = noisyBitmap(384, 360)
     expect(encodeImage(bitmap).length).toBeGreaterThan(SEEK_SAFE_JOB_BYTES)
-    await driver.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
+    await driver.print({ bitmap, settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true } })
 
     // Two complete jobs, in order, each with its own seek.
     expect(occurrences(transport.writes, '1f c0 01 00')).toBe(2)
@@ -356,7 +356,10 @@ describe('BlePrinterDriver', () => {
       if (reply && hex(reply) === '4f 4b') order.push('ok')
       return reply
     }
-    await driver.print({ bitmap: noisyBitmap(384, 360), settings: DEFAULT_PRINT_SETTINGS })
+    await driver.print({
+      bitmap: noisyBitmap(384, 360),
+      settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true },
+    })
 
     // One epilogue per job, each immediately acknowledged, never two in a row.
     expect(order).toEqual(['epilogue', 'ok', 'epilogue', 'ok'])
@@ -375,6 +378,38 @@ describe('BlePrinterDriver', () => {
     expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1)
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
   }, 20_000)
+
+  it('does not seek from a position the printer never confirmed', async () => {
+    // A trial where `4F 4B` never arrived ran the whole wait and then sent the
+    // follow-up anyway: the paper went through the gap and 20 mm into the next
+    // label. Without the acknowledgement there is nothing to say the printer has
+    // stopped, and a seek from an unknown position lands nowhere useful. Leaving
+    // the roll unregistered is recoverable; that is not.
+    const transport = new MockTransport({ autoRespond: identityResponder() })
+    transport.creditsPerWrite = 1
+    // Silent on the epilogue, so the end-of-job wait can only time out.
+    const identity = identityResponder()
+    transport.autoRespond = (bytes) => (hex(bytes) === '1f 11 50' ? undefined : identity(bytes))
+    const driver = new BlePrinterDriver(transport, { doneTimeoutMs: 1 })
+    await driver.connect()
+    transport.reset()
+
+    const warnings: string[] = []
+    driver.on('log', (l) => {
+      if (l.level === 'warn') warnings.push(l.message)
+    })
+    await driver.print({
+      // Wide and short on purpose. The follow-up is decided by encoded size and
+      // the wait by row count, so this is over the threshold while costing under
+      // two seconds to time out — 360 rows of the same volume would cost
+      // seventeen.
+      bitmap: noisyBitmap(4000, 40),
+      settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true },
+    })
+
+    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
+    expect(warnings.join(' ')).toMatch(/did not acknowledge/i)
+  }, 40_000)
 
   it('leaves a normal-sized job alone', async () => {
     const { transport, driver } = await connected()

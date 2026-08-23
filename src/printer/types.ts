@@ -67,22 +67,24 @@ export interface PrintSettings {
    *
    * A P50S honours a job's own gap seek only when it read the whole job before
    * starting the motor; above `SEEK_SAFE_JOB_BYTES` it did not, so an oversized
-   * label is followed by a 52-byte job carrying nothing but a millimetre of blank
-   * raster and the same seek. See `followUpSeekJob()`.
+   * label can be followed by a 52-byte job carrying nothing but a millimetre of
+   * blank raster and the same seek. See `followUpSeekJob()`.
    *
-   * On by default, and a per-print choice rather than a fixed behaviour because
-   * whether it is wanted depends on where the paper already is, which nothing on
-   * this firmware reports:
+   * **Off by default, because it is a repair rather than a routine.** It does
+   * register a roll that has lost its place. On a roll that has not, it costs
+   * paper and does not settle: a full-height label ends at the gap, and seeking
+   * from there has been observed both to run a whole pitch onto the label after
+   * next, and to stop 20 mm into the next label. Where it stops is not something
+   * the wire can predict, and nothing on this firmware reports where the paper
+   * is.
    *
-   * - Roll out of registration — after loading paper, or after a label that
-   *   printed without one — the seek finds the next gap and fixes it.
-   * - Roll already registered, which is what a full-height label leaves behind,
-   *   the paper having stopped at the gap: the seek runs on to the *next* gap and
-   *   a blank label comes out with it.
+   * For keeping a tall label registered print to print, `feedAfterDots` is the
+   * mechanism that behaves: blank rows move paper by exactly as many as you send.
+   * Open-loop, so a wrong gap accumulates — but it accumulates predictably, and
+   * one pass with the +/-1 mm buttons settles it for a given stock.
    *
-   * Costing a label is the better failure of the two, so it stays on unless
-   * turned off. Ignored for a label small enough to seek inside its own job,
-   * where the printer does this itself and gets it right.
+   * Ignored for a label small enough to seek inside its own job, where the
+   * printer does this itself and gets it right.
    */
   followUpSeek?: boolean
 }
@@ -158,5 +160,5 @@ export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   // Deliberately absent — see PrintSettings.speed.
   paperType: 0x20, // gap labels
   copies: 1,
-  followUpSeek: true,
+  followUpSeek: false,
 }
