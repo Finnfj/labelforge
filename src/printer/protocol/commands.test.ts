@@ -72,21 +72,17 @@ describe('printJobFraming', () => {
 })
 
 describe('followUpSeekJob', () => {
-  it('winds back past the boundary before seeking', () => {
-    // alignPaperStart already feeds backwards, but only exactly enough to undo the
-    // tear-off advance — which lands a registered roll on the gap, where the
-    // millimetre of blank raster then nudges it just past and the seek runs on to
-    // the next boundary, taking a blank label. The extra rewind puts the paper on
-    // the label side of it, and makes the whole thing independent of a retract
-    // distance nobody has measured.
+  it('is an ordinary small job with a seek at the end of it', () => {
+    // No rewind before the seek, though there was one briefly. The idea was that
+    // the printer's own retract lands a registered roll on the gap, so winding
+    // back would let the seek stop at the boundary just ahead. The printer
+    // honoured the rewind and took a whole blank label regardless: the seek
+    // advances a label wherever it starts from, and the starting position is not
+    // the lever.
     const framing = printJobFraming({ paperType: PaperType.Gap, density: 8 })
     const stream = hex(followUpSeekJob(framing, 384))
 
-    expect(stream).toContain('1f 11 51') //             the retract that already existed
-    expect(stream).toContain('1f 11 10 00 28') //       and 5 mm more, in dots
-    expect(stream).toContain('1f 12 20 00') //          then the seek
-    // Order is the whole point: wind back, put a raster in front of the seek, seek.
-    expect(stream.indexOf('1f 11 10 00 28')).toBeLessThan(stream.indexOf('1f 10 00 30'))
+    expect(stream).not.toContain('1f 11 10')
     expect(stream.indexOf('1f 10 00 30')).toBeLessThan(stream.indexOf('1f 12 20 00'))
   })
 

@@ -483,24 +483,29 @@ the head, and about 20 mm of travel on a P50S.
   cut off at 80%, which is a separate fault — see `4F 4B` below — and not a
   positioning one: the label started in the right place and stopped early.
 
-The reading also says what to do about the blank label, and the fix is a rewind
-rather than a subtraction. `1F 11 51` feeds backwards already — that is its job —
-but it undoes the tear advance _exactly_, so on a registered roll it lands the
-paper on the gap and `SEEK_JOB_ROWS` of blank nudges it just past. The seek then
-has nothing to stop at before the next boundary.
+**The obvious repair does not work, and the failure is informative.** If the
+retract lands a registered roll on the gap, winding back before the seek should
+put the paper on the label side of the boundary and let the seek stop at the gap
+just ahead. It was tried: `1F 11 10 00 28`, five millimetres backwards, after the
+retract and before the raster. The printer honoured it — the paper visibly pulled
+back — and a whole blank label came out anyway.
 
-`SEEK_JOB_REWIND_DOTS` adds 5 mm of `1F 11 10` (adjust backwards, in dots) after
-the retract and before the raster, putting the paper back on the label side of the
-boundary so the seek finds the gap immediately ahead. It also removes the
-dependency on the retract being exact, which has never been measured — one
-millimetre of error or nineteen come out the same. The follow-up only runs above
-`SEEK_SAFE_JOB_BYTES`, and a raster that large is at least forty millimetres tall,
-so five never reaches the gap behind.
+So **the seek is a form feed**. It advances a label from wherever within one it
+starts, and the starting position is not the lever. That is consistent with every
+observation of it: it registers a lost roll because a form feed lands on a
+boundary, and it costs a label on a roll already on one for the same reason. The
+follow-up is named for that in the UI now rather than for what it was hoped to be.
 
-`1F 11 10` itself is untested. Every _dedicated_ motion command on this firmware
-is inert, but the `1F 11` family plainly is not — `51` and `50` move paper — and
-`adjustPosition` is the same family, sent inside a job with a raster behind it.
-If it turns out to be ignored, the follow-up behaves exactly as it did before.
+Two things that experiment did settle, both worth keeping:
+
+- **`adjustPosition` works.** `1F 11 10` moved the paper, inside a job with a
+  raster behind it. "Every dedicated motion command on this firmware is inert" was
+  only ever tested standalone, and is too strong — `1F 11 00` is a real
+  alternative to blank rows for crossing a gap if the blank-row feed ever proves
+  wanting.
+- **The acknowledgement latency tells you which happened.** A follow-up that
+  registered a lost roll answered `4F 4B` in ~600 ms; the ones that ate a label
+  took ~1.6 s. Enough travel to measure, if it is ever worth acting on.
 
 The reading is testable directly: `1F 11 50` on its own should move the paper
 about 20 mm, and `1F 11 51` should pull it back. Neither has been sent alone.

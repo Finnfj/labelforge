@@ -317,27 +317,26 @@ export function printJobStream(framing: PrintJobFraming, image: Uint8Array): Uin
  */
 export const SEEK_JOB_ROWS = 8
 
-/**
- * How far the follow-up job winds back before it seeks.
+/*
+ * A rewind used to sit here, and it is worth saying why it does not.
  *
- * `alignPaperStart` already feeds backwards — that is what it is for, undoing the
- * tear-off advance `alignPaperEnd` made at the end of the last job. The trouble is
- * that it undoes it *exactly*, so on a registered roll it lands the paper on the
- * gap, and {@link SEEK_JOB_ROWS} of blank then nudges it just past. A seek from
- * there has nothing to stop at before the next boundary, and a blank label comes
- * out with it. Observed twice.
+ * The reasoning was that `1F 11 51` undoes the tear-off advance exactly, landing a
+ * registered roll on the gap, so winding back 5 mm before the seek would put the
+ * paper on the label side of the boundary and the seek would stop at the gap just
+ * ahead instead of the one after. It was sent as `1F 11 10 00 28`, the printer
+ * honoured it — the paper visibly pulled back — and a whole blank label came out
+ * anyway.
  *
- * Five millimetres puts the paper back on the label side of the boundary with room
- * to spare, so the seek finds the gap immediately ahead of it instead of the one
- * after. It also stops the whole thing depending on the retract being exact, which
- * has never been measured — anything from one to nineteen millimetres of error
- * comes out the same.
+ * So the seek does not stop at the next boundary in front of it. It advances a
+ * label, wherever within one it starts from, which is a form feed. Nothing done to
+ * the starting position changes that, and the rewind was 5 mm of travel buying
+ * nothing.
  *
- * Safe against the other end too: the follow-up only runs for jobs over
- * `SEEK_SAFE_JOB_BYTES`, and a raster that large is at least forty millimetres
- * tall, so five never reaches the gap behind.
+ * What it did establish is that `adjustPosition` works inside a job with a raster
+ * behind it. That contradicts "every dedicated motion command is inert" — which
+ * was only ever tested standalone — and makes `1F 11 00` a real alternative to
+ * blank rows for crossing a gap, should the blank-row feed ever prove wanting.
  */
-export const SEEK_JOB_REWIND_DOTS = 5 * 8
 
 /**
  * Whether a raster this big will have its own gap seek read in time.
@@ -365,17 +364,7 @@ export function needsFollowUpSeek(encodedImageBytes: number): boolean {
  * however wide the stock is.
  */
 export function followUpSeekJob(framing: PrintJobFraming, widthDots: number): Uint8Array {
-  const rewound: PrintJobFraming = {
-    ...framing,
-    preamble: [
-      ...framing.preamble,
-      {
-        bytes: adjustPosition(AdjustMode.BackwardDots, SEEK_JOB_REWIND_DOTS),
-        note: 'rewind',
-      },
-    ],
-  }
-  return printJobStream(rewound, encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)))
+  return printJobStream(framing, encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)))
 }
 
 /**

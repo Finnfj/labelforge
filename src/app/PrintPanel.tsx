@@ -248,7 +248,7 @@ export function PrintPanel({
                 checked={settings.followUpSeek === true}
                 onChange={(e) => setSettings((s) => ({ ...s, followUpSeek: e.target.checked }))}
               />
-              <span>Seek the gap once after this print</span>
+              <span>Advance to the next label after this print</span>
             </label>
           </div>
           <p>
@@ -257,10 +257,10 @@ export function PrintPanel({
             same amount every time. Step the paper with <strong>Feed by printing blank</strong>
             under Diagnostics to measure yours, then put that number here.
             <br />
-            <strong>Seek</strong> sends a small second job afterwards that winds the paper back 5 mm
-            and then hunts forward for the boundary. The wind-back is there because the
-            printer&rsquo;s own retract lands a registered roll exactly on the gap, from where a
-            seek runs on to the next one and takes a blank label with it.
+            <strong>Advance</strong> sends a small second job carrying the gap seek. On this
+            firmware that behaves as a form feed &mdash; it moves on a whole label from wherever it
+            starts, so it costs one blank. Use it to get a lost roll back onto a boundary, not as a
+            routine.
           </p>
         </div>
       )}
