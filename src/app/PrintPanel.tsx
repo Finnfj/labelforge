@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LabelDoc } from '../model/labelDoc'
 import type { PackedBitmap } from '../model/bitmap'
-import { dotsToMm, mmToDots } from '../model/units'
+import { DOTS_PER_MM, dotsToMm, mmToDots } from '../model/units'
 import { rasterize, type SkippedElement } from '../render/rasterize'
 import { LabelTooWideError, headOriginDots } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
@@ -216,29 +216,52 @@ export function PrintPanel({
       </div>
 
       {needsFollowUpSeek(jobBytes) && (
-        <>
-          <label className="field field--check" style={{ marginTop: '0.6rem' }}>
-            <input
-              type="checkbox"
-              checked={settings.followUpSeek !== false}
-              onChange={(e) => setSettings((s) => ({ ...s, followUpSeek: e.target.checked }))}
-            />
-            <span>Register the roll after printing</span>
-          </label>
-          <p className="hint">
-            This label is {(jobBytes / 1024).toFixed(1)} KB, too large for the printer to seek the
-            gap inside the print itself. Ticking this sends a second 52-byte job afterwards that
-            does nothing but seek, which will find the gap from wherever the paper is.
-            <br />
-            It is a repair, not a routine: use it when a roll has lost its place, then untick it. A
-            full-height label already ends at the gap, and seeking from there has been seen to run
-            on to the label after next.
-            <br />
-            To keep a tall label registered print to print, set <strong>Feed after</strong> under
-            Head geometry to your inter-label gap &mdash; 24 dots for 3 mm. Blank rows move the
-            paper by exactly as many as you send, so it is predictable in a way the seek is not.
+        <div className={feedAfterDots === 0 && settings.followUpSeek !== true ? 'warn' : 'hint'}>
+          <p>
+            This label is {(jobBytes / 1024).toFixed(1)} KB, which is more than the printer reads
+            before it starts printing &mdash; so the gap seek at the end of the job goes unread and
+            it will not find the next label on its own. Confirmed on hardware: left to itself, every
+            print of a label this size starts a gap-width earlier than the last.
           </p>
-        </>
+          <div className="row">
+            <label className="field">
+              <span style={{ minWidth: '5.5rem' }}>Gap feed</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={feedAfterDots / DOTS_PER_MM}
+                onChange={(e) =>
+                  connection.setGeometry({
+                    feedAfterDots: Math.max(
+                      0,
+                      Math.round((Number(e.target.value) || 0) * DOTS_PER_MM),
+                    ),
+                  })
+                }
+              />
+              <em>mm</em>
+            </label>
+            <label className="field field--check">
+              <input
+                type="checkbox"
+                checked={settings.followUpSeek === true}
+                onChange={(e) => setSettings((s) => ({ ...s, followUpSeek: e.target.checked }))}
+              />
+              <span>Seek the gap once after this print</span>
+            </label>
+          </div>
+          <p>
+            <strong>Gap feed</strong> is the one to leave set. Blank rows advance the paper by
+            exactly as many as you send, so setting it to your inter-label gap crosses the gap the
+            same amount every time. Step the paper with <strong>Feed by printing blank</strong>
+            under Diagnostics to measure yours, then put that number here.
+            <br />
+            <strong>Seek</strong> sends a small second job afterwards that hunts for the boundary.
+            Use it to recover a roll that has lost its place, then untick it &mdash; on a roll that
+            has not, it has been seen to run on and take a blank label with it.
+          </p>
+        </div>
       )}
 
       <div className="row" style={{ marginTop: '0.75rem' }}>

@@ -511,9 +511,11 @@ fraction of a second for a short label, ten seconds for a full-height one, since
 the reply comes when the stream has been consumed rather than when the bytes
 landed. `printDurationMs()` sizes the wait from the row count.
 
-**A job that does not answer did not finish.** One run printed a 50 x 80 label at
-a third of the usual rate, cut the image off about 80% of the way down, and sent
-nothing. Flow control was clean throughout — 280 credits for 281 writes, no gap
+**A job that does not answer may not have finished — but the two are not the same
+thing.** One run printed a 50 x 80 label at a third of the usual rate, cut the
+image off about 80% of the way down, and sent nothing. A later run printed the
+whole motif and also sent nothing, so silence is a reason to look at the label
+rather than proof that it is wrong; the warning is worded that way. Flow control was clean throughout — 280 credits for 281 writes, no gap
 over a second — so every byte was accepted; the printer simply stopped putting
 them on paper.
 
@@ -595,13 +597,16 @@ Open-loop, so a wrong gap accumulates — but it accumulates predictably, and on
 with the +/-1 mm buttons settles it for a given stock. That is worth more here than
 a sensor that lands somewhere different each time.
 
-Whether a registered roll needs anything at all between prints is still open. The
-paper has to cross the gap somehow, and it is not known whether `1F 11 51` at the
-head of the next job already does that — it is called alignPaperStart, it sits
-between `startPrintJob` and the raster in the captured sequence, and what it actually
-does has never been isolated. Two consecutive full-height prints with the follow-up
-off and `feedAfterDots` at zero settle it: if the second is misregistered by a gap
-width, it does not.
+**Answered: a registered roll does need something, and `1F 11 51` is not it.**
+Consecutive full-height prints with the follow-up off and `feedAfterDots` at zero
+drift — each one starts a gap-width earlier than the last and ends short of the
+label, motif intact. The retract undoes the tear-off advance and nothing more, so
+with the in-job seek unread there is nothing left to cross the gap.
+
+That leaves `feedAfterDots` as the mechanism for tall stock, and it is the better
+one anyway: blank rows advance the paper by exactly as many as you send, every
+time. The print panel now offers it directly whenever a job is over the threshold,
+rather than leaving it under Diagnostics for someone to find.
 
 **The vendor app does not do this.** Printing the same stock from it leaves the
 paper mid-label with no seek at all, so this is a firmware limit rather than a trick
