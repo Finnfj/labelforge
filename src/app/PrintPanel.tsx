@@ -332,18 +332,27 @@ export function PrintPanel({
               <label className="field">
                 <span>Speed</span>
                 <select
-                  value={settings.speed}
+                  value={settings.speed ?? 'off'}
                   onChange={(e) =>
-                    setSettings((s) => ({ ...s, speed: Number(e.target.value) as 0 | 1 | 2 }))
+                    setSettings((s) => ({
+                      ...s,
+                      speed:
+                        e.target.value === 'off'
+                          ? undefined
+                          : (Number(e.target.value) as 0 | 1 | 2),
+                    }))
                   }
                 >
+                  <option value="off">Don&rsquo;t send</option>
                   <option value={0}>Low</option>
                   <option value={1}>Medium</option>
                   <option value={2}>High</option>
                 </select>
               </label>
               <span className="hint">
-                The vendor app sends no speed command, so this may have no effect.
+                &ldquo;Don&rsquo;t send&rdquo; is the default, and makes a print byte-for-byte the
+                captured vendor sequence. The vendor app issues no speed command at all, and this
+                one comes from a part of the SDK whose other commands turned out not to exist.
               </span>
             </div>
 

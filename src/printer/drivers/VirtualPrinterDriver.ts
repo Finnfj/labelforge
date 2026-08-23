@@ -138,8 +138,13 @@ export class VirtualPrinterDriver implements PrinterDriver {
         })
         for (const { bytes, note } of framing.preamble) send(bytes, note)
 
-        // Chunk the raster exactly as the BLE driver will, so the byte stream
-        // recorded here is directly comparable to the real one.
+        // Chunk the raster at the same size the BLE driver uses. Not the same
+        // *boundaries*, though, and deliberately: the real driver chunks the
+        // whole job stream, so its commands arrive glued to raster chunks. That
+        // is unreadable in a log and means nothing to a printer that is not
+        // there, so this one keeps each command on its own line. The bytes are
+        // identical in order and content — both sides build from
+        // `printJobFraming`, and a test concatenates the two and compares them.
         const chunkSize = this.#capabilities?.chunkSize ?? DEFAULT_CHUNK_SIZE
         for (let offset = 0; offset < image.length; offset += chunkSize) {
           opts?.signal?.throwIfAborted()
@@ -163,7 +168,15 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-        for (const { bytes, note } of framing.trailer) send(bytes, note)
+        for (const { bytes, note } of [...framing.trailer, ...framing.epilogue]) send(bytes, note)
+
+        // The oversized-label workaround, shown here for the same reason the rest
+        // of the sequence is: so the byte log says what the printer would get.
+        // Both drivers ask cmd for the condition and the job, so neither can
+        // decide to send it on its own.
+        if (cmd.needsFollowUpSeek(image.length)) {
+          send(cmd.followUpSeekJob(framing, job.bitmap.widthDots), 'follow-up seek job')
+        }
       }
 
       this.#printouts.push({ job, wire, at: Date.now() })

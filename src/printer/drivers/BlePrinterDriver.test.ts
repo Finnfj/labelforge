@@ -3,8 +3,11 @@ import { BlePrinterDriver, IncompatiblePrinterError } from './BlePrinterDriver'
 import { MockTransport } from '../transport/MockTransport'
 import { encodeImage } from '../protocol/encodeImage'
 import { checkerboard } from '../diagnostics/testPatterns'
+import { createPackedBitmap } from '../../model/bitmap'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { CreditWindow } from '../protocol/CreditWindow'
+import { VirtualPrinterDriver } from './VirtualPrinterDriver'
+import { PaperType, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
 import { findProfile } from '../profiles'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
@@ -20,34 +23,123 @@ function identityResponder() {
     if (key === '10 ff 30 11') return text('AA:BB:CC:DD:EE:FF')
     if (key === '10 ff 50 f1') return Uint8Array.of(0x00, 0x5a) // 90
     if (key === '1f 20 00') return Uint8Array.of(0xff, 0x00)
+    // The end-of-job acknowledgement. A real printer sends this and the driver
+    // waits for it before anything else goes out; a mock that stays silent makes
+    // every test pay the timeout instead, and hides the ordering entirely.
+    if (key === '1f 11 50') return Uint8Array.of(0x4f, 0x4b)
     return undefined
   }
 }
 
+function concat(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let at = 0
+  for (const part of parts) {
+    out.set(part, at)
+    at += part.length
+  }
+  return out
+}
+
 /**
- * Split a job's writes into framing commands and raster chunks.
+ * How many times a command appears in the whole job stream.
  *
- * The raster is everything between `alignPaperStart` and the gap seek. Telling them
- * apart by length used to work and no longer does — `setPrintParams` is 10 bytes,
- * longer than a chunk of a tiny label — and prefix-matching fails too, because the
- * first raster chunk begins with the `1f 10` image opcode. Bracketing by position is
- * both exact and a free assertion that the boundaries are where they should be.
+ * Not `writes.filter(...)`: a command no longer occupies a transfer of its own,
+ * and can straddle two. Counting in the concatenated stream is what the printer
+ * would see.
+ */
+function occurrences(writes: Uint8Array[], command: string): number {
+  const haystack = hex(concat(writes))
+  let count = 0
+  for (let at = haystack.indexOf(command); at >= 0; at = haystack.indexOf(command, at + 1)) count++
+  return count
+}
+
+/**
+ * Take a job apart the way the printer's parser does.
+ *
+ * Write boundaries carry no meaning here and are not asserted on. The driver
+ * chunks the whole job — commands and raster together — so a command can and does
+ * straddle two transfers, exactly as the capture shows the vendor app doing. So
+ * the writes are concatenated first, and the raster is found by reading its own
+ * header rather than by guessing which transfer it landed in.
+ *
+ * Two earlier versions of this helper split on length and then on write position.
+ * Both encoded an assumption about chunking that the code has now outgrown twice;
+ * parsing the stream cannot go stale the same way.
  */
 function splitJob(writes: Uint8Array[]) {
-  const start = writes.findIndex((b) => hex(b) === '1f 11 51')
-  const end = writes.findIndex((b) => hex(b) === '1f 12 20 00')
-  expect(start, 'alignPaperStart missing').toBeGreaterThanOrEqual(0)
-  expect(end, 'gap seek missing or before the raster').toBeGreaterThan(start)
+  const stream = concat(writes)
+  const at = stream.findIndex((_, i) => stream[i] === 0x1f && stream[i + 1] === 0x10)
+  expect(at, 'no raster header in the stream').toBeGreaterThan(0)
+
+  const view = new DataView(stream.buffer, stream.byteOffset, stream.byteLength)
+  const payload = view.getUint32(at + 6)
+  const rasterEnd = at + 10 + payload
+  expect(rasterEnd, 'raster runs past the end of the stream').toBeLessThanOrEqual(stream.length)
+
   return {
-    raster: writes.slice(start + 1, end),
-    framing: [...writes.slice(0, start + 1), ...writes.slice(end)],
+    /** The `1F 10` command entire, header and payload. */
+    raster: stream.subarray(at, rasterEnd),
+    /** Everything either side of it, which is the framing and nothing else. */
+    framing: [
+      ...splitCommands(stream.subarray(0, at)),
+      ...splitCommands(stream.subarray(rasterEnd)),
+    ],
   }
 }
 
-async function connected(options?: { credits?: number }) {
+/**
+ * Cut a run of framing bytes back into individual commands.
+ *
+ * Only needed because the assertions read better command-by-command than as one
+ * long hex line. Every command in the framing is fixed-length and starts `1f`, so
+ * a table of lengths is enough — and an unknown opcode failing loudly here is the
+ * right outcome, since it would mean the framing grew something this test has
+ * never seen.
+ */
+function splitCommands(bytes: Uint8Array): string[] {
+  const LENGTHS: Record<string, number> = {
+    '1f 80': 4, // setPaperTypeSilent
+    '1f 70': 10, // setPrintParams
+    '1f 60': 4, // setSpeed
+    '1f c0': 4, // start / stopPrintJob
+    '1f 11': 3, // alignPaperStart / alignPaperEnd
+    '1f 12': 4, // locate
+  }
+  const out: string[] = []
+  for (let at = 0; at < bytes.length;) {
+    const key = hex(bytes.subarray(at, at + 2))
+    const length = LENGTHS[key]
+    expect(length, `unknown framing command ${key}`).toBeDefined()
+    out.push(hex(bytes.subarray(at, at + length)))
+    at += length
+  }
+  return out
+}
+
+/**
+ * A bitmap that does not compress, which is what the threshold is really about.
+ *
+ * A checkerboard of any size deflates to a few hundred bytes — 384 x 1200 comes to
+ * 409 — so it cannot stand in for a large job however tall it is. Dithered
+ * photographs are the real case: 48 x 640 of one measured 23,273 bytes on the wire
+ * against 30,720 raw. Deterministic, so the test does not drift.
+ */
+function noisyBitmap(widthDots: number, heightDots: number) {
+  const bm = createPackedBitmap(widthDots, heightDots)
+  let seed = 0x2545f491
+  for (let i = 0; i < bm.data.length; i++) {
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
+    bm.data[i] = (seed >>> 16) & 0xff
+  }
+  return bm
+}
+
+async function connected(options?: { credits?: number; doneTimeoutMs?: number }) {
   const transport = new MockTransport({ autoRespond: identityResponder() })
   if (options?.credits) transport.creditsPerWrite = options.credits
-  const driver = new BlePrinterDriver(transport)
+  const driver = new BlePrinterDriver(transport, { doneTimeoutMs: options?.doneTimeoutMs })
   await driver.connect()
   transport.reset()
   return { transport, driver }
@@ -178,10 +270,9 @@ describe('BlePrinterDriver', () => {
     // docs/PROTOCOL.md. The `1f 12 20 00` between the raster and stopPrintJob is
     // the sensor gap seek, and its position in the stream is load-bearing: sent
     // standalone the same command does nothing at all.
-    expect(splitJob(transport.writes).framing.map(hex)).toEqual([
+    expect(splitJob(transport.writes).framing).toEqual([
       '1f 80 02 20', //                      setPaperTypeSilent(gap)
       '1f 70 02 08 00 00 00 00 00 00', //    setPrintParams(density 8)
-      '1f 60 01 01', //                      setSpeed(medium) — not sent by the app
       '1f c0 01 00', //                      startPrintJob
       '1f 11 51', //                         alignPaperStart
       '1f 12 20 00', //                      locate(gap)
@@ -195,16 +286,118 @@ describe('BlePrinterDriver', () => {
     const bitmap = checkerboard(384, 64)
     await driver.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
 
-    const chunks = splitJob(transport.writes).raster
-    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(90)
+    for (const write of transport.writes) expect(write.length).toBeLessThanOrEqual(90)
+    expect(Array.from(splitJob(transport.writes).raster)).toEqual(Array.from(encodeImage(bitmap)))
+  })
 
-    const joined = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
-    let at = 0
-    for (const chunk of chunks) {
-      joined.set(chunk, at)
-      at += chunk.length
+  it('sends no byte of a job without a credit in hand', async () => {
+    // The bug this exists for, from a real wire log of an 80 mm label.
+    //
+    // A long raster drains the credit window and holds it at zero: the log shows
+    // 47 consecutive credit-then-chunk pairs, the driver blocking on each. The
+    // framing was written outside that loop, so the moment the last chunk went out
+    // three more transfers followed in 3 ms with nothing granted — into a printer
+    // whose next grant was 60 ms away. `writeValueWithoutResponse` does not tell
+    // you when that is thrown away. The first of the three was the gap seek, and
+    // the label came out unregistered.
+    //
+    // Short labels never reached that state, which is why it took an 80 mm one to
+    // find. The window here is deliberately small so any job is long enough.
+    const transport = new MockTransport({ autoRespond: identityResponder() })
+    const driver = new BlePrinterDriver(transport, { doneTimeoutMs: 5 })
+    await driver.connect()
+    transport.reset()
+    transport.openCreditWindow(2)
+
+    await driver.print({
+      bitmap: checkerboard(384, 400),
+      settings: { ...DEFAULT_PRINT_SETTINGS, copies: 2 },
+    })
+
+    expect(transport.blindWrites.map(hex)).toEqual([])
+  })
+
+  it('follows an oversized job with a small one carrying the gap seek', async () => {
+    // A P50S only honours the seek in a job it read before the motor started, and
+    // above ~18 KB it did not. Confirmed by experiment: the same design at 30 mm
+    // registers and at 80 mm does not. See docs/PROTOCOL.md.
+    // Credits flowing, so chunks pace at 5 ms rather than the creditless 30 —
+    // an over-threshold job is ~190 chunks and the difference is 5 s of test.
+    // The mock never sends the end-of-job OK, and the follow-up waits for it, so
+    // the wait has to be cut short — which keeps the timeout path under test too.
+    const { transport, driver } = await connected({ credits: 1, doneTimeoutMs: 5 })
+    const bitmap = noisyBitmap(384, 360)
+    expect(encodeImage(bitmap).length).toBeGreaterThan(SEEK_SAFE_JOB_BYTES)
+    await driver.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
+
+    // Two complete jobs, in order, each with its own seek.
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(2)
+    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(2)
+
+    // The second carries a raster, because a seek with nothing in front of it is
+    // documented as inert — and it is blank, so it costs 1 mm and a few bytes.
+    const stream = concat(transport.writes)
+    const second = stream.subarray(hex(stream).indexOf('1f 12 20 00') / 3 + 4)
+    expect(second.length).toBeLessThan(200)
+    expect(hex(second)).toContain('1f 10')
+  })
+
+  it('sends each follow-up only after the printer says it has finished', async () => {
+    // The bug the first hardware trial found. An 80 mm label takes ~8.5 s to print
+    // after the last byte lands, the wait was a flat 5 s, and the follow-up went
+    // out mid-print — queued behind the raster it exists to get past. What has to
+    // hold is the ordering, whatever the timings: OK, then the next job.
+    const { transport, driver } = await connected({ credits: 1 })
+    const order: string[] = []
+    const identity = identityResponder()
+    transport.autoRespond = (bytes) => {
+      const reply = identity(bytes)
+      if (hex(bytes) === '1f 11 50') order.push('epilogue')
+      if (reply && hex(reply) === '4f 4b') order.push('ok')
+      return reply
     }
-    expect(Array.from(joined)).toEqual(Array.from(encodeImage(bitmap)))
+    await driver.print({ bitmap: noisyBitmap(384, 360), settings: DEFAULT_PRINT_SETTINGS })
+
+    // One epilogue per job, each immediately acknowledged, never two in a row.
+    expect(order).toEqual(['epilogue', 'ok', 'epilogue', 'ok'])
+  }, 30_000)
+
+  it('leaves a normal-sized job alone', async () => {
+    const { transport, driver } = await connected()
+    await driver.print({ bitmap: checkerboard(384, 64), settings: DEFAULT_PRINT_SETTINGS })
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1)
+    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
+  })
+
+  it('emits the same bytes as the virtual printer, in the same order', async () => {
+    // Both build from cmd.printJobFraming, so this cannot drift — but only the
+    // *bytes* are shared. Transfer boundaries are not: the real driver chunks the
+    // whole stream and the virtual one keeps each command on its own line so the
+    // log stays readable. Comparing the concatenation is what the claim in the UI
+    // actually means.
+    const { transport, driver } = await connected()
+    const bitmap = checkerboard(384, 64)
+    await driver.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
+
+    const virtual = new VirtualPrinterDriver(Infinity)
+    await virtual.connect()
+    await virtual.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
+
+    expect(hex(concat(transport.writes))).toBe(hex(concat([...virtual.printouts[0].wire])))
+  })
+
+  it('seeks the boundary its paper type actually has', async () => {
+    // The trailer used to hard-code gap mode. On continuous stock that told the
+    // printer "continuous" and then asked it to find a gap there is none of.
+    const { transport, driver } = await connected()
+    await driver.print({
+      bitmap: checkerboard(64, 16),
+      settings: { ...DEFAULT_PRINT_SETTINGS, paperType: PaperType.Continuous },
+    })
+    const framing = splitJob(transport.writes).framing
+    expect(framing).toContain('1f 80 02 10') // setPaperTypeSilent(continuous)
+    expect(framing).toContain('1f 12 10 00') // locate(none) — matching
+    expect(framing).not.toContain('1f 12 20 00')
   })
 
   it('repeats the job framing, and the gap seek, per copy', async () => {
@@ -220,9 +413,9 @@ describe('BlePrinterDriver', () => {
       bitmap: checkerboard(64, 16),
       settings: { ...DEFAULT_PRINT_SETTINGS, copies: 3 },
     })
-    expect(transport.writes.filter((b) => hex(b) === '1f c0 01 00')).toHaveLength(3)
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(3)
     // Each copy has to seek, or only the first lands on a label.
-    expect(transport.writes.filter((b) => hex(b) === '1f 12 20 00')).toHaveLength(3)
+    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(3)
   })
 
   it('carries on to the next copy when the printer sends its end-of-job OK', async () => {
@@ -246,7 +439,7 @@ describe('BlePrinterDriver', () => {
       bitmap: checkerboard(64, 16),
       settings: { ...DEFAULT_PRINT_SETTINGS, copies: 2 },
     })
-    expect(transport.writes.filter((b) => hex(b) === '1f c0 01 00')).toHaveLength(2)
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(2)
   })
 
   it('reports progress that ends complete and never overshoots', async () => {
@@ -278,11 +471,18 @@ describe('BlePrinterDriver', () => {
   })
 
   it('surfaces every byte for the diagnostics log', async () => {
-    const { driver } = await connected()
-    const wire: Array<{ dir: string; length: number }> = []
-    driver.on('wire', (w) => wire.push({ dir: w.dir, length: w.bytes.length }))
+    // Counting transfers used to stand in for this and no longer can: a small
+    // label is now one chunk plus the epilogue, so a count would pass while
+    // saying nothing. Compare the bytes instead, which is what the log is for —
+    // a byte missing from it is a byte nobody can diagnose.
+    const { transport, driver } = await connected()
+    const logged: Uint8Array[] = []
+    driver.on('wire', (w) => {
+      if (w.dir === 'out') logged.push(w.bytes)
+    })
     await driver.print({ bitmap: checkerboard(64, 16), settings: DEFAULT_PRINT_SETTINGS })
-    expect(wire.filter((w) => w.dir === 'out').length).toBeGreaterThan(5)
+    expect(hex(concat(logged))).toBe(hex(concat(transport.writes)))
+    expect(splitJob(logged).framing).toContain('1f 12 20 00')
   })
 
   it('refuses to print while disconnected', async () => {

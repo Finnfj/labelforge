@@ -48,7 +48,18 @@ export interface PrinterStatus {
 
 export interface PrintSettings {
   density: number
-  speed: SpeedValue
+  /**
+   * Motor speed, or undefined to say nothing about it.
+   *
+   * Undefined by default, and that is the whole point: `1F 60` is the only
+   * command this app sends that the vendor app does not, and it came from the
+   * tidied SDK facade whose other inventions are all silent on a P50S. With it
+   * omitted, a print is byte-for-byte the captured sequence.
+   *
+   * Kept selectable because it may well work, and because a setting that can be
+   * turned on is how you find out. See docs/PROTOCOL.md.
+   */
+  speed?: SpeedValue
   paperType: PaperTypeValue
   copies: number
 }
@@ -121,7 +132,7 @@ export interface PrinterDriver {
 
 export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   density: 8,
-  speed: 1,
+  // Deliberately absent — see PrintSettings.speed.
   paperType: 0x20, // gap labels
   copies: 1,
 }

@@ -46,7 +46,6 @@ describe('VirtualPrinterDriver', () => {
     expect(splitJob(printout.wire).framing).toEqual([
       '1f 80 02 20', //                     setPaperTypeSilent(gap), mode 02
       '1f 70 02 08 00 00 00 00 00 00', //   setPrintParams(8)
-      '1f 60 01 01', //                     setSpeed(medium)
       '1f c0 01 00', //                     startPrintJob
       '1f 11 51', //                        alignPaperStart
       '1f 12 20 00', //                     locate(Gap) — the alignment fix

@@ -1,7 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import * as cmd from '../protocol/commands'
-import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
+import { DEFAULT_CHUNK_SIZE, printDurationMs } from '../protocol/constants'
 import { DEFAULT_PROFILE, matchProfile, type PrinterProfile } from '../profiles'
 import { CreditWindow } from '../protocol/CreditWindow'
 import {
@@ -302,7 +302,11 @@ export class BlePrinterDriver implements PrinterDriver {
     try {
       const image = encodeImage(job.bitmap)
       const framing = cmd.printJobFraming(job.settings)
-      const total = image.length * job.settings.copies
+      // Commands and raster are one stream, chunked without regard for where a
+      // command begins — the vendor app does exactly this, and it is the only way
+      // every byte gets sent under flow control. See cmd.printJobStream.
+      const stream = cmd.printJobStream(framing, image)
+      const total = stream.length * job.settings.copies
       let sent = 0
 
       const progress = (phase: PrintProgressPhase, copy: number) =>
@@ -314,6 +318,20 @@ export class BlePrinterDriver implements PrinterDriver {
           copies: job.settings.copies,
         })
 
+      // Too big for the printer to read before it starts printing, so its own gap
+      // seek will go unread. A second, tiny job carries one that will not.
+      // Too big for the printer to read before it starts printing, so its own gap
+      // seek goes unread. A second, tiny job carries one that does not.
+      const seekJob = cmd.needsFollowUpSeek(image.length)
+        ? cmd.followUpSeekJob(framing, job.bitmap.widthDots)
+        : null
+
+      // How long the printer will still be working after the last byte lands.
+      // The fixed 5 s this used to wait was shorter than an 80 mm label takes, so
+      // the follow-up went out mid-print — queued behind the very raster it
+      // exists to get past.
+      const printMs = printDurationMs(job.bitmap.heightDots)
+
       progress('prepare', 0)
 
       for (let copy = 1; copy <= job.settings.copies; copy++) {
@@ -323,23 +341,21 @@ export class BlePrinterDriver implements PrinterDriver {
         // Configuration is re-sent per copy, inside the job, exactly as the vendor
         // app does it. The sequence itself lives in cmd.printJobFraming, shared
         // with the virtual printer so the two cannot drift.
-        for (const { bytes } of framing.preamble) await this.#transport.write(bytes)
-
-        for (let offset = 0; offset < image.length; offset += this.#chunkSize) {
-          opts.signal?.throwIfAborted()
-          const chunk = image.subarray(offset, Math.min(offset + this.#chunkSize, image.length))
-
-          // Wait for room before writing, not after: the buffer we would
-          // overrun is on the far side of the link.
-          await this.#credits.acquire({ signal: opts.signal })
-          await this.#transport.write(chunk)
-          sent += chunk.length
+        await this.#sendJob(stream, framing.epilogue, opts.signal, (written) => {
+          sent += written
           progress('transfer', copy)
-          await delay(this.#credits.delayMs, opts.signal)
-        }
+        })
 
-        progress('feed', copy)
-        for (const { bytes } of framing.trailer) await this.#transport.write(bytes)
+        if (seekJob) {
+          // Strictly after the label is out. Sent any earlier this is one more
+          // thing queued behind the raster the printer is still consuming, which
+          // is the whole problem being worked around — and it is what the first
+          // hardware trial did, because the wait was a flat 5 s against a label
+          // that needed 8.5.
+          progress('feed', copy)
+          await this.#waitForDone(opts.signal, printMs)
+          await this.#sendJob(seekJob, framing.epilogue, opts.signal)
+        }
 
         // The printer answers "OK" on the status channel a fraction of a second
         // after the job ends. Waiting for it keeps a multi-copy run from stacking
@@ -354,6 +370,39 @@ export class BlePrinterDriver implements PrinterDriver {
     } catch (error) {
       this.#setState('connected')
       throw error
+    }
+  }
+
+  /**
+   * Write one whole job: the stream in credited chunks, then the epilogue.
+   *
+   * Both the label and the follow-up seek go through here, so there is exactly
+   * one place where bytes reach the transport during a print and exactly one
+   * definition of what "under flow control" means.
+   */
+  async #sendJob(
+    stream: Uint8Array,
+    epilogue: readonly cmd.FramedCommand[],
+    signal?: AbortSignal,
+    onWritten?: (bytes: number) => void,
+  ): Promise<void> {
+    for (let offset = 0; offset < stream.length; offset += this.#chunkSize) {
+      signal?.throwIfAborted()
+      const chunk = stream.subarray(offset, Math.min(offset + this.#chunkSize, stream.length))
+
+      // Wait for room before writing, not after: the buffer we would overrun is
+      // on the far side of the link.
+      await this.#credits.acquire({ signal })
+      await this.#transport.write(chunk)
+      onWritten?.(chunk.length)
+      await delay(this.#credits.delayMs, signal)
+    }
+
+    // Not part of the job stream — the capture shows it as its own transfer,
+    // after the rest has gone. Credited like everything else all the same.
+    for (const { bytes } of epilogue) {
+      await this.#credits.acquire({ signal })
+      await this.#transport.write(bytes)
     }
   }
 
@@ -390,13 +439,16 @@ export class BlePrinterDriver implements PrinterDriver {
    * and refusing to print a second copy because an undocumented notification did
    * not arrive would be worse than pressing on.
    */
-  async #waitForDone(signal?: AbortSignal): Promise<boolean> {
+  async #waitForDone(signal?: AbortSignal, timeoutMs?: number): Promise<boolean> {
     signal?.throwIfAborted()
     return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        if (this.#doneWaiter === finish) this.#doneWaiter = null
-        resolve(false)
-      }, this.#doneTimeoutMs)
+      const timer = setTimeout(
+        () => {
+          if (this.#doneWaiter === finish) this.#doneWaiter = null
+          resolve(false)
+        },
+        Math.max(this.#doneTimeoutMs, timeoutMs ?? 0),
+      )
       const finish = () => {
         clearTimeout(timer)
         resolve(true)

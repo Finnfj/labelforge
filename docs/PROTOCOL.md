@@ -341,20 +341,19 @@ sequenceDiagram
 
     rect rgb(245, 243, 236)
     Note over A,P: Print job — repeated verbatim per copy
+    rect rgb(236, 240, 233)
+    Note over A,P: One stream, chunked at 90 bytes over ff02 — see below
     A->>P: 1F 80 02 20 setPaperTypeSilent(gap)
     A->>P: 1F 70 02 0A 00×6 setPrintParams(density)
     A->>P: 1F C0 01 00 startPrintJob
     A->>P: 1F 11 51 alignPaperStart
-
-    loop 90-byte chunks over ff02
-        A->>P: 1F 10 … zlib raster payload
-        P-->>A: ff03: 01 01 — one credit back per write
-    end
-    Note right of A: ~5 ms between chunks while credits<br/>flow, ~30 ms if ff03 never fires.
-
+    A->>P: 1F 10 … zlib raster payload
     A->>P: 1F 12 20 00 locate(gap)
-    Note right of A: The alignment fix. Inert anywhere else —<br/>it only acts after a raster payload.
     A->>P: 1F C0 01 01 stopPrintJob
+    P-->>A: ff03: 01 01 — one credit back per chunk
+    end
+    Note right of A: Chunk boundaries fall wherever they fall.<br/>~5 ms between them while credits flow, ~30 ms if not.
+
     A->>P: 1F 11 50 alignPaperEnd
     P-->>A: ff01: 4F 4B ("OK"), ~300 ms later
     Note right of A: Waiting for this before the next copy<br/>is what stops multi-copy runs stacking.
@@ -369,6 +368,9 @@ sequenceDiagram
 1F 11 51                           alignPaperStart
 1F 10 00 28 00 F0 00 00 04 EF …    raster: 40 bytes/row, 240 rows, 1263 bytes zlib
 1F 12 20 00                        locate(gap)  <-- the alignment fix
+                                   ^ mode follows the paper type: 10 continuous,
+                                     20 gap, 30 black mark — the same values
+                                     setPaperTypeSilent takes
 1F C0 01 01                        stopPrintjob
 1F 11 50                           alignPaperEnd
 ```
@@ -386,6 +388,123 @@ frame was already known not to be a credit grant; now it has a meaning.
 We still chunk at 90 bytes, which is proven on this hardware, because Web Bluetooth
 neither exposes nor lets you request the MTU — so a 217-byte write is a guess that
 fails mid-raster if Chrome negotiated less. Throughput has not been a problem.
+
+**"Undifferentiated" is the load-bearing word, and it cost a bug to learn it.** The
+capture's six 217-byte writes total 1302 bytes, which is 21 + 1273 + 8 — preamble,
+raster command, then `1F 12 20 00` and `1F C0 01 01` arriving glued to the tail of
+the last raster chunk. There is no transfer boundary anywhere in a job except
+before `1F 11 50`. This is not cosmetic:
+
+- The printer reads a byte stream off a UART. Transfer boundaries mean nothing to
+  it.
+- They are not free, either. Only the chunk loop waits for credits, so a command
+  written outside it is written blind, and `writeValueWithoutResponse` reports
+  nothing when the far side has no room.
+
+This app used to write the framing as its own transfers. On short labels the window
+had slack and it worked. On an 80 mm label it does not: a wire log of one shows the
+window pinned at zero for the whole tail of the raster — 47 consecutive
+credit-then-chunk pairs, the driver blocking on each — and then three uncredited
+transfers in 3 ms, 60 ms before the printer granted anything again. The first of the
+three was the gap seek. The label printed and did not register.
+
+So `printJobStream()` in `src/printer/protocol/commands.ts` concatenates the job the
+way the capture shows it, and the driver chunks _that_. Every byte of a print now
+goes out under flow control.
+
+### The gap seek has a job-size limit — confirmed
+
+**Tier 2, confirmed on a P50S (V2.0.00) by controlled experiment.** The captured
+sequence registers a label reliably right up until the job stops fitting in the
+printer's input buffer, and then stops working entirely. Two wire logs of the same
+design at two heights, everything else held constant:
+
+|                          | 30 mm     | 80 mm          |
+| ------------------------ | --------- | -------------- |
+| raster                   | 48 x 240  | 48 x 640       |
+| payload                  | 8,672 B   | 23,273 B       |
+| whole job                | 8,714 B   | 23,315 B       |
+| transfer                 | 932 ms    | 6,316 ms       |
+| credits throttled        | never     | after 18,360 B |
+| `4F 4B` after last write | 424 ms    | 8,492 ms       |
+| **gap seek**             | **works** | **does not**   |
+
+Both jobs are byte-for-byte the captured vendor sequence — same preamble, same
+`1F 12 20 00` between raster and `1F C0 01 01`, same `1F 11 50` as its own transfer,
+every byte sent under flow control. The only difference is the row count.
+
+The credit trace is what explains it. On the short job credits come back faster than
+we can spend them and the window never empties: the printer takes the whole thing,
+_then_ prints. On the long one they arrive every ~10 ms for the first 18 KB and then
+drop to ~75 ms — the buffer is full and the printer is granting only as fast as it
+prints. It has started the motor before reading the end of the job, so
+`1F 12 20 00` is still sitting in the unread remainder when the label comes out.
+The 8.5 s to `4F 4B` is the rest of the label printing at 43 rows/s.
+
+So the gap seek is not an action the printer performs when it reaches the command.
+It is closer to a property of a job the printer has read in full, and a job it has
+to stream is not one of those.
+
+Things this rules out, all of which looked plausible first:
+
+- **The header.** `1F 10 00 30 02 80` is 48 bytes/row and 640 rows. A one-byte
+  height field would have explained a correct print with broken end-of-label logic;
+  golden `checker-384x1200` from the vendor SDK encodes 1200 rows as `04 B0`, so the
+  field really is 16-bit big-endian and ours is right.
+- **Anything in the byte stream.** There is nothing left to correct in it.
+- **Flow control.** Both jobs are fully credited, trailer included.
+
+`SEEK_SAFE_JOB_BYTES` in `src/printer/protocol/constants.ts` carries the limit, set
+to 16 KB rather than the observed 18,360 B because the throttle point is where the
+buffer was already full and nothing says the figure holds at a different battery
+level. Erring low costs an unnecessary 52-byte follow-up; erring high costs a label.
+
+It is a threshold, not a ceiling — nothing about a large label is refused or warned
+about, because the next section is the remedy and it is automatic.
+
+### The follow-up seek job — confirmed working
+
+The seek is honoured by any job the printer reads in full, so the fix is to send one
+of those. After an oversized label is out the driver sends a second, ordinary job
+whose raster is 1 mm of blank:
+
+```
+1F 80 02 20  1F 70 02 08 00×6  1F C0 01 00  1F 11 51
+1F 10 00 30 00 08 00 00 00 0D …13 bytes of zlib…
+1F 12 20 00  1F C0 01 01                        then  1F 11 50
+```
+
+52 bytes. The blank raster is there because a seek with nothing in front of it is
+inert; blank rows deflate to almost nothing, so this costs one millimetre of paper
+and a single BLE write, and even that millimetre is absorbed into the travel to the
+gap. `followUpSeekJob()` builds it from the same `printJobFraming()` as the label,
+so it is the confirmed-working shape by construction rather than by resemblance.
+
+**Timing is the whole of it.** The first trial sent the follow-up on a flat 5 s
+timer against a label that needed 8.5 s, so it queued behind the raster it exists to
+get past and the paper stopped short. The wire log names the cause exactly: the main
+job's last byte at 11,588 ms, the follow-up at 16,597 ms — 5,009 ms later, which is
+a timeout expiring rather than an acknowledgement arriving, and no `4F 4B` anywhere
+in the log.
+
+That looks like a distance-limited seek and is not one: a 30 mm label on the same
+80 mm roll seeks the whole remaining ~50 mm and lands correctly. The seek travels as
+far as it needs to. It simply has to be issued to a printer that has finished.
+
+So the wait now comes from the row count and `printDurationMs()` rather than a
+constant, and the follow-up goes out on `4F 4B`. **Confirmed on hardware: an 80 mm
+label registers.**
+
+One pass, not several. Repeating was the obvious hedge while the travel looked
+bounded, and it is the wrong instinct now that the seek is known to reach: a pass
+that finds the gap would send the next one on to the label after it, and there is
+nothing to stop on — no status query on this firmware answers, and `4F 4B` says a
+job was processed, not where the paper stopped.
+
+**The vendor app does not do this.** Printing the same stock from it leaves the
+paper mid-label with no seek at all, so this is a firmware limit rather than a trick
+the vendor knows, and the behaviour here is better than the reference implementation
+rather than catching up to it.
 
 ## Geometry
 

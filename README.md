@@ -35,12 +35,21 @@ out in a longer form than the SDK documents. `scripts/parse-btsnoop.mjs` decodes
 capture against the known command set, and `docs/PROTOCOL.md` records both the findings
 and the reasoning that failed.
 
+Tall labels needed one more thing. The printer honours that seek only in a job it has
+read in full, and it starts printing once its ~18 KB buffer fills — so on an 80 mm
+photo label the seek is still unread when the label comes out, and the roll stops
+mid-label. The vendor app has the same problem and does nothing about it. LabelForge
+follows an oversized job with a 52-byte one carrying nothing but a millimetre of blank
+raster and the same seek, sent once the printer acknowledges it has finished. Tall
+labels register.
+
 Working today:
 
 - Web Bluetooth connection, with identity and status queries, credit-based flow
   control, chunked transfer, progress and cancellation
 - The vendor app's exact print sequence, including the sensor gap seek, so labels
-  self-register
+  self-register — at any label height, which the vendor app itself manages only on
+  short stock
 - Label documents in millimetres, with stock presets and gap/continuous paper
 - Text, rectangles, ellipses and lines
 - Three bundled typefaces chosen for 203 dpi — Fira Sans, Archivo Narrow and
