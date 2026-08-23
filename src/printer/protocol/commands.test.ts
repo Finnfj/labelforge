@@ -47,6 +47,19 @@ describe('printJobFraming', () => {
     ).toContain('1f 60 01 02')
   })
 
+  it('leaves the seek out when the job is only moving paper', () => {
+    // The diagnostics feed prints blank rows to advance a measured distance. With
+    // the seek in the trailer it fed the requested 2 mm and then went to the gap,
+    // which is not a feed — and makes stepping the paper to find the gap
+    // impossible, which is the tool's only purpose.
+    const trailer = printJobFraming({
+      paperType: PaperType.Gap,
+      density: 8,
+      seekGap: false,
+    }).trailer.map((c) => hex(c.bytes))
+    expect(trailer).toEqual(['1f c0 01 01'])
+  })
+
   it('seeks the boundary the loaded stock actually has', () => {
     // Gap mode used to be hard-coded here, which told a printer set to continuous
     // to go and find a gap.

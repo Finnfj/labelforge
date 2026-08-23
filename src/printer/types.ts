@@ -63,6 +63,17 @@ export interface PrintSettings {
   paperType: PaperTypeValue
   copies: number
   /**
+   * Seek the label boundary at the end of the job.
+   *
+   * On for a label, which is the captured vendor sequence and what keeps
+   * successive labels registered. Off for anything printed to move paper a
+   * measured distance — the diagnostics feed, whose whole purpose is to advance
+   * by exactly the millimetres asked for. That tool used to send the full
+   * sequence and so fed 2 mm and then sought the gap, which is not a feed and
+   * makes stepping the paper to find the gap impossible.
+   */
+  seekGap?: boolean
+  /**
    * Register the roll after a label too large to do it itself.
    *
    * A P50S honours a job's own gap seek only when it read the whole job before

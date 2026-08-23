@@ -232,6 +232,7 @@ export function printJobFraming(settings: {
   paperType: PaperTypeValue
   density: number
   speed?: SpeedValue
+  seekGap?: boolean
 }): PrintJobFraming {
   return {
     preamble: [
@@ -253,7 +254,9 @@ export function printJobFraming(settings: {
       // label boundary with the optical sensor once the raster is in. It must
       // come after the payload and before stopPrintJob — issued standalone it
       // does nothing, which is why it looked inert for so long.
-      { bytes: locate(locateModeFor(settings.paperType)), note: 'locate' },
+      ...(settings.seekGap === false
+        ? []
+        : [{ bytes: locate(locateModeFor(settings.paperType)), note: 'locate' }]),
       { bytes: stopPrintJob(), note: 'stopPrintJob' },
     ],
     epilogue: [{ bytes: alignPaperEnd(), note: 'alignPaperEnd' }],

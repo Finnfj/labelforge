@@ -462,6 +462,55 @@ level. Erring low costs an unnecessary 52-byte follow-up; erring high costs a la
 It is a threshold, not a ceiling — nothing about a large label is refused or warned
 about, because the next section is the remedy and it is automatic.
 
+### What `1F 11 51` and `1F 11 50` appear to be — [unconfirmed]
+
+Named alignPaperStart and alignPaperEnd here since the SDK, and never isolated.
+Three observations that made no sense separately fit one reading: **`1F 11 50`
+advances the paper to a tear-off position and `1F 11 51` retracts it again before
+printing.** Standard behaviour for a label printer with a tear bar downstream of
+the head, and about 20 mm of travel on a P50S.
+
+- A follow-up seek that ended "through the gap and about 20 mm into the next
+  label" was not overshooting. It found the gap, and then `1F 11 50` advanced to
+  the tear bar. That is where the paper is supposed to end up.
+- A follow-up seek on a registered roll took a whole blank label. Retract 20 mm
+  from the tear position lands at the gap; the 1 mm of blank raster then puts the
+  paper just past it; the seek has nowhere to stop before the next gap, a full
+  pitch away.
+- A second consecutive print "fed some of the label back into the printer before
+  printing". That is the retract, working as intended — it only looked wrong
+  because the paper was not at the tear position to begin with.
+
+If this is right, the 1 mm blank raster is what breaks the follow-up on a
+registered roll, and a follow-up job without `1F 11 51`/`1F 11 50` would be a pure
+seek from wherever the paper is. That is worth trying, but it has not been, and
+the current shape is confirmed to work on the roll it exists for — an unregistered
+one. Changing it on the strength of a model that is itself unconfirmed would trade
+a known good case for a plausible one.
+
+The reading is testable directly: `1F 11 50` on its own should move the paper
+about 20 mm, and `1F 11 51` should pull it back. Neither has been sent alone.
+
+### The diagnostics feed used to seek
+
+`Feed by printing blank` builds a real print job, and the job trailer carries the
+gap seek — so asking for 2 mm fed 2 mm and then went to the boundary. The tool
+exists to step the paper a measured distance and read the millimetres off, which
+that makes impossible. `PrintSettings.seekGap` leaves the seek out for jobs whose
+purpose is moving paper rather than printing a label.
+
+Worth noting what the same log confirms in passing: that 44-byte job's seek was
+honoured, first time. Every small job's seek has been.
+
+### Battery
+
+`10 FF 50 F1` answers `00 <percent>`. A run where a long label printed at a third
+of the usual rate and stopped part-way through reported `00 00`, and nothing in
+the UI drew attention to it. A thermal head takes its heat from the battery, so a
+flat one is the first thing to rule out when a print is slow or truncated — the
+connection panel now says so below 20%. `00 00` seems to mean charging as well as
+empty; nothing distinguishes them.
+
 ### The follow-up seek job — confirmed working
 
 The seek is honoured by any job the printer reads in full, so the fix is to send one

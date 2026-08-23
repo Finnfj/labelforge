@@ -303,7 +303,10 @@ export function DiagnosticsPanel({
                 run(`Feed ${feedMm} mm by printing blank`, () =>
                   connection.driver.print({
                     bitmap: blankLabel(headWidth, DOTS_PER_MM * feedMm),
-                    settings: DEFAULT_PRINT_SETTINGS,
+                    // No gap seek. With one this fed the requested millimetres and
+                    // then went looking for the boundary, which is not a feed and
+                    // defeats the point of stepping the paper to find it.
+                    settings: { ...DEFAULT_PRINT_SETTINGS, seekGap: false },
                   }),
                 )
               }
@@ -315,9 +318,9 @@ export function DiagnosticsPanel({
             <strong>Feed by printing blank</strong> is the one that works. Every dedicated motion
             command on this firmware is acknowledged and then ignored, but a print job does move
             paper — so an all-white raster of the requested height advances the paper by exactly
-            that much and fires no dots. It also goes through whatever gap handling the print
-            sequence does, which is more than the calibration commands manage. Use it to step the
-            paper until the gap sits where you want it, then read the millimetres off.
+            that much and fires no dots. The gap seek is left out of this one, so it advances what
+            you ask and no more. Use it to step the paper until the gap sits where you want it, then
+            read the millimetres off.
           </p>
           <p className="warn">
             <strong>Calibrate label gap does not work on a P50S.</strong> It runs the vendor

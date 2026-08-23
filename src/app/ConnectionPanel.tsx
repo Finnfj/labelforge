@@ -4,6 +4,17 @@ import { REPO_URL } from './links'
 import type { DiagnosticFlags } from './useDiagnosticFlags'
 import type { PrinterConnection } from './usePrinter'
 
+/**
+ * Below this, say something.
+ *
+ * Not a threshold the printer reports or agrees with — it does not expose one —
+ * just the point at which "the label came out wrong" is worth suspecting the
+ * power before the protocol. 0 is included deliberately: the reply is `00 00`
+ * both when flat and, apparently, while charging, and either way it is the first
+ * thing to rule out.
+ */
+const LOW_BATTERY_PERCENT = 20
+
 const FAULT_TEXT: Record<string, string> = {
   none: 'Ready',
   'no-paper': 'Out of paper',
@@ -121,6 +132,21 @@ export function ConnectionPanel({
           )}
         </div>
       )}
+
+      {connected &&
+        connection.status?.batteryPercent != null &&
+        connection.status.batteryPercent <= LOW_BATTERY_PERCENT && (
+          <p className="warn">
+            <strong>
+              The printer reports {connection.status.batteryPercent}% battery
+              {connection.status.batteryPercent === 0 ? ', or is on charge' : ''}.
+            </strong>{' '}
+            A thermal head draws its heat from that, so a low one prints slowly and can stop
+            part-way through a long label without saying why. A run that behaved exactly like that
+            reported 0% here and nothing pointed at it, which is the only reason this notice exists.
+            Charge it before blaming the label.
+          </p>
+        )}
 
       {connected && connection.capabilities?.support === 'unverified' && (
         <p className="warn">
