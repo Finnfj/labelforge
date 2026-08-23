@@ -38,9 +38,14 @@ export function findPreset(id: string): StockPreset | undefined {
 /**
  * Widest label the head can physically cover, in mm.
  *
- * With the measured 400-dot head this is 50 mm, so the 50 mm presets fit exactly
- * rather than triggering the clip warning they used to under the vendor SDK's
- * mistaken 384.
+ * 384 dots is 48 mm, so the 50 mm presets **do not** fit: the outer 2 mm falls
+ * off the right of the head and the print panel says so. That is correct, and
+ * the presets stay, because 50 mm stock exists and is worth designing for — you
+ * simply cannot ink the last 2 mm of it.
+ *
+ * This comment used to claim a 400-dot head and that 50 mm fitted exactly. That
+ * was the reading the edge-frame pattern later disproved; see
+ * DEFAULT_HEAD_WIDTH_DOTS, which was corrected while this was left behind.
  */
 export function maxLabelWidthMm(headWidthDots = DEFAULT_HEAD_WIDTH_DOTS): number {
   return dotsToMm(headWidthDots)
