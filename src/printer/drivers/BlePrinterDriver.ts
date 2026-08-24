@@ -12,6 +12,7 @@ import {
   faultFromFlags,
 } from '../protocol/responses'
 import { encodeImage } from '../protocol/encodeImage'
+import { planSeekableBands } from '../protocol/splitJob'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -313,13 +314,26 @@ export class BlePrinterDriver implements PrinterDriver {
     this.#donePending = false
 
     try {
+      // One band unless splitting is asked for and the label needs it, so the
+      // ordinary path is the same code with a single-element array.
+      const bands =
+        job.settings.splitForSeek === true ? planSeekableBands(job.bitmap) : [job.bitmap]
       const image = encodeImage(job.bitmap)
       const framing = cmd.printJobFraming(job.settings)
-      // Commands and raster are one stream, chunked without regard for where a
-      // command begins — the vendor app does exactly this, and it is the only way
-      // every byte gets sent under flow control. See cmd.printJobStream.
-      const stream = cmd.printJobStream(framing, image)
-      const total = stream.length * job.settings.copies
+      // Commands and raster are one stream per band, chunked without regard for
+      // where a command begins — the vendor app does exactly this, and it is the
+      // only way every byte goes out under flow control. See cmd.printJobStream.
+      const streams = bands.map((band, i) =>
+        cmd.printJobStream(
+          cmd.printJobFraming({
+            ...job.settings,
+            alignStart: i === 0,
+            seekGap: i === bands.length - 1,
+          }),
+          bands.length === 1 ? image : encodeImage(band),
+        ),
+      )
+      const total = streams.reduce((n, s) => n + s.length, 0) * job.settings.copies
       let sent = 0
 
       const progress = (phase: PrintProgressPhase, copy: number) =>
@@ -336,7 +350,9 @@ export class BlePrinterDriver implements PrinterDriver {
       // Too big for the printer to read before it starts printing, so its own gap
       // seek goes unread. A second, tiny job carries one that does not.
       const seekJob =
-        job.settings.followUpSeek !== false && cmd.needsFollowUpSeek(image.length)
+        bands.length === 1 &&
+        job.settings.followUpSeek !== false &&
+        cmd.needsFollowUpSeek(image.length)
           ? cmd.followUpSeekJob(framing, job.bitmap.widthDots)
           : null
 
@@ -355,14 +371,27 @@ export class BlePrinterDriver implements PrinterDriver {
         // Configuration is re-sent per copy, inside the job, exactly as the vendor
         // app does it. The sequence itself lives in cmd.printJobFraming, shared
         // with the virtual printer so the two cannot drift.
-        // No epilogue when a follow-up is coming: `alignPaperEnd` advances to the
-        // tear-off position, and doing that here means the paper walks out past the
-        // boundary and back before the seek runs. One label is one print, so the
-        // tear advance happens once, on whichever job ends it.
-        await this.#sendJob(stream, seekJob ? [] : framing.epilogue, opts.signal, (written) => {
-          sent += written
-          progress('transfer', copy)
-        })
+        // One label is one print, however many jobs it takes. Only the first band
+        // retracts, only the last seeks, and the tear-off advance happens once at
+        // the very end — sending it between bands would walk the paper out to the
+        // tear position in the middle of the image.
+        //
+        // The bands go out back-to-back with no wait, which is the point: the last
+        // one and its seek are in the printer's buffer well before the head reaches
+        // them, which is the condition a single oversized job cannot meet.
+        for (let band = 0; band < streams.length; band++) {
+          opts.signal?.throwIfAborted()
+          const last = band === streams.length - 1
+          await this.#sendJob(
+            streams[band],
+            last && !seekJob ? framing.epilogue : [],
+            opts.signal,
+            (written) => {
+              sent += written
+              progress('transfer', copy)
+            },
+          )
+        }
 
         // The printer is still printing — a full-height label for ten seconds
         // after its last byte. Waiting here is what makes `done` mean done, and

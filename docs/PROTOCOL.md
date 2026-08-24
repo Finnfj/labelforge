@@ -512,8 +512,38 @@ If that is right, no separate job can ever seek correctly, because the only rast
 that would work is a full label of blank. Untested, and it would cost a label to
 test.
 
-Which leaves the size of the label job itself as the thing to attack, and that is
-what the dither section above is for.
+Which leaves the size of the label _job_ as the thing to attack. The dither section
+above does that by making the raster compress; splitting does it without touching
+the picture at all.
+
+### Splitting one label across several jobs — implemented, untested on hardware
+
+`planSeekableBands()` cuts the raster into the fewest horizontal bands that each
+encode under `SEEK_SAFE_JOB_BYTES`, and the driver sends them back-to-back as
+consecutive jobs: only the first retracts, only the last seeks, and the tear-off
+advance happens once at the very end. A 50 x 80 photograph at full-strength
+diffusion comes out as two bands, so one seam.
+
+It is a different experiment from the follow-up job for two reasons, either of which
+would be enough on its own:
+
+- **The seek is in the buffer before the raster ends.** The bands go out with no
+  wait between them, so the printer has read the last band and its seek long before
+  the head reaches them. The follow-up job could never manage that — it is sent only
+  once `4F 4B` says the printer has stopped, and a printer that has stopped is in a
+  different state from one still working.
+- **Nothing resets between the bands.** If the printer counts how far it has printed
+  within the current label — the reading that best fits the follow-up behaving as a
+  form feed — then an unbroken run of bands is its best chance of counting the whole
+  label rather than the millimetre in front of the seek.
+
+The risk is a visible line at a seam, if the printer stops the head between jobs.
+That is why the planner minimises the number of bands rather than using a fixed
+size, and why the option is off by default.
+
+This is the only route to a registered tall label that costs nothing in the
+picture, which is what makes it worth the experiment even though the model behind
+it is uncertain.
 
 **An earlier repair did not work, and the failure is informative.** If the
 retract lands a registered roll on the gap, winding back before the seek should

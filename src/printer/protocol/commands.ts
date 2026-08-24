@@ -233,6 +233,15 @@ export function printJobFraming(settings: {
   density: number
   speed?: SpeedValue
   seekGap?: boolean
+  /**
+   * Retract from the tear-off position before printing.
+   *
+   * On for a label, which is what the capture shows and what undoes the advance
+   * the job before it made. Off for a continuation: when one label is split
+   * across several jobs, only the first has a tear-off advance behind it to
+   * undo, and retracting again mid-label would tear the image.
+   */
+  alignStart?: boolean
 }): PrintJobFraming {
   return {
     preamble: [
@@ -247,7 +256,9 @@ export function printJobFraming(settings: {
         ? []
         : [{ bytes: setSpeed(settings.speed), note: 'setSpeed' }]),
       { bytes: startPrintJob(), note: 'startPrintJob' },
-      { bytes: alignPaperStart(), note: 'alignPaperStart' },
+      ...(settings.alignStart === false
+        ? []
+        : [{ bytes: alignPaperStart(), note: 'alignPaperStart' }]),
     ],
     trailer: [
       // The alignment fix, and the reason labels register at all: seek the next

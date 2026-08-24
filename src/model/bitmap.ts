@@ -54,6 +54,25 @@ export function appendBlankRows(bm: PackedBitmap, rows: number): PackedBitmap {
   return { widthDots: bm.widthDots, heightDots, rowBytes: bm.rowBytes, data }
 }
 
+/**
+ * A horizontal band of the bitmap, sharing nothing with the original.
+ *
+ * Rows are byte-aligned and independent, so a band is a contiguous run of the
+ * backing array and this is one copy. That is what makes splitting a raster across
+ * several print jobs cheap — see `printer/protocol/splitJob.ts` for why anyone
+ * would want to.
+ */
+export function sliceRows(bm: PackedBitmap, startRow: number, rows: number): PackedBitmap {
+  const from = Math.max(0, Math.min(bm.heightDots, Math.round(startRow)))
+  const count = Math.max(0, Math.min(bm.heightDots - from, Math.round(rows)))
+  return {
+    widthDots: bm.widthDots,
+    heightDots: count,
+    rowBytes: bm.rowBytes,
+    data: bm.data.slice(from * bm.rowBytes, (from + count) * bm.rowBytes),
+  }
+}
+
 /** Set or clear the dot at (x, y). Out-of-bounds writes are ignored. */
 export function setDot(bm: PackedBitmap, x: number, y: number, black: boolean): void {
   if (x < 0 || y < 0 || x >= bm.widthDots || y >= bm.heightDots) return

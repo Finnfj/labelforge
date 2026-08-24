@@ -1,6 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import { encodeImage } from '../protocol/encodeImage'
+import { planSeekableBands } from '../protocol/splitJob'
 import { DEFAULT_PROFILE } from '../profiles'
 import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
 import * as cmd from '../protocol/commands'
@@ -114,8 +115,12 @@ export class VirtualPrinterDriver implements PrinterDriver {
     try {
       const image = encodeImage(job.bitmap)
       const framing = cmd.printJobFraming(job.settings)
-      const perCopy = image.length
-      const total = perCopy * job.settings.copies
+      // One band unless splitting is asked for, so the ordinary path is the same
+      // code with a single-element array. Same planner as the real driver.
+      const bands =
+        job.settings.splitForSeek === true ? planSeekableBands(job.bitmap) : [job.bitmap]
+      const encoded = bands.length === 1 ? [image] : bands.map(encodeImage)
+      const total = encoded.reduce((n, e) => n + e.length, 0) * job.settings.copies
 
       this.#emitter.emit('progress', {
         phase: 'prepare',
@@ -136,29 +141,49 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-        for (const { bytes, note } of framing.preamble) send(bytes, note)
+        const seeking =
+          bands.length === 1 &&
+          job.settings.followUpSeek !== false &&
+          cmd.needsFollowUpSeek(image.length)
 
-        // Chunk the raster at the same size the BLE driver uses. Not the same
-        // *boundaries*, though, and deliberately: the real driver chunks the
-        // whole job stream, so its commands arrive glued to raster chunks. That
-        // is unreadable in a log and means nothing to a printer that is not
-        // there, so this one keeps each command on its own line. The bytes are
-        // identical in order and content — both sides build from
-        // `printJobFraming`, and a test concatenates the two and compares them.
-        const chunkSize = this.#capabilities?.chunkSize ?? DEFAULT_CHUNK_SIZE
-        for (let offset = 0; offset < image.length; offset += chunkSize) {
-          opts?.signal?.throwIfAborted()
-          const chunk = image.subarray(offset, Math.min(offset + chunkSize, image.length))
-          send(chunk)
-          sent += chunk.length
-          await this.#pace(chunk.length)
-          this.#emitter.emit('progress', {
-            phase: 'transfer',
-            sent,
-            total,
-            copy,
-            copies: job.settings.copies,
+        for (let band = 0; band < encoded.length; band++) {
+          const last = band === encoded.length - 1
+          // Only the first band retracts, only the last seeks, and the tear-off
+          // advance happens once at the very end. The real driver builds the same
+          // framing for the same reasons; a test concatenates both and compares.
+          const bandFraming = cmd.printJobFraming({
+            ...job.settings,
+            alignStart: band === 0,
+            seekGap: last,
           })
+          for (const { bytes, note } of bandFraming.preamble) send(bytes, note)
+
+          // Chunk the raster at the size the BLE driver uses. Not the same
+          // *boundaries*, though, and deliberately: the real driver chunks the
+          // whole job stream, so its commands arrive glued to raster chunks. That
+          // is unreadable in a log and means nothing to a printer that is not
+          // there, so this one keeps each command on its own line.
+          const chunkSize = this.#capabilities?.chunkSize ?? DEFAULT_CHUNK_SIZE
+          const raster = encoded[band]
+          for (let offset = 0; offset < raster.length; offset += chunkSize) {
+            opts?.signal?.throwIfAborted()
+            const chunk = raster.subarray(offset, Math.min(offset + chunkSize, raster.length))
+            send(chunk)
+            sent += chunk.length
+            await this.#pace(chunk.length)
+            this.#emitter.emit('progress', {
+              phase: 'transfer',
+              sent,
+              total,
+              copy,
+              copies: job.settings.copies,
+            })
+          }
+
+          for (const { bytes, note } of bandFraming.trailer) send(bytes, note)
+          if (last && !seeking) {
+            for (const { bytes, note } of framing.epilogue) send(bytes, note)
+          }
         }
 
         this.#emitter.emit('progress', {
@@ -168,18 +193,6 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-        // The oversized-label workaround, shown here for the same reason the rest of
-        // the sequence is: so the byte log says what the printer would get. Both
-        // drivers ask cmd for the condition and the job, so neither can decide to
-        // send it on its own — and both hold the tear-off advance back to whichever
-        // job ends the print, so the paper does not walk past the boundary between
-        // the label and its seek.
-        const seeking = job.settings.followUpSeek !== false && cmd.needsFollowUpSeek(image.length)
-        for (const { bytes, note } of seeking
-          ? framing.trailer
-          : [...framing.trailer, ...framing.epilogue]) {
-          send(bytes, note)
-        }
         if (seeking) {
           send(cmd.followUpSeekJob(framing, job.bitmap.widthDots), 'follow-up seek job')
           // The tear advance ends the print, and it ends this job because this is

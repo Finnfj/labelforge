@@ -409,6 +409,63 @@ describe('BlePrinterDriver', () => {
     expect(order).toEqual(['job', 'ok', 'job', 'ok'])
   }, 30_000)
 
+  it('splits an oversized label so the last band carries the seek', async () => {
+    // The one route to a registered tall label that costs no image quality. Each
+    // band is small enough for the printer to read whole, they go out back-to-back
+    // with no wait, and only the last one seeks — so the seek is in the buffer long
+    // before the head reaches it, which a single oversized job can never manage.
+    const { transport, driver } = acknowledging()
+    await driver.connect()
+    transport.reset()
+    await driver.print({
+      bitmap: noisyBitmap(384, 640),
+      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true },
+    })
+
+    const stream = hex(concat(transport.writes))
+    const bands = occurrences(transport.writes, '1f c0 01 00')
+    expect(bands).toBeGreaterThan(1)
+
+    // Exactly one seek, and it is in the last band.
+    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
+    expect(stream.indexOf('1f 12 20 00')).toBeGreaterThan(stream.lastIndexOf('1f c0 01 00'))
+
+    // Only the first band retracts — retracting mid-label would tear the image.
+    expect(occurrences(transport.writes, '1f 11 51')).toBe(1)
+    expect(stream.indexOf('1f 11 51')).toBeLessThan(stream.indexOf('1f 10 00 30'))
+
+    // And the tear-off advance happens once, at the very end of the whole print.
+    expect(occurrences(transport.writes, '1f 11 50')).toBe(1)
+    expect(stream.endsWith('1f 11 50')).toBe(true)
+  }, 60_000)
+
+  it('does not follow a split label with a seek job as well', async () => {
+    // Belt and braces would be a blank label: the split's own last band already
+    // seeks, and the follow-up is a form feed on this firmware.
+    const { transport, driver } = acknowledging()
+    await driver.connect()
+    transport.reset()
+    await driver.print({
+      bitmap: noisyBitmap(384, 640),
+      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true, followUpSeek: true },
+    })
+    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
+  }, 60_000)
+
+  it('emits the same bytes as the virtual printer when split', async () => {
+    const { transport, driver } = acknowledging()
+    await driver.connect()
+    transport.reset()
+    const bitmap = noisyBitmap(384, 640)
+    const settings = { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true }
+    await driver.print({ bitmap, settings })
+
+    const virtual = new VirtualPrinterDriver(Infinity)
+    await virtual.connect()
+    await virtual.print({ bitmap, settings })
+    expect(hex(concat([...virtual.printouts[0].wire]))).toBe(hex(concat(transport.writes)))
+  }, 60_000)
+
   it('can be told to leave the roll where the label ended', async () => {
     // The follow-up registers a roll that needs it and costs a blank label on one
     // that does not — a full-height label already ends at the gap, and seeking

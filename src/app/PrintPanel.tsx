@@ -321,15 +321,31 @@ export function PrintPanel({
             print of a label this size starts a gap-width earlier than the last.
           </p>
 
+          <label className="field field--check">
+            <input
+              type="checkbox"
+              checked={settings.splitForSeek === true}
+              onChange={(e) => setSettings((s) => ({ ...s, splitForSeek: e.target.checked }))}
+            />
+            <span>Split the print so the last part can seek</span>
+          </label>
+          <p>
+            <strong>Splitting costs nothing in the picture</strong>, which is why it is first. The
+            raster goes out as a few consecutive jobs, each small enough for the printer to read
+            whole, only the last one seeking &mdash; so the seek is in the buffer long before the
+            head reaches it, which a single job this size can never manage. Untested on hardware:
+            what could go wrong is a visible line where one part ends and the next begins.
+          </p>
+
           {remedyFits && (
             <p>
-              <strong>{remedy!.rung.label} and the printer handles the rest.</strong> The same label
-              comes to {(remedy!.bytes / 1024).toFixed(1)} KB that way &mdash; under the{' '}
-              {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full &mdash; so it registers
-              itself, print after print, with nothing below needed at all. The cost is{' '}
-              {remedy!.rung.describe}. This is the mildest change on the list that fits: the picture
-              is the only thing on a label whose size is a choice, since text and codes compress to
-              almost nothing however large it is.{' '}
+              Otherwise, <strong>{remedy!.rung.label.toLowerCase()}</strong> and the printer handles
+              the rest by itself. The same label comes to {(remedy!.bytes / 1024).toFixed(1)} KB
+              that way &mdash; under the {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full
+              &mdash; so it registers itself, print after print, with nothing below needed at all.
+              The cost is {remedy!.rung.describe}. This is the mildest change on the list that fits:
+              the picture is the only thing on a label whose size is a choice, since text and codes
+              compress to almost nothing however large it is.{' '}
               <button
                 className="linklike"
                 onClick={() => photoIds.forEach((id) => updateElement(id, remedy!.rung.tone))}

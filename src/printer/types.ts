@@ -74,6 +74,20 @@ export interface PrintSettings {
    */
   seekGap?: boolean
   /**
+   * Print a label too large to seek as several jobs, so the last one can.
+   *
+   * The printer honours a job's gap seek only when it read the job whole before
+   * the motor started, so a tall label's own seek goes unread. Splitting the
+   * raster into bands that each fit, sent back-to-back with the seek on the last,
+   * is the only route left that keeps the picture exactly as designed — the
+   * alternatives all trade image quality for compressed size, and the follow-up
+   * job behaves as a form feed.
+   *
+   * Off by default: untested on hardware, and the thing that could go wrong is a
+   * visible seam where one band ends and the next begins.
+   */
+  splitForSeek?: boolean
+  /**
    * Register the roll after a label too large to do it itself.
    *
    * A P50S honours a job's own gap seek only when it read the whole job before
