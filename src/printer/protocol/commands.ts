@@ -242,15 +242,6 @@ export function printJobFraming(settings: {
    * undo, and retracting again mid-label would tear the image.
    */
   alignStart?: boolean
-  /**
-   * Wind the paper back this many dots before printing.
-   *
-   * For the seam between the bands of a split label: the printer advances a little
-   * at the start of a job, so band two begins where band one left off plus that
-   * much. Measured at exactly 1 mm on a P50S. `1F 11 10` is honoured inside a job
-   * with a raster behind it, which is how this can be corrected at all.
-   */
-  rewindDots?: number
 }): PrintJobFraming {
   return {
     preamble: [
@@ -268,14 +259,6 @@ export function printJobFraming(settings: {
       ...(settings.alignStart === false
         ? []
         : [{ bytes: alignPaperStart(), note: 'alignPaperStart' }]),
-      ...(settings.rewindDots
-        ? [
-            {
-              bytes: adjustPosition(AdjustMode.BackwardDots, settings.rewindDots),
-              note: 'rewind',
-            },
-          ]
-        : []),
     ],
     trailer: [
       // The alignment fix, and the reason labels register at all: seek the next

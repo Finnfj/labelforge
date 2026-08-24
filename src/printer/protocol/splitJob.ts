@@ -41,17 +41,32 @@ import { SEEK_SAFE_JOB_BYTES } from './constants'
  * Measured on a P50S: a split label registered correctly and came out with a seam
  * at each boundary of **exactly one millimetre**, which is eight dots at 8 dots/mm.
  * The printer takes up that much before it starts laying down a raster, so every
- * band after the first begins one millimetre further on than the one before it
- * ended.
+ * band after the first would begin one millimetre further on than the last ended.
  *
- * Corrected by winding back the same amount, which works because `1F 11 10` is
- * honoured inside a job with a raster behind it — established, as it happens, by an
- * attempt to fix something else entirely.
+ * **Filled by overlapping the bands, not by a motion command.** Winding back eight
+ * dots with `1F 11 10` was the obvious correction and the printer ignored it — the
+ * bytes went out in bands two and three, all three jobs were acknowledged, and the
+ * seam was unchanged. Forty dots of the same command had moved paper visibly in an
+ * earlier experiment, so there is a minimum step somewhere between the two and
+ * eight dots is under it.
+ *
+ * Overlapping needs no command at all: band two simply starts eight rows before
+ * band one ended, and those rows land in the millimetre the printer inserts. Pure
+ * arithmetic against a measurement, which is a better thing to depend on than an
+ * undocumented motion primitive.
  */
 export const SPLIT_SEAM_DOTS = 8
 
 /** Fraction of the limit a band is allowed to reach, so a re-encode has room. */
 const HEADROOM = 0.85
+
+/**
+ * Shortest band worth sending.
+ *
+ * Has to exceed the overlap, or a band would be nothing but the rows the band
+ * before it already printed and the plan would never reach the end of the label.
+ */
+const MIN_BAND_ROWS = SPLIT_SEAM_DOTS * 2
 
 /**
  * Cut a raster into the fewest bands that each fit within the seek limit.
@@ -72,29 +87,28 @@ export function planSeekableBands(
   if (encodeImage(bitmap).length <= budget) return [bitmap]
 
   const bytesPerRow = encodeImage(bitmap).length / Math.max(1, bitmap.heightDots)
-  const rowsPerBand = Math.max(1, Math.floor(budget / Math.max(bytesPerRow, 1)))
+  const estimate = Math.max(MIN_BAND_ROWS, Math.floor(budget / Math.max(bytesPerRow, 1)))
 
   const bands: PackedBitmap[] = []
-  for (let row = 0; row < bitmap.heightDots; row += rowsPerBand) {
-    const rows = Math.min(rowsPerBand, bitmap.heightDots - row)
-    bands.push(...fitBand(sliceRows(bitmap, row, rows), budget))
+  let next = 0
+  while (next < bitmap.heightDots) {
+    // Every band but the first reaches back over the seam, so the rows the printer
+    // would otherwise skip are printed by the band that follows it.
+    const from = next === 0 ? 0 : next - SPLIT_SEAM_DOTS
+    let rows = Math.min(bitmap.heightDots - from, estimate + (next === 0 ? 0 : SPLIT_SEAM_DOTS))
+    let band = sliceRows(bitmap, from, rows)
+
+    // Compressed size is not linear in rows — a band of dense image compresses
+    // worse than the average — so the estimate can come out over. Halve until it
+    // fits. The floor keeps the overlap from eating the whole band, which would
+    // stop the loop making progress.
+    while (rows > MIN_BAND_ROWS && encodeImage(band).length > budget) {
+      rows = Math.max(MIN_BAND_ROWS, Math.floor(rows / 2))
+      band = sliceRows(bitmap, from, rows)
+    }
+
+    bands.push(band)
+    next = from + band.heightDots
   }
   return bands
-}
-
-/**
- * Halve a band until it fits, or until it is a single row.
- *
- * A single row over budget cannot be split further and is returned anyway: one
- * band that will not seek is a better outcome than refusing to print. It cannot
- * happen at any width this printer supports — a row is at most 72 bytes — but the
- * recursion needs a floor.
- */
-function fitBand(band: PackedBitmap, budget: number): PackedBitmap[] {
-  if (band.heightDots <= 1 || encodeImage(band).length <= budget) return [band]
-  const half = Math.floor(band.heightDots / 2)
-  return [
-    ...fitBand(sliceRows(band, 0, half), budget),
-    ...fitBand(sliceRows(band, half, band.heightDots - half), budget),
-  ]
 }

@@ -100,24 +100,23 @@ describe('followUpSeekJob', () => {
 })
 
 describe('band framing', () => {
-  it('winds back the seam only when asked', () => {
-    // The printer takes up about a millimetre at the start of a job, so a band
-    // after the first begins that far on from where the last one ended. Measured
-    // as exactly 8 dots, and correctable because `1F 11 10` works inside a job.
-    const plain = hex(printJobStream(printJobFraming({ paperType: PaperType.Gap, density: 8 }), A))
-    expect(plain).not.toContain('1f 11 10')
+  it('retracts for the first band of a label and not the rest', () => {
+    // One label is one print, however many jobs it takes. Retracting again
+    // mid-label would pull the paper back to the tear-off position and tear the
+    // image; only the first band has an advance behind it to undo.
+    const first = hex(printJobStream(printJobFraming({ paperType: PaperType.Gap, density: 8 }), A))
+    expect(first).toContain('1f 11 51')
 
-    const wound = hex(
+    const later = hex(
       printJobStream(
-        printJobFraming({ paperType: PaperType.Gap, density: 8, rewindDots: 8, alignStart: false }),
+        printJobFraming({ paperType: PaperType.Gap, density: 8, alignStart: false }),
         A,
       ),
     )
-    expect(wound).toContain('1f 11 10 00 08')
-    // Before the raster, or it would wind back what has just been printed.
-    expect(wound.indexOf('1f 11 10 00 08')).toBeLessThan(wound.indexOf('aa bb'))
-    // And no retract, which belongs to the first band alone.
-    expect(wound).not.toContain('1f 11 51')
+    expect(later).not.toContain('1f 11 51')
+    // And no motion command in its place: winding back the seam was tried and the
+    // printer ignored it. The bands overlap instead — see splitJob.ts.
+    expect(later).not.toContain('1f 11 10')
   })
 })
 

@@ -1,7 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import { encodeImage } from '../protocol/encodeImage'
-import { planSeekableBands, SPLIT_SEAM_DOTS } from '../protocol/splitJob'
+import { planSeekableBands } from '../protocol/splitJob'
 import { DEFAULT_PROFILE } from '../profiles'
 import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
 import * as cmd from '../protocol/commands'
@@ -155,7 +155,6 @@ export class VirtualPrinterDriver implements PrinterDriver {
             ...job.settings,
             alignStart: band === 0,
             seekGap: last,
-            rewindDots: band === 0 ? 0 : SPLIT_SEAM_DOTS,
           })
           for (const { bytes, note } of bandFraming.preamble) send(bytes, note)
 

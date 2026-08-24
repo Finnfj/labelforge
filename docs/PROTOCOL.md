@@ -550,12 +550,19 @@ affirmative: whatever it uses to decide where the gap is survives a job boundary
 the last band's seek lands correctly even though that band printed only a third of
 the label.
 
-**The seam is exactly 1 mm.** The printer takes up eight dots at the start of a job
-before it lays down a raster, so each band begins a millimetre further on than the
-last one ended, and the gap shows as a white line. `SPLIT_SEAM_DOTS` winds it back
-with `1F 11 10` on every band after the first — which is possible only because that
-command was shown to work inside a job with a raster behind it, during an attempt to
-fix something else.
+**The seam is exactly 1 mm**, and the bands overlap by it. The printer takes up
+eight dots at the start of a job before it lays down a raster, so each band would
+begin a millimetre further on than the last one ended and the gap shows as a white
+line. `planSeekableBands()` starts every band after the first eight rows earlier, so
+those rows are printed by the band that follows and land in the millimetre the
+printer inserts.
+
+Winding back with `1F 11 10 00 08` was the obvious correction and the printer
+**ignored it**: the bytes went out in bands two and three, all three jobs were
+acknowledged, and the seam was unchanged. Forty dots of the same command had moved
+paper visibly in an earlier experiment, so the minimum step is somewhere between
+eight and forty. Overlapping needs no command at all, which is a better thing to
+depend on.
 
 The cost is that the head now stops at each boundary while the driver waits, and a
 stopped head is where a seam would show. The planner minimises the band count for

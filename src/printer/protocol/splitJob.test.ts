@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createPackedBitmap, type PackedBitmap } from '../../model/bitmap'
 import { encodeImage } from './encodeImage'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
-import { planSeekableBands } from './splitJob'
+import { planSeekableBands, SPLIT_SEAM_DOTS } from './splitJob'
 
 /**
  * Splitting one label across several jobs so the last of them can seek.
@@ -46,18 +46,48 @@ describe('planSeekableBands', () => {
     }
   })
 
-  it('loses no row and repeats none', () => {
-    // A seam that drops or duplicates a row is a visible line across the label,
-    // and byte-identical reassembly is the only way to be sure there is not one.
+  it('overlaps each seam by exactly the gap the printer inserts', () => {
+    // The printer takes up 8 dots at the start of a job, so band two has to begin
+    // 8 rows before band one ended or those rows never get printed. Winding back
+    // with 1F 11 10 was tried first and the printer ignored it at that distance.
     const bm = noise(640)
     const bands = planSeekableBands(bm)
-    expect(bands.reduce((n, b) => n + b.heightDots, 0)).toBe(bm.heightDots)
+    expect(bands.length).toBeGreaterThan(1)
 
+    let printed = 0
+    for (const [i, band] of bands.entries()) {
+      printed += band.heightDots - (i === 0 ? 0 : SPLIT_SEAM_DOTS)
+    }
+    // The rows that actually advance the paper add up to the label, no more.
+    expect(printed).toBe(bm.heightDots)
+  })
+
+  it('repeats the right rows at each seam', () => {
+    // Not just any 8 rows: the overlap has to be the *previous* band's last 8, or
+    // the image jumps by a millimetre at every boundary.
+    const bm = noise(640)
+    const bands = planSeekableBands(bm)
+    for (let i = 1; i < bands.length; i++) {
+      const prev = bands[i - 1]
+      const tail = prev.data.slice((prev.heightDots - SPLIT_SEAM_DOTS) * prev.rowBytes)
+      const head = bands[i].data.slice(0, SPLIT_SEAM_DOTS * bands[i].rowBytes)
+      expect(Array.from(head)).toEqual(Array.from(tail))
+    }
+  })
+
+  it('reassembles into the original once the overlaps are dropped', () => {
+    // A row lost or misplaced at a seam is a visible line across the label, and
+    // byte-identical reassembly is the only way to be sure there is not one.
+    const bm = noise(640)
+    const bands = planSeekableBands(bm)
+    const parts = bands.map((band, i) =>
+      i === 0 ? band.data : band.data.slice(SPLIT_SEAM_DOTS * band.rowBytes),
+    )
     const rejoined = new Uint8Array(bm.data.length)
     let at = 0
-    for (const band of bands) {
-      rejoined.set(band.data, at)
-      at += band.data.length
+    for (const part of parts) {
+      rejoined.set(part, at)
+      at += part.length
     }
     expect(Array.from(rejoined)).toEqual(Array.from(bm.data))
   })

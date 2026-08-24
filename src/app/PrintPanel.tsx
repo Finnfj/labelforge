@@ -337,8 +337,9 @@ export function PrintPanel({
             while it is working.
             <br />
             The printer takes up 1 mm when a job starts, which showed as a white seam at each
-            boundary; each band after the first now winds that millimetre back. If a seam is still
-            visible, one of the two below avoids the question entirely.
+            boundary. The bands now overlap by that millimetre, so the rows it would have skipped
+            are printed by the band that follows. If a seam is still visible, one of the two below
+            avoids the question entirely.
           </p>
 
           {remedyFits && (
