@@ -158,38 +158,33 @@ export function isToneElement(element: LabelElement): boolean {
   return element.kind === 'image' && element.mode === 'photo'
 }
 
+/** How a photograph's tone is reduced, as a patch the print panel can trial. */
+export type ToneChoice = Pick<ImageElement, 'dither' | 'ditherStrength'>
+
 /**
- * Photo elements whose dithering is costing the label its self-registration.
+ * The photographs on a label, which are the only elements whose size is a choice.
  *
- * Error diffusion turns a photograph into something close to random bits, which
- * deflate cannot compress: a 384 x 640 raster comes out around 23 KB either way,
- * Floyd–Steinberg or Atkinson. Ordered dithering is periodic, and the same raster
- * compresses to between 6 and 21 KB depending on how much detail the picture has.
+ * Everything else on a label is text, codes or shapes, and those are thresholded
+ * to a handful of runs that compress to nothing. A photograph is dithered, and how
+ * it is dithered decides the compressed size of the whole raster by a factor of
+ * three or four — which in turn decides whether the printer reads the job in full
+ * and registers the label itself. See docs/PROTOCOL.md.
  *
- * That matters well beyond file size. A printer reads a job under about 16 KB in
- * full before the motor starts and honours the gap seek at the end of it; above
- * that it is still receiving while it prints, never reads the seek, and the roll
- * stops wherever the label ended. So for a tall photograph the choice of dither
- * decides whether the label registers itself.
- *
- * Names candidates rather than deciding: how a photograph looks is not something
- * a byte count should settle, and the saving is large enough to be worth showing
- * but not always enough to cross the line.
+ * Line art is excluded deliberately: it is thresholded, not dithered, so there is
+ * nothing to trade, and dithering it would wreck the one thing it is for.
  */
-export function orderedDitherCandidates(doc: LabelDoc): string[] {
-  return doc.elements
-    .filter((e) => e.kind === 'image' && e.mode === 'photo' && e.dither !== 'bayer')
-    .map((e) => e.id)
+export function photoElementIds(doc: LabelDoc): string[] {
+  return doc.elements.filter((e) => e.kind === 'image' && e.mode === 'photo').map((e) => e.id)
 }
 
-/** The same document with {@link orderedDitherCandidates} switched over. */
-export function withOrderedDither(doc: LabelDoc): LabelDoc {
-  const candidates = new Set(orderedDitherCandidates(doc))
-  if (candidates.size === 0) return doc
+/** The same document with every photograph's tone settings replaced. */
+export function withPhotoTone(doc: LabelDoc, tone: ToneChoice): LabelDoc {
+  const ids = new Set(photoElementIds(doc))
+  if (ids.size === 0) return doc
   return {
     ...doc,
     elements: doc.elements.map((e) =>
-      candidates.has(e.id) && e.kind === 'image' ? { ...e, dither: 'bayer' as const } : e,
+      ids.has(e.id) && e.kind === 'image' ? { ...e, ...tone } : e,
     ),
   }
 }

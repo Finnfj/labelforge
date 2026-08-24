@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   createEmptyDoc,
-  orderedDitherCandidates,
-  withOrderedDither,
+  photoElementIds,
+  withPhotoTone,
   type ImageElement,
   type LabelDoc,
   type TextElement,
@@ -39,17 +39,19 @@ function docWith(...elements: LabelDoc['elements']): LabelDoc {
   return doc
 }
 
-describe('orderedDitherCandidates', () => {
-  it('names photos that are not already ordered', () => {
-    const doc = docWith(image('a'), image('b', { dither: 'atkinson' }))
-    expect(orderedDitherCandidates(doc)).toEqual(['a', 'b'])
+describe('photoElementIds', () => {
+  it('names every photograph, whatever its dither', () => {
+    // All of them, because the panel applies one tone choice across the label —
+    // leaving one photo on full-strength diffusion would keep the raster large
+    // and make the advice wrong.
+    const doc = docWith(image('a'), image('b', { dither: 'bayer' }))
+    expect(photoElementIds(doc)).toEqual(['a', 'b'])
   })
 
   it('leaves line art alone', () => {
     // Not a size judgement: thresholded line art is not dithered at all, so there
-    // is nothing to switch, and switching it would wreck the one thing it is for.
-    const doc = docWith(image('a', { mode: 'lineart' }))
-    expect(orderedDitherCandidates(doc)).toEqual([])
+    // is nothing to trade, and dithering it would wreck the one thing it is for.
+    expect(photoElementIds(docWith(image('a', { mode: 'lineart' })))).toEqual([])
   })
 
   it('leaves everything that is not an image alone', () => {
@@ -67,29 +69,25 @@ describe('orderedDitherCandidates', () => {
       rotation: 0,
       z: 1,
     }
-    expect(orderedDitherCandidates(docWith(text))).toEqual([])
-  })
-
-  it('has nothing to say about a photo already ordered', () => {
-    expect(orderedDitherCandidates(docWith(image('a', { dither: 'bayer' })))).toEqual([])
+    expect(photoElementIds(docWith(text))).toEqual([])
   })
 })
 
-describe('withOrderedDither', () => {
-  it('switches exactly the candidates and copies rather than mutates', () => {
+describe('withPhotoTone', () => {
+  it('applies the tone to photographs and nothing else', () => {
     const doc = docWith(image('a'), image('b', { mode: 'lineart' }))
-    const next = withOrderedDither(doc)
+    const next = withPhotoTone(doc, { ditherStrength: 0.4 })
 
-    expect((next.elements[0] as ImageElement).dither).toBe('bayer')
-    expect((next.elements[1] as ImageElement).dither).toBeUndefined()
+    expect((next.elements[0] as ImageElement).ditherStrength).toBe(0.4)
+    expect((next.elements[1] as ImageElement).ditherStrength).toBeUndefined()
     // The original is what the preview is still rasterising from.
-    expect((doc.elements[0] as ImageElement).dither).toBeUndefined()
+    expect((doc.elements[0] as ImageElement).ditherStrength).toBeUndefined()
   })
 
-  it('returns the same document when there is nothing to change', () => {
-    // The print panel rasterises this to compare sizes. Handing back a fresh
-    // object with identical contents would cost a full raster for no difference.
-    const doc = docWith(image('a', { dither: 'bayer' }))
-    expect(withOrderedDither(doc)).toBe(doc)
+  it('returns the same document when there is no photograph to change', () => {
+    // The print panel rasterises the result to compare sizes. A fresh object with
+    // identical contents would cost a full raster for no difference.
+    const doc = docWith(image('a', { mode: 'lineart' }))
+    expect(withPhotoTone(doc, { dither: 'bayer' })).toBe(doc)
   })
 })

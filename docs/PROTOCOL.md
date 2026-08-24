@@ -483,15 +483,37 @@ the head, and about 20 mm of travel on a P50S.
   cut off at 80%, which is a separate fault — see `4F 4B` below — and not a
   positioning one: the label started in the right place and stopped early.
 
-**The tear-off round trip has been taken out from between them.** A small label's
-in-job seek registers correctly because nothing moves the paper between the raster
-and the seek. The follow-up used to have `alignPaperEnd` (forward to the tear
-position) and then `alignPaperStart` (back again) in that gap, which is an excursion
-of about twenty millimetres each way over ground nobody has measured. One label is
-one print, so the tear advance now happens once, on whichever job ends it: the label
-job is sent with an empty epilogue when a follow-up is coming, and the follow-up
-drops `alignPaperStart`. Whether that is what was costing a blank label is for
-hardware to say, but the round trip was wrong on its own terms.
+**Where the paper starts is not the variable.** Three attempts moved it and none
+changed the outcome:
+
+| attempt                                      | paper moved  | result            |
+| -------------------------------------------- | ------------ | ----------------- |
+| as captured                                  | —            | whole blank label |
+| 5 mm rewind, `1F 11 10 00 28`                | yes, visibly | whole blank label |
+| tear-off round trip removed, ~20 mm each way | yes          | whole blank label |
+
+That is a sweep of roughly 25 mm of starting position with an identical result each
+time, so the seek is not deciding where to stop from where it began. Nor is there
+another rewind to try: `adjustPosition` (`1F 11 10` dots, `1F 11 11` mm) and
+`alignPaperStart` are the only backwards motions in the protocol, `1B 4A` and
+`1D 0C` are forward-only and inert, and both backwards commands have now been used.
+
+The round trip stays removed regardless — one label is one print, and advancing to
+the tear position and retracting again in the middle of it was wrong on its own
+terms. The label job is sent with an empty epilogue when a follow-up is coming, and
+the follow-up drops `alignPaperStart`.
+
+**What does correlate is the height of the raster in the job that carries the
+seek.** 640 rows and it registers; 8 rows and it advances a label, from every
+starting position tried. The reading that fits is that the printer tracks how far
+it has printed within the current label and the seek advances the remainder — so a
+job that prints a millimetre is a job that thinks it has a whole label left to go.
+If that is right, no separate job can ever seek correctly, because the only raster
+that would work is a full label of blank. Untested, and it would cost a label to
+test.
+
+Which leaves the size of the label job itself as the thing to attack, and that is
+what the dither section above is for.
 
 **An earlier repair did not work, and the failure is informative.** If the
 retract lands a registered roll on the gap, winding back before the seek should
@@ -579,9 +601,14 @@ settings:
 | textured photo | 25,519          | 27,397   | **13,780** |
 | heavy grain    | 28,861          | 29,344   | 21,396     |
 
+Diffusion strength is a gentler lever on the same axis, and worth having because it
+keeps error diffusion rather than switching to a grid. Same raster, Floyd–Steinberg:
+23,140 bytes at full strength, 21,239 at 80%, 18,950 at 60%, **15,284 at 40%**,
+8,639 at 20%. Contrast is not a lever — lifting it to +80 saves 14%.
+
 `SEEK_SAFE_JOB_BYTES` is 16,384, and the real payloads from the wire logs were
-23,051–25,095. So for most photographs ordered dithering takes a tall label under
-the line, and **then none of the rest of this section applies** — the job is
+23,051–25,095. So for most photographs one of these takes a tall label under the
+line, and **then none of the rest of this section applies** — the job is
 ordinary, the printer reads it whole, and its own `1F 12 20 00` registers the label
 exactly as it does at 30 mm. Not for all of them, which is why the print panel
 rasterises the alternative and reports the real number rather than promising one.

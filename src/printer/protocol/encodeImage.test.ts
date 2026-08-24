@@ -139,8 +139,8 @@ describe('dithering and compressibility', () => {
     return luma
   }
 
-  const encodedSize = (algorithm: 'floyd-steinberg' | 'atkinson' | 'bayer') =>
-    encodeImage(pack1bpp(dither(photo(), w, h, { algorithm }), w, h)).length
+  const encodedSize = (algorithm: 'floyd-steinberg' | 'atkinson' | 'bayer', strength?: number) =>
+    encodeImage(pack1bpp(dither(photo(), w, h, { algorithm, strength }), w, h)).length
 
   it('makes an ordered raster several times smaller than a diffused one', () => {
     const diffused = Math.min(encodedSize('floyd-steinberg'), encodedSize('atkinson'))
@@ -149,6 +149,21 @@ describe('dithering and compressibility', () => {
     // ratio with room to spare, so the test survives a tweak to the Bayer matrix
     // and still fails if error diffusion ever starts compressing.
     expect(ordered * 2).toBeLessThan(diffused)
+  })
+
+  it('shrinks a diffused raster as the diffusion strength comes down', () => {
+    // The gentler rungs of the print panel's ladder. Softening the diffusion keeps
+    // error diffusion — a milder change to look at than a switch to a grid — and
+    // it is the size lever offered first for that reason, so it has to actually
+    // move the size.
+    const full = encodedSize('floyd-steinberg')
+    const soft = encodedSize('floyd-steinberg', 0.6)
+    const softer = encodedSize('floyd-steinberg', 0.4)
+    expect(soft).toBeLessThan(full)
+    expect(softer).toBeLessThan(soft)
+    // 40% is the rung that has to earn its place: it is the last one before the
+    // panel gives up on error diffusion entirely.
+    expect(softer).toBeLessThan(SEEK_SAFE_JOB_BYTES)
   })
 
   it('takes a tall photograph under the size the printer can register by itself', () => {

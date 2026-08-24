@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  orderedDitherCandidates,
-  withOrderedDither,
+  photoElementIds,
+  withPhotoTone,
   type ImageElement,
   type LabelDoc,
+  type ToneChoice,
 } from '../model/labelDoc'
 import type { PackedBitmap } from '../model/bitmap'
 import { DOTS_PER_MM, dotsToMm, mmToDots } from '../model/units'
@@ -34,6 +35,43 @@ function describeFont(family: string): string {
   return family.startsWith('lf-') ? `an added font (${family})` : family
 }
 
+/**
+ * Ways to make a photograph compress, worst compromise last.
+ *
+ * A raster over `SEEK_SAFE_JOB_BYTES` is one the printer starts printing before it
+ * has read the gap seek at the end of the job, so the label cannot register itself.
+ * The only lever on that size is how the photograph is dithered — text and codes
+ * threshold to runs that compress to nothing however large the label is.
+ *
+ * Ordered dithering is the big win, roughly four times smaller, but it is a
+ * visibly different picture: a regular grid rather than diffused grain. Reducing
+ * the diffusion strength keeps error diffusion and trades detail instead, which is
+ * a milder change to look at. So the ladder runs from the mildest change to the
+ * largest and the panel offers the first rung that actually fits, rather than
+ * jumping straight to the one that always would.
+ *
+ * Measured on a 384 x 640 photograph: 23.1 KB at full strength, 18.9 at 60%,
+ * 15.3 at 40%, 6.4 ordered. Contrast is not on the list — lifting it to +80 saves
+ * 14%, nowhere near enough to matter.
+ */
+const TONE_LADDER: Array<{ label: string; describe: string; tone: ToneChoice }> = [
+  {
+    label: 'Soften the dithering to 60%',
+    describe: 'less error diffused, so a little less fine detail',
+    tone: { ditherStrength: 0.6 },
+  },
+  {
+    label: 'Soften the dithering to 40%',
+    describe: 'noticeably flatter, still error diffusion rather than a grid',
+    tone: { ditherStrength: 0.4 },
+  },
+  {
+    label: 'Switch to ordered dithering',
+    describe: 'a regular grid — coarser, and it survives thermal bleed better',
+    tone: { dither: 'bayer' },
+  },
+]
+
 export function PrintPanel({
   doc,
   connection,
@@ -61,7 +99,10 @@ export function PrintPanel({
   const [error, setError] = useState<string | null>(null)
   const [clipped, setClipped] = useState(false)
   const [jobBytes, setJobBytes] = useState(0)
-  const [orderedBytes, setOrderedBytes] = useState<number | null>(null)
+  const [remedy, setRemedy] = useState<{
+    rung: (typeof TONE_LADDER)[number]
+    bytes: number
+  } | null>(null)
   const [skipped, setSkipped] = useState<SkippedElement[]>([])
   const [fontFallbacks, setFontFallbacks] = useState<string[]>([])
   const [warnings, setWarnings] = useState<string[]>([])
@@ -154,44 +195,52 @@ export function PrintPanel({
     }
   }, [doc, headWidth, padToHead, align, offsetDots, feedAfterDots])
 
-  // What the same label would cost with ordered dithering, asked only when the
-  // answer could matter. It is a second full rasterise, so it stays behind the
-  // size check rather than running on every keystroke — and there is no
-  // estimating it from the first one, because how well a dither compresses
-  // depends entirely on how much detail the picture has.
-  const ditherCandidates = orderedDitherCandidates(doc)
-  const wantsTrial = needsFollowUpSeek(jobBytes) && ditherCandidates.length > 0
+  // The mildest rung of the tone ladder that would take this label under the size
+  // the printer reads in full. Asked only when the answer could matter — it is a
+  // full rasterise per rung, and there is no estimating it, because how well a
+  // dither compresses depends entirely on the picture. Stops at the first that
+  // fits, so it is usually one or two.
+  const photoIds = photoElementIds(doc)
+  const wantsTrial = needsFollowUpSeek(jobBytes) && photoIds.length > 0
   useEffect(() => {
     if (!wantsTrial) {
-      setOrderedBytes(null)
+      setRemedy(null)
       return
     }
     let cancelled = false
     void (async () => {
-      try {
-        const result = await rasterize(withOrderedDither(doc), {
-          headWidthDots: padToHead ? headWidth : undefined,
-          maxWidthDots: headWidth,
-          align,
-          offsetDots,
-          resolveAsset: resolveAssetUrl,
-          clipToHead: true,
-          feedAfterDots,
-        })
-        if (!cancelled) setOrderedBytes(encodeImage(result.bitmap).length)
-      } catch {
-        // The real raster already succeeded, so this failing says nothing useful
-        // to the user. Offering no advice beats offering wrong advice.
-        if (!cancelled) setOrderedBytes(null)
+      const options = {
+        headWidthDots: padToHead ? headWidth : undefined,
+        maxWidthDots: headWidth,
+        align,
+        offsetDots,
+        resolveAsset: resolveAssetUrl,
+        clipToHead: true,
+        feedAfterDots,
       }
+      let best: { rung: (typeof TONE_LADDER)[number]; bytes: number } | null = null
+      for (const rung of TONE_LADDER) {
+        if (cancelled) return
+        try {
+          const result = await rasterize(withPhotoTone(doc, rung.tone), options)
+          best = { rung, bytes: encodeImage(result.bitmap).length }
+          if (!needsFollowUpSeek(best.bytes)) break
+        } catch {
+          // The real raster already succeeded, so a failure here says nothing to
+          // the user. No advice beats wrong advice.
+          if (!cancelled) setRemedy(null)
+          return
+        }
+      }
+      if (!cancelled) setRemedy(best)
     })()
     return () => {
       cancelled = true
     }
   }, [wantsTrial, doc, padToHead, headWidth, align, offsetDots, feedAfterDots])
 
-  /** True when switching to ordered dithering would take the job under the line. */
-  const ordersWell = orderedBytes != null && !needsFollowUpSeek(orderedBytes)
+  /** True when the ladder found a rung that actually fits. */
+  const remedyFits = remedy != null && !needsFollowUpSeek(remedy.bytes)
 
   const send = useCallback(
     async (target: PackedBitmap) => {
@@ -264,7 +313,7 @@ export function PrintPanel({
       </div>
 
       {needsFollowUpSeek(jobBytes) && (
-        <div className={ordersWell || feedAfterDots > 0 ? 'hint' : 'warn'}>
+        <div className={remedyFits || feedAfterDots > 0 ? 'hint' : 'warn'}>
           <p>
             This label is {(jobBytes / 1024).toFixed(1)} KB, which is more than the printer reads
             before it starts printing &mdash; so the gap seek at the end of the job goes unread and
@@ -272,30 +321,29 @@ export function PrintPanel({
             print of a label this size starts a gap-width earlier than the last.
           </p>
 
-          {ordersWell && (
+          {remedyFits && (
             <p>
-              <strong>Ordered dithering would fix that outright.</strong> The same label comes to{' '}
-              {(orderedBytes! / 1024).toFixed(1)} KB that way &mdash; under the{' '}
-              {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full &mdash; so it would register
-              itself, print after print, with nothing below needed at all. Error diffusion scatters
-              a photograph into nearly random dots that will not compress; ordered dithering lays
-              them on a grid, which does. It is a coarser, more mechanical look, and at 203 dpi it
-              also survives thermal bleed better.{' '}
+              <strong>{remedy!.rung.label} and the printer handles the rest.</strong> The same label
+              comes to {(remedy!.bytes / 1024).toFixed(1)} KB that way &mdash; under the{' '}
+              {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full &mdash; so it registers
+              itself, print after print, with nothing below needed at all. The cost is{' '}
+              {remedy!.rung.describe}. This is the mildest change on the list that fits: the picture
+              is the only thing on a label whose size is a choice, since text and codes compress to
+              almost nothing however large it is.{' '}
               <button
                 className="linklike"
-                onClick={() =>
-                  ditherCandidates.forEach((id) => updateElement(id, { dither: 'bayer' }))
-                }
+                onClick={() => photoIds.forEach((id) => updateElement(id, remedy!.rung.tone))}
               >
-                Switch {ditherCandidates.length === 1 ? 'the photo' : 'the photos'} to ordered
+                Apply to {photoIds.length === 1 ? 'the photo' : 'the photos'}
               </button>
             </p>
           )}
-          {orderedBytes != null && !ordersWell && (
+          {remedy != null && !remedyFits && (
             <p>
-              Ordered dithering would bring it to {(orderedBytes / 1024).toFixed(1)} KB, still over
-              the {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full, so it would not help
-              here. This picture has too much fine detail to compress. One of the two below, then.
+              Nothing on the list gets it under the line &mdash; even ordered dithering leaves{' '}
+              {(remedy.bytes / 1024).toFixed(1)} KB against the {SEEK_SAFE_JOB_BYTES / 1024} KB the
+              printer reads in full. This picture has too much fine detail to compress. One of the
+              two below, then.
             </p>
           )}
 
