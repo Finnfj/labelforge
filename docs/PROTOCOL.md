@@ -550,32 +550,40 @@ affirmative: whatever it uses to decide where the gap is survives a job boundary
 the last band's seek lands correctly even though that band printed only a third of
 the label.
 
-**The seam is exactly 1 mm**, and closing it took three attempts because the first
-two were the wrong shape.
+**The seam is exactly 1 mm, and it cannot be closed.** The printer takes up eight
+dots at the start of a job before it lays down a raster. That millimetre passes the
+head with nothing fired at it, and nothing takes it back:
 
-The printer takes up eight dots at the start of a job before it lays down a raster,
-so the next band begins a millimetre past where the last one stopped and the gap
-shows as a white line.
+- **Winding back eight dots** — sent, acknowledged, ignored.
+- **Winding back forty** — sent, acknowledged, ignored. Forty had looked as though
+  it worked, from an earlier experiment where the paper visibly pulled back. It did
+  not: that job also carried `alignPaperStart`, which retracts about twenty
+  millimetres and is a known paper-mover. The movement was that. **`adjustPosition`
+  is inert like every other dedicated motion command on this firmware, and the note
+  in this document claiming otherwise was wrong** — two attempts were built on it
+  before a band with no other motion in it showed the truth.
+- **Overlapping the rasters** — wrong sign. The advance happens without printing;
+  repeating rows does not undo it, it prints them again after the gap and pushes
+  everything below down by another millimetre.
 
-- **Winding back eight dots.** `1F 11 10 00 08` went out in every band after the
-  first, all jobs were acknowledged, and the seam was unchanged. Forty dots of the
-  same command had moved paper visibly in an earlier experiment, so the printer has
-  a minimum step somewhere between eight and forty.
-- **Overlapping the rasters by eight rows.** This has the wrong sign, which the
-  geometry says plainly once written down and a print confirmed. The paper advances
-  a millimetre _without printing_; repeating rows does not take that advance back,
-  it prints them again after the gap and pushes everything below down by another
-  millimetre. The seam stayed exactly where it was, at 27.9 mm on a two-band label.
-- **Winding back five millimetres and printing four of blank.** What works has to
-  remove the advance, and the only movement available is one larger than the error.
-  So the band winds back `SPLIT_REWIND_DOTS`, which is honoured, then prints
-  `SPLIT_PAD_DOTS` of blank to come forward again, landing the first real row exactly
-  where the last band stopped. The blank rows pass back over paper that is already
-  printed and fire nothing.
+Printing rows and the gap seek remain the only two things that move paper on a
+P50S, which is where this document started.
 
-`SPLIT_SEAM_DOTS - rewindDots + padRows` must be zero, and a test says so in those
-terms: too small leaves white, too large prints a millimetre twice and shows as a
-darker line.
+So the millimetre is spent, and what is left is choosing what it costs and where it
+falls.
+
+**What it costs:** the eight rows that land in it are skipped, not printed late.
+Late shifts the whole remainder of the label down a millimetre per boundary, which
+accumulates and walks the bottom of the design off the label. Skipping keeps every
+other row exactly where it was designed and gives up a millimetre of image.
+
+**Where it falls:** `planSeekableBands()` nudges the cut earlier, up to five
+millimetres, to whichever row loses the least ink — scoring candidates by the dots
+set in the rows that would be skipped, ties going to the latest so bands stay large.
+A millimetre of white across a photograph shows; a millimetre across the space
+between two lines of text does not. On a design with any white space near the cut
+the seam disappears into it; on a full-bleed photograph it will still show, at the
+quietest row available.
 
 The cost is that the head now stops at each boundary while the driver waits, and a
 stopped head is where a seam would show. The planner minimises the band count for

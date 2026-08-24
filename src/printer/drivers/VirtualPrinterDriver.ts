@@ -118,10 +118,8 @@ export class VirtualPrinterDriver implements PrinterDriver {
       // One band unless splitting is asked for, so the ordinary path is the same
       // code with a single-element array. Same planner as the real driver.
       const bands =
-        job.settings.splitForSeek === true
-          ? planSeekableBands(job.bitmap)
-          : [{ raster: job.bitmap, rewindDots: 0 }]
-      const encoded = bands.length === 1 ? [image] : bands.map((b) => encodeImage(b.raster))
+        job.settings.splitForSeek === true ? planSeekableBands(job.bitmap) : [job.bitmap]
+      const encoded = bands.length === 1 ? [image] : bands.map(encodeImage)
       const total = encoded.reduce((n, e) => n + e.length, 0) * job.settings.copies
 
       this.#emitter.emit('progress', {
@@ -157,7 +155,6 @@ export class VirtualPrinterDriver implements PrinterDriver {
             ...job.settings,
             alignStart: band === 0,
             seekGap: last,
-            rewindDots: bands[band].rewindDots,
           })
           for (const { bytes, note } of bandFraming.preamble) send(bytes, note)
 

@@ -1,4 +1,4 @@
-import { prependBlankRows, sliceRows, type PackedBitmap } from '../../model/bitmap'
+import { sliceRows, type PackedBitmap } from '../../model/bitmap'
 import { encodeImage } from './encodeImage'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
 
@@ -17,120 +17,141 @@ import { SEEK_SAFE_JOB_BYTES } from './constants'
  * acknowledged. Back-to-back was tried and the printer accepted the first band,
  * printed it, answered `4F 4B` once and dropped the rest.
  *
- * ## The seam
+ * ## The seam, and why it cannot be closed
  *
  * The printer takes up {@link SPLIT_SEAM_DOTS} — measured at exactly 1 mm — at the
- * start of a job, before it lays down a raster. So the next band begins a
- * millimetre past where the last one stopped, and the gap shows as a white line.
+ * start of a job, before it lays down a raster. That millimetre of paper passes the
+ * head with nothing fired at it, and no command can take it back:
  *
- * Two corrections have been tried and both failed, in ways worth keeping:
+ * - **Winding back eight dots** was ignored.
+ * - **Winding back forty** was also ignored. It had looked as though forty worked,
+ *   from an earlier experiment where the paper visibly pulled back — but that job
+ *   also carried `alignPaperStart`, which retracts about twenty millimetres and is
+ *   a known paper-mover. The movement was that, not the wind-back. `adjustPosition`
+ *   is inert like every other dedicated motion command on this firmware.
+ * - **Overlapping the rasters** has the wrong sign. The advance happens without
+ *   printing; repeating rows does not undo it, it prints them again after the gap
+ *   and pushes everything below down by another millimetre.
  *
- * - **Winding back eight dots.** `1F 11 10 00 08` went out and the printer ignored
- *   it. Forty dots of the same command moves paper visibly, so the minimum step is
- *   somewhere between the two.
- * - **Overlapping the bands by eight rows.** This has the wrong sign, which the
- *   geometry says plainly and a print confirmed. The paper advances a millimetre
- *   *without printing*; repeating rows does not take that advance back, it just
- *   prints them again after the gap and pushes everything below down by another
- *   millimetre. The seam stayed exactly as it was.
+ * So the millimetre is spent. What is left is to choose what it costs and where it
+ * falls.
  *
- * What removes the advance is removing the advance. The band winds back
- * {@link SPLIT_REWIND_DOTS}, which is far enough to be honoured, and then prints
- * {@link SPLIT_PAD_DOTS} of blank to come forward again — landing the first real
- * row exactly where the last band stopped. The blank rows pass back over paper that
- * is already printed and fire nothing, so they cost only their compressed size,
- * which for blank is nothing.
+ * **What it costs:** the eight rows that land in it are skipped rather than printed
+ * late. Printing them late shifts the whole remainder of the label down by a
+ * millimetre per boundary, which grows with every band and moves the bottom of the
+ * design off the label. Skipping keeps every other row exactly where it was
+ * designed and gives up a millimetre of image.
  *
- * The whole correction is one movement known to work plus arithmetic, rather than a
- * movement of the size we actually want, which the printer will not make.
+ * **Where it falls:** the cut is nudged to whichever row nearby loses the least
+ * ink. A millimetre of white across a photograph shows; a millimetre across the
+ * white space between two lines of text does not. This is the part that actually
+ * helps, and it is pure arithmetic on the bitmap — no protocol involved.
  */
 
 /**
  * What the printer takes up at the start of a job, in dots.
  *
  * Measured: a split label came out registered with a seam at the boundary of
- * exactly one millimetre, which is eight dots at 8 dots/mm.
+ * exactly one millimetre, which is eight dots at 8 dots/mm. Confirmed twice more
+ * by making it worse in known amounts.
  */
 export const SPLIT_SEAM_DOTS = 8
 
 /**
- * How far a band winds back before printing, in dots.
+ * How far the cut may be moved to find a whiter row, in dots.
  *
- * Five millimetres. Eight dots is under the printer's minimum step and does
- * nothing; forty was seen to move paper during an earlier experiment, in the same
- * position in a job. The exact value does not matter as long as it is honoured and
- * {@link SPLIT_PAD_DOTS} matches it.
+ * Five millimetres, and only ever earlier than the estimate — moving a cut earlier
+ * shrinks the band, so it cannot push one back over the size limit. Most labels
+ * have a millimetre of white somewhere in five, and on those the seam disappears
+ * into it.
  */
-export const SPLIT_REWIND_DOTS = 40
-
-/**
- * Blank rows a band prints to come forward from the wind-back.
- *
- * The wind-back less the take-up: the paper ends up exactly where the previous band
- * stopped. If the take-up is not eight dots after all, this is the number to
- * adjust, and the error shows up directly — too small leaves white, too large
- * prints a millimetre twice and shows as a darker line.
- */
-export const SPLIT_PAD_DOTS = SPLIT_REWIND_DOTS - SPLIT_SEAM_DOTS
+const SEAM_SEARCH_DOTS = 40
 
 /** Fraction of the limit a band is allowed to reach, so a re-encode has room. */
 const HEADROOM = 0.85
 
 /** Shortest band worth sending, so the plan always reaches the end of the label. */
-const MIN_BAND_ROWS = 16
-
-/** One job's worth of a label: the raster to send, and how far to wind back first. */
-export interface SeekableBand {
-  raster: PackedBitmap
-  /** Zero for the first band, which has nothing before it to line up with. */
-  rewindDots: number
-}
+const MIN_BAND_ROWS = SPLIT_SEAM_DOTS * 4
 
 /**
  * Cut a raster into the fewest bands that each fit within the seek limit.
  *
- * Fewest, because every boundary is a place the head stops while the driver waits
- * for an acknowledgement, and a stopped head is where a seam would show.
- *
- * Returns a single band when the raster already fits, so a caller can treat
- * splitting as the general case. The rewind and the blank padding are paired here
- * rather than left to the driver: they are two halves of one correction and half of
- * it is worse than neither.
+ * Fewest, because every boundary costs a millimetre of image and a place a line
+ * could show. Returns a single band when the raster already fits, so a caller can
+ * treat splitting as the general case.
  */
 export function planSeekableBands(
   bitmap: PackedBitmap,
   limitBytes = SEEK_SAFE_JOB_BYTES,
-): SeekableBand[] {
+): PackedBitmap[] {
   const budget = Math.max(1, Math.floor(limitBytes * HEADROOM))
-  if (encodeImage(bitmap).length <= budget) return [{ raster: bitmap, rewindDots: 0 }]
+  if (encodeImage(bitmap).length <= budget) return [bitmap]
 
   const bytesPerRow = encodeImage(bitmap).length / Math.max(1, bitmap.heightDots)
   const estimate = Math.max(MIN_BAND_ROWS, Math.floor(budget / Math.max(bytesPerRow, 1)))
 
-  const bands: SeekableBand[] = []
-  let next = 0
-  while (next < bitmap.heightDots) {
-    const first = next === 0
-    let rows = Math.min(bitmap.heightDots - next, estimate)
-    let band = dress(sliceRows(bitmap, next, rows), first)
+  const bands: PackedBitmap[] = []
+  let from = 0
+  while (from < bitmap.heightDots) {
+    const remaining = bitmap.heightDots - from
+    if (remaining <= estimate) {
+      bands.push(sliceRows(bitmap, from, remaining))
+      break
+    }
 
-    // Compressed size is not linear in rows — a band of dense image compresses
-    // worse than the average — so the estimate can come out over. Halve until it
-    // fits, with a floor so the loop always advances.
-    while (rows > MIN_BAND_ROWS && encodeImage(band.raster).length > budget) {
+    let rows = quietestCut(bitmap, from, Math.min(remaining, estimate))
+    let band = sliceRows(bitmap, from, rows)
+    // Compressed size is not linear in rows — dense image compresses worse than
+    // the average — so the estimate can come out over. Halve until it fits, with a
+    // floor so the loop always advances.
+    while (rows > MIN_BAND_ROWS && encodeImage(band).length > budget) {
       rows = Math.max(MIN_BAND_ROWS, Math.floor(rows / 2))
-      band = dress(sliceRows(bitmap, next, rows), first)
+      band = sliceRows(bitmap, from, rows)
     }
 
     bands.push(band)
-    next += rows
+    // Skip the rows that will be lost to the printer's take-up, rather than
+    // printing them late and shifting the rest of the label down.
+    from += rows + SPLIT_SEAM_DOTS
   }
   return bands
 }
 
-/** Give a band its wind-back and the blank rows that undo it. */
-function dress(rows: PackedBitmap, first: boolean): SeekableBand {
-  return first
-    ? { raster: rows, rewindDots: 0 }
-    : { raster: prependBlankRows(rows, SPLIT_PAD_DOTS), rewindDots: SPLIT_REWIND_DOTS }
+/**
+ * Move the cut earlier to whichever row loses the least ink to the seam.
+ *
+ * Scores each candidate by the dots set in the {@link SPLIT_SEAM_DOTS} rows that
+ * would be skipped, and takes the lowest — ties going to the latest row, so a band
+ * stays as large as it can and the label needs as few boundaries as possible. A
+ * fully inked design scores the same everywhere and gets the estimate back
+ * unchanged.
+ */
+function quietestCut(bitmap: PackedBitmap, from: number, rows: number): number {
+  const earliest = Math.max(MIN_BAND_ROWS, rows - SEAM_SEARCH_DOTS)
+  let best = rows
+  let bestInk = Infinity
+  for (let candidate = rows; candidate >= earliest; candidate--) {
+    const ink = inkInRows(bitmap, from + candidate, SPLIT_SEAM_DOTS)
+    if (ink < bestInk) {
+      bestInk = ink
+      best = candidate
+      if (ink === 0) break
+    }
+  }
+  return best
+}
+
+/** Dots set in a run of rows. */
+function inkInRows(bitmap: PackedBitmap, from: number, count: number): number {
+  const start = Math.max(0, Math.min(bitmap.heightDots, from)) * bitmap.rowBytes
+  const end = Math.max(0, Math.min(bitmap.heightDots, from + count)) * bitmap.rowBytes
+  let ink = 0
+  for (let i = start; i < end; i++) {
+    let byte = bitmap.data[i]
+    while (byte) {
+      ink += byte & 1
+      byte >>= 1
+    }
+  }
+  return ink
 }

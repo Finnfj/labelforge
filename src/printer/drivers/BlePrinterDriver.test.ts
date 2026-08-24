@@ -433,13 +433,11 @@ describe('BlePrinterDriver', () => {
     expect(occurrences(transport.writes, '1f 11 51')).toBe(1)
     expect(stream.indexOf('1f 11 51')).toBeLessThan(stream.indexOf('1f 10 00 30'))
 
-    // Every band after the first winds back 5 mm and pads its raster to come
-    // forward again. 8 dots — the size of the seam — is under the printer's
-    // minimum step and was ignored; 40 is honoured, and the arithmetic is in
-    // splitJob.ts.
-    expect(occurrences(transport.writes, '1f 11 10 00 28')).toBe(bands - 1)
-    // Not the first band, which has nothing before it to line up with.
-    expect(stream.indexOf('1f 11 10 00 28')).toBeGreaterThan(stream.indexOf('1f 10 00 30'))
+    // No motion command anywhere. Wind-backs of 8 and 40 dots were both sent to a
+    // printer and both ignored — `adjustPosition` is inert like every other
+    // dedicated motion command here — so the seam is accounted for by skipping the
+    // rows that fall in it, not by moving paper. See splitJob.ts.
+    expect(stream).not.toContain('1f 11 10')
 
     // And the tear-off advance happens once, at the very end of the whole print.
     expect(occurrences(transport.writes, '1f 11 50')).toBe(1)

@@ -336,11 +336,11 @@ export function PrintPanel({
             the last one seeking, pausing between them because the printer will not take a new job
             while it is working.
             <br />
-            The printer takes up 1 mm when a job starts, which showed as a white seam at each
-            boundary. Each band after the first now winds back 5 mm and prints 4 mm of blank to come
-            forward again, landing exactly where the last one stopped &mdash; 1 mm on its own is
-            below the smallest movement the printer will make. If a seam is still visible, one of
-            the two below avoids the question entirely.
+            The printer takes up 1 mm when a job starts and nothing will take it back, so each
+            boundary costs a millimetre of the picture. The cut is moved to whichever row nearby
+            loses the least ink, which hides it in white space where there is any &mdash; between
+            two lines of text it disappears, across a full-bleed photograph it will still show. If
+            that is not good enough, one of the two below avoids the boundary entirely.
           </p>
 
           {remedyFits && (
