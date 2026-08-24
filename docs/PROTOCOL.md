@@ -867,6 +867,34 @@ correct later ones is exactly what a seek predicts too. Both hypotheses explaine
 evidence equally well, and nothing in the reasoning acknowledged that. The capture
 cost twenty minutes and settled in one pass what four rounds of inference had not.
 
+### Asking whether a command does anything
+
+Most of the difficulty in this document comes from one property of the firmware: a
+command sent on its own is acknowledged and ignored, and the ones that do anything
+only act inside a job, after a raster. The gap seek took four rounds of inference
+and an HCI capture to find for exactly that reason — `1F 12 20 00` had been in the
+command table the whole time and every test of it had been in the wrong position.
+
+Diagnostics has an instrument for that position now: **feed _N_ mm, then send
+«hex»**. It builds one real job — preamble, a blank raster of the requested height,
+the bytes under test, `stopPrintJob` — and sends it. `probeJob()` in
+`src/printer/protocol/probeJob.ts`.
+
+What it leaves out is the point. Three things move paper on a P50S: printing rows,
+the gap seek, and `alignPaperStart`. Two of those are part of an ordinary job's
+framing, and `alignPaperStart` alone is a twenty-millimetre retract that would
+drown out anything being measured. So the probe job carries none of them, and no
+`alignPaperEnd` either — the paper is left exactly where the probe left it. Feed a
+few millimetres for a reference, send the bytes, read off what happened.
+
+An empty probe is a legitimate control: it shows what the job alone does, which is
+the baseline every other reading is against.
+
+**Still unmeasured, and next in line:** `AdjustMode` has four values and only
+`BackwardDots` has ever been on the wire — at 8 dots and at 40, both ignored.
+`BackwardMm` (`1F 11 11`) has never been sent. If the firmware implements the
+millimetre modes and not the dot modes, that explains both failures exactly.
+
 ### Capturing the ground truth
 
 If the question needs settling, capture what the vendor app really sends.

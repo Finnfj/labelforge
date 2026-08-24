@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { DOTS_PER_MM, dotsToMm } from '../model/units'
 import * as cmd from '../printer/protocol/commands'
+import { probeJob } from '../printer/protocol/probeJob'
 import { PaperType } from '../printer/protocol/constants'
 import {
   blankLabel,
@@ -34,6 +35,8 @@ export function DiagnosticsPanel({
 }) {
   const [open, setOpen] = useState(false)
   const [rawHex, setRawHex] = useState('')
+  const [probeHex, setProbeHex] = useState('')
+  const [probeFeedMm, setProbeFeedMm] = useState(3)
   const [feedMm, setFeedMm] = useState(5)
   const [wrapInJob, setWrapInJob] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -105,6 +108,9 @@ export function DiagnosticsPanel({
     })
 
   const parsedRaw = useMemo(() => parseHex(rawHex), [rawHex])
+  // An empty probe is legitimate — it shows what the job alone does, which is the
+  // baseline every other reading is taken against.
+  const parsedProbe = useMemo(() => parseHex(probeHex), [probeHex])
 
   // Deliberately not a panel when closed. Printing works without any of this now
   // that the sequence matches the vendor app's, so a full-width card with a heading
@@ -325,6 +331,65 @@ export function DiagnosticsPanel({
             that much and fires no dots. The gap seek is left out of this one, so it advances what
             you ask and no more. Use it to step the paper until the gap sits where you want it, then
             read the millimetres off.
+          </p>
+          <h4 className="subhead">Try a command where commands work</h4>
+          <div className="row">
+            <label className="field">
+              <span style={{ minWidth: '4rem' }}>Feed</span>
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={probeFeedMm}
+                onChange={(e) =>
+                  setProbeFeedMm(Math.max(1, Math.min(200, Number(e.target.value) || 1)))
+                }
+              />
+              <em>mm, then</em>
+            </label>
+            <input
+              className="mono"
+              placeholder="1f 11 11 00 50"
+              value={probeHex}
+              onChange={(e) => setProbeHex(e.target.value)}
+              style={{ flex: 1, minWidth: '10rem' }}
+            />
+            <button
+              disabled={!connected || busy || parsedProbe === null}
+              onClick={() =>
+                parsedProbe &&
+                run(`Probe ${toHex(parsedProbe)} after ${probeFeedMm} mm`, () =>
+                  connection.driver.sendCommand(
+                    probeJob({
+                      // Gap stock either way: the probe never seeks, so the paper
+                      // type only decides a byte in the preamble.
+                      paperType: PaperType.Gap,
+                      density: DEFAULT_PRINT_SETTINGS.density,
+                      feedDots: DOTS_PER_MM * probeFeedMm,
+                      widthDots: headWidth,
+                      probe: parsedProbe,
+                    }),
+                    `probe job: ${probeFeedMm} mm blank then ${toHex(parsedProbe)}`,
+                  ),
+                )
+              }
+            >
+              Send in a job
+            </button>
+          </div>
+          {probeHex.trim().length > 0 && parsedProbe === null && (
+            <p className="error">Not valid hex. Use bytes like &ldquo;1f 11 11 00 50&rdquo;.</p>
+          )}
+          <p className="hint">
+            A command sent on its own is acknowledged and ignored on this firmware; the ones that do
+            anything only act inside a job, after a raster. That is why the gap seek took four
+            rounds of looking to find, having been in the table all along. This builds that
+            position: a real job, a blank strip of the height you ask for, then your bytes, then the
+            end of the job.
+            <br />
+            Nothing else in it moves paper &mdash; no retract, no seek, no advance to the tear-off
+            &mdash; so whatever the paper does after the strip is down to your bytes. Feed a few
+            millimetres so there is something to measure against.
           </p>
           <p className="warn">
             <strong>Calibrate label gap does not work on a P50S.</strong> It runs the vendor
