@@ -411,9 +411,8 @@ describe('BlePrinterDriver', () => {
 
   it('splits an oversized label so the last band carries the seek', async () => {
     // The one route to a registered tall label that costs no image quality. Each
-    // band is small enough for the printer to read whole, they go out back-to-back
-    // with no wait, and only the last one seeks — so the seek is in the buffer long
-    // before the head reaches it, which a single oversized job can never manage.
+    // band is small enough for the printer to read whole, and only the last one
+    // seeks.
     const { transport, driver } = acknowledging()
     await driver.connect()
     transport.reset()
@@ -437,6 +436,62 @@ describe('BlePrinterDriver', () => {
     // And the tear-off advance happens once, at the very end of the whole print.
     expect(occurrences(transport.writes, '1f 11 50')).toBe(1)
     expect(stream.endsWith('1f 11 50')).toBe(true)
+  }, 60_000)
+
+  it('waits for each band before sending the next', async () => {
+    // Back-to-back lost two thirds of a label: the printer accepted the first
+    // band, printed it, answered once and dropped the rest. It will not take a new
+    // job while it is working on one, so each band has to be acknowledged before
+    // the next goes out.
+    const { transport, driver } = acknowledging()
+    await driver.connect()
+    transport.reset()
+
+    const order: string[] = []
+    const underlying = transport.autoRespond!
+    transport.autoRespond = (bytes) => {
+      if (hex(bytes).includes('1f c0 01 00')) order.push('band')
+      return underlying(bytes)
+    }
+    transport.on('wire', (w) => {
+      if (w.direction === 'in' && hex(w.bytes) === '4f 4b') order.push('ok')
+    })
+
+    await driver.print({
+      bitmap: noisyBitmap(384, 640),
+      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true },
+    })
+
+    // Never two bands in a row: each is acknowledged before the next is sent.
+    expect(order.length).toBeGreaterThanOrEqual(4)
+    for (let i = 0; i < order.length - 1; i++) {
+      if (order[i] === 'band') expect(order[i + 1]).toBe('ok')
+    }
+  }, 60_000)
+
+  it('stops and says so when a band is not acknowledged', async () => {
+    // Pressing on would send the next band into a printer still moving paper,
+    // which is exactly what lost the label. Half a label plus a warning beats a
+    // whole one printed somewhere unpredictable.
+    const identity = identityResponder()
+    const transport = new MockTransport({ autoRespond: identity })
+    transport.creditsPerWrite = 1
+    const driver = new BlePrinterDriver(transport, { doneTimeoutMs: 1 })
+    await driver.connect()
+    transport.reset()
+
+    const warnings: string[] = []
+    driver.on('log', (l) => {
+      if (l.level === 'warn') warnings.push(l.message)
+    })
+    await driver.print({
+      bitmap: noisyBitmap(384, 640),
+      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true },
+    })
+
+    // One band went out, then it gave up rather than guessing.
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1)
+    expect(warnings.join(' ')).toMatch(/label is incomplete/i)
   }, 60_000)
 
   it('does not follow a split label with a seek job as well', async () => {

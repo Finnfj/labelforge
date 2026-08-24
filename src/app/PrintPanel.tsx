@@ -332,9 +332,10 @@ export function PrintPanel({
           <p>
             <strong>Splitting costs nothing in the picture</strong>, which is why it is first. The
             raster goes out as a few consecutive jobs, each small enough for the printer to read
-            whole, only the last one seeking &mdash; so the seek is in the buffer long before the
-            head reaches it, which a single job this size can never manage. Untested on hardware:
-            what could go wrong is a visible line where one part ends and the next begins.
+            whole and only the last one seeking. The printer will not take a new job while it is
+            working, so it pauses briefly between them &mdash; and a paused head is where a faint
+            line could show. Still unproven on hardware; if a line appears, one of the two below
+            instead.
           </p>
 
           {remedyFits && (

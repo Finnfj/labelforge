@@ -516,61 +516,38 @@ Which leaves the size of the label _job_ as the thing to attack. The dither sect
 above does that by making the raster compress; splitting does it without touching
 the picture at all.
 
-### Splitting one label across several jobs — implemented, untested on hardware
+### Splitting one label across several jobs — the printer will not stream them
 
 `planSeekableBands()` cuts the raster into the fewest horizontal bands that each
-encode under `SEEK_SAFE_JOB_BYTES`, and the driver sends them back-to-back as
-consecutive jobs: only the first retracts, only the last seeks, and the tear-off
-advance happens once at the very end. A 50 x 80 photograph at full-strength
-diffusion comes out as two bands, so one seam.
+encode under `SEEK_SAFE_JOB_BYTES`, and the driver sends them as consecutive jobs:
+only the first retracts, only the last seeks, and the tear-off advance happens once
+at the very end. A 50 x 80 photograph at full-strength diffusion comes out as three
+bands.
 
-It is a different experiment from the follow-up job for two reasons, either of which
-would be enough on its own:
+**Back-to-back does not work, and this is now measured.** The appeal was that the
+final band's seek would be in the buffer before the head reached it, which a single
+oversized job can never manage. The bytes went out correctly — three jobs of 223,
+223 and 194 rows, one `1F 11 51` in the first, one `1F 12 20 00` in the last, one
+`1F 11 50` closing the stream — and the printer answered `4F 4B` **once** and
+printed the first band only. A 640-row label came out 223 rows tall.
 
-- **The seek is in the buffer before the raster ends.** The bands go out with no
-  wait between them, so the printer has read the last band and its seek long before
-  the head reaches them. The follow-up job could never manage that — it is sent only
-  once `4F 4B` says the printer has stopped, and a printer that has stopped is in a
-  different state from one still working.
-- **Nothing resets between the bands.** If the printer counts how far it has printed
-  within the current label — the reading that best fits the follow-up behaving as a
-  form feed — then an unbroken run of bands is its best chance of counting the whole
-  label rather than the millimetre in front of the seek.
+One acknowledgement for three jobs is the tell: every other log here shows one per
+job. **The printer will not accept a job while it is working on one**, so there is
+no way to get a second job into its buffer, and that whole line of reasoning is
+closed.
 
-The risk is a visible line at a seam, if the printer stops the head between jobs.
-That is why the planner minimises the number of bands rather than using a fixed
-size, and why the option is off by default.
+So the bands go one at a time, each waiting for the last to be acknowledged, and the
+driver stops and says so if an acknowledgement does not arrive rather than firing the
+next band at a printer still moving paper. What that leaves is the other reason
+splitting might register a label: nothing resets between the bands, and the last one
+prints real rows rather than a millimetre of blank, which is as close as a separate
+job can get to the geometry that works. Whether the printer's idea of how far into
+the current label it is survives a job boundary is the open question, and the only
+one left.
 
-This is the only route to a registered tall label that costs nothing in the
-picture, which is what makes it worth the experiment even though the model behind
-it is uncertain.
-
-**An earlier repair did not work, and the failure is informative.** If the
-retract lands a registered roll on the gap, winding back before the seek should
-put the paper on the label side of the boundary and let the seek stop at the gap
-just ahead. It was tried: `1F 11 10 00 28`, five millimetres backwards, after the
-retract and before the raster. The printer honoured it — the paper visibly pulled
-back — and a whole blank label came out anyway.
-
-So **the seek is a form feed**. It advances a label from wherever within one it
-starts, and the starting position is not the lever. That is consistent with every
-observation of it: it registers a lost roll because a form feed lands on a
-boundary, and it costs a label on a roll already on one for the same reason. The
-follow-up is named for that in the UI now rather than for what it was hoped to be.
-
-Two things that experiment did settle, both worth keeping:
-
-- **`adjustPosition` works.** `1F 11 10` moved the paper, inside a job with a
-  raster behind it. "Every dedicated motion command on this firmware is inert" was
-  only ever tested standalone, and is too strong — `1F 11 00` is a real
-  alternative to blank rows for crossing a gap if the blank-row feed ever proves
-  wanting.
-- **The acknowledgement latency tells you which happened.** A follow-up that
-  registered a lost roll answered `4F 4B` in ~600 ms; the ones that ate a label
-  took ~1.6 s. Enough travel to measure, if it is ever worth acting on.
-
-The reading is testable directly: `1F 11 50` on its own should move the paper
-about 20 mm, and `1F 11 51` should pull it back. Neither has been sent alone.
+The cost is that the head now stops at each boundary while the driver waits, and a
+stopped head is where a seam would show. The planner minimises the band count for
+that reason, and the option is off by default.
 
 ### The diagnostics feed used to seek
 

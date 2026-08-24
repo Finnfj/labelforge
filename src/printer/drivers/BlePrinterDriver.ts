@@ -376,9 +376,13 @@ export class BlePrinterDriver implements PrinterDriver {
         // the very end — sending it between bands would walk the paper out to the
         // tear position in the middle of the image.
         //
-        // The bands go out back-to-back with no wait, which is the point: the last
-        // one and its seek are in the printer's buffer well before the head reaches
-        // them, which is the condition a single oversized job cannot meet.
+        // Each band waits for the one before it to be acknowledged. Sending them
+        // back-to-back was tried first, on the theory that the last band's seek
+        // would then be in the buffer before the head reached it; the printer
+        // accepted the first band, printed it, answered once, and dropped the rest,
+        // so a tall label came out a third of its height. It will not take a new
+        // job while it is working on one, and there is no way to put a second job
+        // in its buffer.
         for (let band = 0; band < streams.length; band++) {
           opts.signal?.throwIfAborted()
           const last = band === streams.length - 1
@@ -391,6 +395,21 @@ export class BlePrinterDriver implements PrinterDriver {
               progress('transfer', copy)
             },
           )
+          if (!last) {
+            progress('feed', copy)
+            if (!(await this.#waitForDone(opts.signal, printDurationMs(bands[band].heightDots)))) {
+              // Carrying on regardless would send the next band into a printer
+              // still moving paper, which is what lost the label last time.
+              this.#emitter.emit('log', {
+                level: 'warn',
+                message:
+                  'The printer did not acknowledge part of this label, so the rest of it was not ' +
+                  'sent. The label is incomplete — check the battery, and try it without ' +
+                  'splitting.',
+              })
+              break
+            }
+          }
         }
 
         // The printer is still printing — a full-height label for ten seconds

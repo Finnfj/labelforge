@@ -12,20 +12,23 @@ import { SEEK_SAFE_JOB_BYTES } from './constants'
  *
  * Sending the seek afterwards in a job of its own does not work: it behaves as a
  * form feed and takes a blank label, from every starting position tried. Splitting
- * the label itself is the remaining move, and it is a different experiment for two
- * reasons, either of which would be enough:
+ * the label itself is the remaining move — the only one that costs nothing in the
+ * picture, since every other route trades image quality for compressed size.
  *
- * - **The seek is in the buffer before the raster ends.** The slices go out
- *   back-to-back with no wait, so by the time the printer finishes the second-last
- *   band it has already read the last band and the seek behind it. The follow-up
- *   job could never manage that, because it is sent only once `4F 4B` says the
- *   printer has stopped — and a printer that has stopped is in a different state
- *   from one still working.
- * - **Nothing resets between the bands.** Only the first slice retracts, none but
- *   the last seeks, and the tear-off advance happens once at the end. If the
- *   printer counts how far it has printed within the current label — the reading
- *   that best fits the follow-up's behaviour — an unbroken run of bands is its
- *   best chance of counting the whole label.
+ * **The bands must be sent one at a time, each waiting for the last to be
+ * acknowledged.** Back-to-back was the first attempt, on the theory that the final
+ * band's seek would then be in the buffer before the head reached it. The printer
+ * accepted the first band, printed it, answered `4F 4B` once and dropped the other
+ * two: a 640-row label came out 223 rows tall. It will not take a new job while it
+ * is working on one, so there is no way to get a second job into its buffer, and
+ * that theory is dead.
+ *
+ * What is left is the other reason splitting might work: nothing resets between the
+ * bands. Only the first retracts, none but the last seeks, the tear-off advance
+ * happens once at the end. If the printer counts how far it has printed within the
+ * current label — the reading that best fits the follow-up behaving as a form feed —
+ * then the last band having printed real rows rather than a millimetre of blank is
+ * the closest a separate job can get to the geometry that works.
  *
  * The risk is a visible seam at each boundary if the printer stops the head
  * between jobs. That is why this plans the fewest bands it can rather than a fixed
@@ -37,6 +40,9 @@ const HEADROOM = 0.85
 
 /**
  * Cut a raster into the fewest bands that each fit within the seek limit.
+ *
+ * Fewest, because every boundary is a place the head stops while the driver waits
+ * for the acknowledgement, and a stopped head is where a seam would show.
  *
  * Compressed size is not linear in rows — a band of dense image compresses worse
  * than the average — so this estimates from the whole raster, then verifies each
