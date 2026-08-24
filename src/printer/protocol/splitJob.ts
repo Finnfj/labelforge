@@ -1,4 +1,4 @@
-import { sliceRows, type PackedBitmap } from '../../model/bitmap'
+import { prependBlankRows, sliceRows, type PackedBitmap } from '../../model/bitmap'
 import { encodeImage } from './encodeImage'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
 
@@ -7,108 +7,130 @@ import { SEEK_SAFE_JOB_BYTES } from './constants'
  *
  * The printer honours a job's gap seek only when it read the job in full before
  * the motor started. Above `SEEK_SAFE_JOB_BYTES` it did not, and the seek at the
- * end of a tall label goes unread — which is the whole reason tall labels do not
- * register themselves.
+ * end of a tall label goes unread — which is why tall labels do not register
+ * themselves. Sending the seek afterwards in a job of its own does not help: it
+ * behaves as a form feed and takes a blank label. Splitting the label is the only
+ * route that costs nothing in the picture, and it works: the label prints whole,
+ * registers, and wastes no paper.
  *
- * Sending the seek afterwards in a job of its own does not work: it behaves as a
- * form feed and takes a blank label, from every starting position tried. Splitting
- * the label itself is the remaining move — the only one that costs nothing in the
- * picture, since every other route trades image quality for compressed size.
+ * **The bands must go one at a time**, each waiting for the last to be
+ * acknowledged. Back-to-back was tried and the printer accepted the first band,
+ * printed it, answered `4F 4B` once and dropped the rest.
  *
- * **The bands must be sent one at a time, each waiting for the last to be
- * acknowledged.** Back-to-back was the first attempt, on the theory that the final
- * band's seek would then be in the buffer before the head reached it. The printer
- * accepted the first band, printed it, answered `4F 4B` once and dropped the other
- * two: a 640-row label came out 223 rows tall. It will not take a new job while it
- * is working on one, so there is no way to get a second job into its buffer, and
- * that theory is dead.
+ * ## The seam
  *
- * What is left is the other reason splitting might work: nothing resets between the
- * bands. Only the first retracts, none but the last seeks, the tear-off advance
- * happens once at the end. If the printer counts how far it has printed within the
- * current label — the reading that best fits the follow-up behaving as a form feed —
- * then the last band having printed real rows rather than a millimetre of blank is
- * the closest a separate job can get to the geometry that works.
+ * The printer takes up {@link SPLIT_SEAM_DOTS} — measured at exactly 1 mm — at the
+ * start of a job, before it lays down a raster. So the next band begins a
+ * millimetre past where the last one stopped, and the gap shows as a white line.
  *
- * The risk is a visible seam at each boundary if the printer stops the head
- * between jobs. That is why this plans the fewest bands it can rather than a fixed
- * size, and why it is opt-in.
+ * Two corrections have been tried and both failed, in ways worth keeping:
+ *
+ * - **Winding back eight dots.** `1F 11 10 00 08` went out and the printer ignored
+ *   it. Forty dots of the same command moves paper visibly, so the minimum step is
+ *   somewhere between the two.
+ * - **Overlapping the bands by eight rows.** This has the wrong sign, which the
+ *   geometry says plainly and a print confirmed. The paper advances a millimetre
+ *   *without printing*; repeating rows does not take that advance back, it just
+ *   prints them again after the gap and pushes everything below down by another
+ *   millimetre. The seam stayed exactly as it was.
+ *
+ * What removes the advance is removing the advance. The band winds back
+ * {@link SPLIT_REWIND_DOTS}, which is far enough to be honoured, and then prints
+ * {@link SPLIT_PAD_DOTS} of blank to come forward again — landing the first real
+ * row exactly where the last band stopped. The blank rows pass back over paper that
+ * is already printed and fire nothing, so they cost only their compressed size,
+ * which for blank is nothing.
+ *
+ * The whole correction is one movement known to work plus arithmetic, rather than a
+ * movement of the size we actually want, which the printer will not make.
  */
 
 /**
- * The gap the printer leaves at the start of a job, in dots.
+ * What the printer takes up at the start of a job, in dots.
  *
- * Measured on a P50S: a split label registered correctly and came out with a seam
- * at each boundary of **exactly one millimetre**, which is eight dots at 8 dots/mm.
- * The printer takes up that much before it starts laying down a raster, so every
- * band after the first would begin one millimetre further on than the last ended.
- *
- * **Filled by overlapping the bands, not by a motion command.** Winding back eight
- * dots with `1F 11 10` was the obvious correction and the printer ignored it — the
- * bytes went out in bands two and three, all three jobs were acknowledged, and the
- * seam was unchanged. Forty dots of the same command had moved paper visibly in an
- * earlier experiment, so there is a minimum step somewhere between the two and
- * eight dots is under it.
- *
- * Overlapping needs no command at all: band two simply starts eight rows before
- * band one ended, and those rows land in the millimetre the printer inserts. Pure
- * arithmetic against a measurement, which is a better thing to depend on than an
- * undocumented motion primitive.
+ * Measured: a split label came out registered with a seam at the boundary of
+ * exactly one millimetre, which is eight dots at 8 dots/mm.
  */
 export const SPLIT_SEAM_DOTS = 8
+
+/**
+ * How far a band winds back before printing, in dots.
+ *
+ * Five millimetres. Eight dots is under the printer's minimum step and does
+ * nothing; forty was seen to move paper during an earlier experiment, in the same
+ * position in a job. The exact value does not matter as long as it is honoured and
+ * {@link SPLIT_PAD_DOTS} matches it.
+ */
+export const SPLIT_REWIND_DOTS = 40
+
+/**
+ * Blank rows a band prints to come forward from the wind-back.
+ *
+ * The wind-back less the take-up: the paper ends up exactly where the previous band
+ * stopped. If the take-up is not eight dots after all, this is the number to
+ * adjust, and the error shows up directly — too small leaves white, too large
+ * prints a millimetre twice and shows as a darker line.
+ */
+export const SPLIT_PAD_DOTS = SPLIT_REWIND_DOTS - SPLIT_SEAM_DOTS
 
 /** Fraction of the limit a band is allowed to reach, so a re-encode has room. */
 const HEADROOM = 0.85
 
-/**
- * Shortest band worth sending.
- *
- * Has to exceed the overlap, or a band would be nothing but the rows the band
- * before it already printed and the plan would never reach the end of the label.
- */
-const MIN_BAND_ROWS = SPLIT_SEAM_DOTS * 2
+/** Shortest band worth sending, so the plan always reaches the end of the label. */
+const MIN_BAND_ROWS = 16
+
+/** One job's worth of a label: the raster to send, and how far to wind back first. */
+export interface SeekableBand {
+  raster: PackedBitmap
+  /** Zero for the first band, which has nothing before it to line up with. */
+  rewindDots: number
+}
 
 /**
  * Cut a raster into the fewest bands that each fit within the seek limit.
  *
  * Fewest, because every boundary is a place the head stops while the driver waits
- * for the acknowledgement, and a stopped head is where a seam would show.
+ * for an acknowledgement, and a stopped head is where a seam would show.
  *
- * Compressed size is not linear in rows — a band of dense image compresses worse
- * than the average — so this estimates from the whole raster, then verifies each
- * band and halves any that came out over. Returns a single-element array when the
- * raster already fits, so a caller can treat splitting as the general case.
+ * Returns a single band when the raster already fits, so a caller can treat
+ * splitting as the general case. The rewind and the blank padding are paired here
+ * rather than left to the driver: they are two halves of one correction and half of
+ * it is worse than neither.
  */
 export function planSeekableBands(
   bitmap: PackedBitmap,
   limitBytes = SEEK_SAFE_JOB_BYTES,
-): PackedBitmap[] {
+): SeekableBand[] {
   const budget = Math.max(1, Math.floor(limitBytes * HEADROOM))
-  if (encodeImage(bitmap).length <= budget) return [bitmap]
+  if (encodeImage(bitmap).length <= budget) return [{ raster: bitmap, rewindDots: 0 }]
 
   const bytesPerRow = encodeImage(bitmap).length / Math.max(1, bitmap.heightDots)
   const estimate = Math.max(MIN_BAND_ROWS, Math.floor(budget / Math.max(bytesPerRow, 1)))
 
-  const bands: PackedBitmap[] = []
+  const bands: SeekableBand[] = []
   let next = 0
   while (next < bitmap.heightDots) {
-    // Every band but the first reaches back over the seam, so the rows the printer
-    // would otherwise skip are printed by the band that follows it.
-    const from = next === 0 ? 0 : next - SPLIT_SEAM_DOTS
-    let rows = Math.min(bitmap.heightDots - from, estimate + (next === 0 ? 0 : SPLIT_SEAM_DOTS))
-    let band = sliceRows(bitmap, from, rows)
+    const first = next === 0
+    let rows = Math.min(bitmap.heightDots - next, estimate)
+    let band = dress(sliceRows(bitmap, next, rows), first)
 
     // Compressed size is not linear in rows — a band of dense image compresses
     // worse than the average — so the estimate can come out over. Halve until it
-    // fits. The floor keeps the overlap from eating the whole band, which would
-    // stop the loop making progress.
-    while (rows > MIN_BAND_ROWS && encodeImage(band).length > budget) {
+    // fits, with a floor so the loop always advances.
+    while (rows > MIN_BAND_ROWS && encodeImage(band.raster).length > budget) {
       rows = Math.max(MIN_BAND_ROWS, Math.floor(rows / 2))
-      band = sliceRows(bitmap, from, rows)
+      band = dress(sliceRows(bitmap, next, rows), first)
     }
 
     bands.push(band)
-    next = from + band.heightDots
+    next += rows
   }
   return bands
+}
+
+/** Give a band its wind-back and the blank rows that undo it. */
+function dress(rows: PackedBitmap, first: boolean): SeekableBand {
+  return first
+    ? { raster: rows, rewindDots: 0 }
+    : { raster: prependBlankRows(rows, SPLIT_PAD_DOTS), rewindDots: SPLIT_REWIND_DOTS }
 }

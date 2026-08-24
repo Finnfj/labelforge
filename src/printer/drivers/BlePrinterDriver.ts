@@ -317,7 +317,9 @@ export class BlePrinterDriver implements PrinterDriver {
       // One band unless splitting is asked for and the label needs it, so the
       // ordinary path is the same code with a single-element array.
       const bands =
-        job.settings.splitForSeek === true ? planSeekableBands(job.bitmap) : [job.bitmap]
+        job.settings.splitForSeek === true
+          ? planSeekableBands(job.bitmap)
+          : [{ raster: job.bitmap, rewindDots: 0 }]
       const image = encodeImage(job.bitmap)
       const framing = cmd.printJobFraming(job.settings)
       // Commands and raster are one stream per band, chunked without regard for
@@ -329,8 +331,9 @@ export class BlePrinterDriver implements PrinterDriver {
             ...job.settings,
             alignStart: i === 0,
             seekGap: i === bands.length - 1,
+            rewindDots: band.rewindDots,
           }),
-          bands.length === 1 ? image : encodeImage(band),
+          bands.length === 1 ? image : encodeImage(band.raster),
         ),
       )
       const total = streams.reduce((n, s) => n + s.length, 0) * job.settings.copies
@@ -397,7 +400,12 @@ export class BlePrinterDriver implements PrinterDriver {
           )
           if (!last) {
             progress('feed', copy)
-            if (!(await this.#waitForDone(opts.signal, printDurationMs(bands[band].heightDots)))) {
+            if (
+              !(await this.#waitForDone(
+                opts.signal,
+                printDurationMs(bands[band].raster.heightDots),
+              ))
+            ) {
               // Carrying on regardless would send the next band into a printer
               // still moving paper, which is what lost the label last time.
               this.#emitter.emit('log', {

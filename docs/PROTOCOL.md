@@ -550,19 +550,32 @@ affirmative: whatever it uses to decide where the gap is survives a job boundary
 the last band's seek lands correctly even though that band printed only a third of
 the label.
 
-**The seam is exactly 1 mm**, and the bands overlap by it. The printer takes up
-eight dots at the start of a job before it lays down a raster, so each band would
-begin a millimetre further on than the last one ended and the gap shows as a white
-line. `planSeekableBands()` starts every band after the first eight rows earlier, so
-those rows are printed by the band that follows and land in the millimetre the
-printer inserts.
+**The seam is exactly 1 mm**, and closing it took three attempts because the first
+two were the wrong shape.
 
-Winding back with `1F 11 10 00 08` was the obvious correction and the printer
-**ignored it**: the bytes went out in bands two and three, all three jobs were
-acknowledged, and the seam was unchanged. Forty dots of the same command had moved
-paper visibly in an earlier experiment, so the minimum step is somewhere between
-eight and forty. Overlapping needs no command at all, which is a better thing to
-depend on.
+The printer takes up eight dots at the start of a job before it lays down a raster,
+so the next band begins a millimetre past where the last one stopped and the gap
+shows as a white line.
+
+- **Winding back eight dots.** `1F 11 10 00 08` went out in every band after the
+  first, all jobs were acknowledged, and the seam was unchanged. Forty dots of the
+  same command had moved paper visibly in an earlier experiment, so the printer has
+  a minimum step somewhere between eight and forty.
+- **Overlapping the rasters by eight rows.** This has the wrong sign, which the
+  geometry says plainly once written down and a print confirmed. The paper advances
+  a millimetre _without printing_; repeating rows does not take that advance back,
+  it prints them again after the gap and pushes everything below down by another
+  millimetre. The seam stayed exactly where it was, at 27.9 mm on a two-band label.
+- **Winding back five millimetres and printing four of blank.** What works has to
+  remove the advance, and the only movement available is one larger than the error.
+  So the band winds back `SPLIT_REWIND_DOTS`, which is honoured, then prints
+  `SPLIT_PAD_DOTS` of blank to come forward again, landing the first real row exactly
+  where the last band stopped. The blank rows pass back over paper that is already
+  printed and fire nothing.
+
+`SPLIT_SEAM_DOTS - rewindDots + padRows` must be zero, and a test says so in those
+terms: too small leaves white, too large prints a millimetre twice and shows as a
+darker line.
 
 The cost is that the head now stops at each boundary while the driver waits, and a
 stopped head is where a seam would show. The planner minimises the band count for

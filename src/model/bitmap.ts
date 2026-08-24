@@ -73,6 +73,23 @@ export function sliceRows(bm: PackedBitmap, startRow: number, rows: number): Pac
   }
 }
 
+/**
+ * Add blank rows above the image.
+ *
+ * The counterpart to {@link appendBlankRows}, and it exists for the seam between
+ * the bands of a split label: the head is deliberately wound back further than it
+ * needs to be, and these rows carry it forward to exactly where the last band
+ * stopped without firing a dot on the way. See `printer/protocol/splitJob.ts`.
+ */
+export function prependBlankRows(bm: PackedBitmap, rows: number): PackedBitmap {
+  const extra = Math.max(0, Math.round(rows))
+  if (extra === 0) return bm
+  const heightDots = bm.heightDots + extra
+  const data = new Uint8Array(bm.rowBytes * heightDots)
+  data.set(bm.data, extra * bm.rowBytes)
+  return { widthDots: bm.widthDots, heightDots, rowBytes: bm.rowBytes, data }
+}
+
 /** Set or clear the dot at (x, y). Out-of-bounds writes are ignored. */
 export function setDot(bm: PackedBitmap, x: number, y: number, black: boolean): void {
   if (x < 0 || y < 0 || x >= bm.widthDots || y >= bm.heightDots) return

@@ -242,6 +242,16 @@ export function printJobFraming(settings: {
    * undo, and retracting again mid-label would tear the image.
    */
   alignStart?: boolean
+  /**
+   * Wind the paper back this many dots before printing.
+   *
+   * For the seam between the bands of a split label. Eight dots — the size of the
+   * gap — is below the printer's minimum step and does nothing; forty is honoured.
+   * So the band winds back forty and then prints blank rows to come forward again,
+   * which is a correction made of a movement that works plus arithmetic. See
+   * `splitJob.ts`.
+   */
+  rewindDots?: number
 }): PrintJobFraming {
   return {
     preamble: [
@@ -259,6 +269,14 @@ export function printJobFraming(settings: {
       ...(settings.alignStart === false
         ? []
         : [{ bytes: alignPaperStart(), note: 'alignPaperStart' }]),
+      ...(settings.rewindDots
+        ? [
+            {
+              bytes: adjustPosition(AdjustMode.BackwardDots, settings.rewindDots),
+              note: 'rewind',
+            },
+          ]
+        : []),
     ],
     trailer: [
       // The alignment fix, and the reason labels register at all: seek the next
