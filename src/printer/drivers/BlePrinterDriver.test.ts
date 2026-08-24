@@ -433,6 +433,13 @@ describe('BlePrinterDriver', () => {
     expect(occurrences(transport.writes, '1f 11 51')).toBe(1)
     expect(stream.indexOf('1f 11 51')).toBeLessThan(stream.indexOf('1f 10 00 30'))
 
+    // Every band after the first winds back the millimetre the printer takes up
+    // when a job starts. Measured on hardware as exactly that: a split label came
+    // out registered, with a 1 mm white seam at each boundary.
+    expect(occurrences(transport.writes, '1f 11 10 00 08')).toBe(bands - 1)
+    // And the first band does not, or the label would start a millimetre high.
+    expect(stream.indexOf('1f 11 10 00 08')).toBeGreaterThan(stream.indexOf('1f 10 00 30'))
+
     // And the tear-off advance happens once, at the very end of the whole print.
     expect(occurrences(transport.writes, '1f 11 50')).toBe(1)
     expect(stream.endsWith('1f 11 50')).toBe(true)

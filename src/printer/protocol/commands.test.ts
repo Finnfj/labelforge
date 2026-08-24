@@ -4,6 +4,9 @@ import { followUpSeekJob, printJobFraming, printJobStream } from './commands'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
 
+/** A stand-in raster payload, recognisable in a hex dump. */
+const A = Uint8Array.of(0xaa, 0xbb)
+
 const framingHex = (settings: Parameters<typeof printJobFraming>[0]) => {
   const f = printJobFraming(settings)
   return {
@@ -93,6 +96,28 @@ describe('followUpSeekJob', () => {
     // it never reads, which is the problem this is working around.
     const framing = printJobFraming({ paperType: PaperType.Gap, density: 8 })
     expect(followUpSeekJob(framing, 384).length).toBeLessThan(200)
+  })
+})
+
+describe('band framing', () => {
+  it('winds back the seam only when asked', () => {
+    // The printer takes up about a millimetre at the start of a job, so a band
+    // after the first begins that far on from where the last one ended. Measured
+    // as exactly 8 dots, and correctable because `1F 11 10` works inside a job.
+    const plain = hex(printJobStream(printJobFraming({ paperType: PaperType.Gap, density: 8 }), A))
+    expect(plain).not.toContain('1f 11 10')
+
+    const wound = hex(
+      printJobStream(
+        printJobFraming({ paperType: PaperType.Gap, density: 8, rewindDots: 8, alignStart: false }),
+        A,
+      ),
+    )
+    expect(wound).toContain('1f 11 10 00 08')
+    // Before the raster, or it would wind back what has just been printed.
+    expect(wound.indexOf('1f 11 10 00 08')).toBeLessThan(wound.indexOf('aa bb'))
+    // And no retract, which belongs to the first band alone.
+    expect(wound).not.toContain('1f 11 51')
   })
 })
 

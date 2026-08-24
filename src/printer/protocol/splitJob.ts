@@ -35,6 +35,21 @@ import { SEEK_SAFE_JOB_BYTES } from './constants'
  * size, and why it is opt-in.
  */
 
+/**
+ * The gap the printer leaves at the start of a job, in dots.
+ *
+ * Measured on a P50S: a split label registered correctly and came out with a seam
+ * at each boundary of **exactly one millimetre**, which is eight dots at 8 dots/mm.
+ * The printer takes up that much before it starts laying down a raster, so every
+ * band after the first begins one millimetre further on than the one before it
+ * ended.
+ *
+ * Corrected by winding back the same amount, which works because `1F 11 10` is
+ * honoured inside a job with a raster behind it — established, as it happens, by an
+ * attempt to fix something else entirely.
+ */
+export const SPLIT_SEAM_DOTS = 8
+
 /** Fraction of the limit a band is allowed to reach, so a re-encode has room. */
 const HEADROOM = 0.85
 

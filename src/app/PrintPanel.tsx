@@ -330,12 +330,15 @@ export function PrintPanel({
             <span>Split the print so the last part can seek</span>
           </label>
           <p>
-            <strong>Splitting costs nothing in the picture</strong>, which is why it is first. The
-            raster goes out as a few consecutive jobs, each small enough for the printer to read
-            whole and only the last one seeking. The printer will not take a new job while it is
-            working, so it pauses briefly between them &mdash; and a paused head is where a faint
-            line could show. Still unproven on hardware; if a line appears, one of the two below
-            instead.
+            <strong>Splitting costs nothing in the picture</strong>, which is why it is first, and
+            it is confirmed on hardware: the label registers and no paper is wasted. The raster goes
+            out as a few consecutive jobs, each small enough for the printer to read whole and only
+            the last one seeking, pausing between them because the printer will not take a new job
+            while it is working.
+            <br />
+            The printer takes up 1 mm when a job starts, which showed as a white seam at each
+            boundary; each band after the first now winds that millimetre back. If a seam is still
+            visible, one of the two below avoids the question entirely.
           </p>
 
           {remedyFits && (

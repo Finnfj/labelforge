@@ -516,7 +516,7 @@ Which leaves the size of the label _job_ as the thing to attack. The dither sect
 above does that by making the raster compress; splitting does it without touching
 the picture at all.
 
-### Splitting one label across several jobs — the printer will not stream them
+### Splitting one label across several jobs — works, one at a time
 
 `planSeekableBands()` cuts the raster into the fewest horizontal bands that each
 encode under `SEEK_SAFE_JOB_BYTES`, and the driver sends them as consecutive jobs:
@@ -538,12 +538,24 @@ closed.
 
 So the bands go one at a time, each waiting for the last to be acknowledged, and the
 driver stops and says so if an acknowledgement does not arrive rather than firing the
-next band at a printer still moving paper. What that leaves is the other reason
-splitting might register a label: nothing resets between the bands, and the last one
-prints real rows rather than a millimetre of blank, which is as close as a separate
-job can get to the geometry that works. Whether the printer's idea of how far into
-the current label it is survives a job boundary is the open question, and the only
-one left.
+next band at a printer still moving paper.
+
+**And that works.** A 50 x 80 photograph at full-strength diffusion prints whole,
+registers, and wastes no label — which is the original goal reached with the picture
+exactly as designed. It is the only route to that; every other answer trades image
+quality for compressed size.
+
+It also answers the open question about the printer's sense of position, in the
+affirmative: whatever it uses to decide where the gap is survives a job boundary, so
+the last band's seek lands correctly even though that band printed only a third of
+the label.
+
+**The seam is exactly 1 mm.** The printer takes up eight dots at the start of a job
+before it lays down a raster, so each band begins a millimetre further on than the
+last one ended, and the gap shows as a white line. `SPLIT_SEAM_DOTS` winds it back
+with `1F 11 10` on every band after the first — which is possible only because that
+command was shown to work inside a job with a raster behind it, during an attempt to
+fix something else.
 
 The cost is that the head now stops at each boundary while the driver waits, and a
 stopped head is where a seam would show. The planner minimises the band count for

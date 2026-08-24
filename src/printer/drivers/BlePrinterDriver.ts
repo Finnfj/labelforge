@@ -12,7 +12,7 @@ import {
   faultFromFlags,
 } from '../protocol/responses'
 import { encodeImage } from '../protocol/encodeImage'
-import { planSeekableBands } from '../protocol/splitJob'
+import { planSeekableBands, SPLIT_SEAM_DOTS } from '../protocol/splitJob'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -329,6 +329,9 @@ export class BlePrinterDriver implements PrinterDriver {
             ...job.settings,
             alignStart: i === 0,
             seekGap: i === bands.length - 1,
+            // Every band but the first has to undo the millimetre the printer
+            // takes up when a job starts, or the seam shows as a white line.
+            rewindDots: i === 0 ? 0 : SPLIT_SEAM_DOTS,
           }),
           bands.length === 1 ? image : encodeImage(band),
         ),
