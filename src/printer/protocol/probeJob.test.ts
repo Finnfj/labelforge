@@ -12,7 +12,7 @@ const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '
  * this firmware are part of an ordinary job's framing.
  */
 
-const probe = () =>
+const probe = (position?: 'before' | 'after') =>
   hex(
     probeJob({
       paperType: PaperType.Gap,
@@ -20,6 +20,7 @@ const probe = () =>
       feedDots: 16,
       widthDots: 384,
       probe: Uint8Array.of(0x1f, 0x11, 0x11, 0x00, 0x50),
+      position,
     }),
   )
 
@@ -32,6 +33,16 @@ describe('probeJob', () => {
     expect(stream).toContain('1f 11 11 00 50')
     expect(stream.indexOf('1f 10 00 30')).toBeLessThan(stream.indexOf('1f 11 11 00 50'))
     expect(stream.indexOf('1f 11 11 00 50')).toBeLessThan(stream.indexOf('1f c0 01 01'))
+  })
+
+  it('can put them before the raster instead', () => {
+    // Not a detail. The gap seek acts only *after* a raster; alignPaperStart looks
+    // like the opposite — it retracts before one, as it does in an ordinary job,
+    // and four of them after a raster moved nothing. So a command that does
+    // nothing in one position has not been ruled out, only ruled out there.
+    const stream = probe('before')
+    expect(stream.indexOf('1f c0 01 00')).toBeLessThan(stream.indexOf('1f 11 11 00 50'))
+    expect(stream.indexOf('1f 11 11 00 50')).toBeLessThan(stream.indexOf('1f 10 00 30'))
   })
 
   it('leaves out everything else that moves paper', () => {

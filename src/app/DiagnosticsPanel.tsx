@@ -37,6 +37,7 @@ export function DiagnosticsPanel({
   const [rawHex, setRawHex] = useState('')
   const [probeHex, setProbeHex] = useState('')
   const [probeFeedMm, setProbeFeedMm] = useState(3)
+  const [probePosition, setProbePosition] = useState<'before' | 'after'>('after')
   const [feedMm, setFeedMm] = useState(5)
   const [wrapInJob, setWrapInJob] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -345,7 +346,16 @@ export function DiagnosticsPanel({
                   setProbeFeedMm(Math.max(1, Math.min(200, Number(e.target.value) || 1)))
                 }
               />
-              <em>mm, then</em>
+              <em>mm,</em>
+            </label>
+            <label className="field">
+              <select
+                value={probePosition}
+                onChange={(e) => setProbePosition(e.target.value as 'before' | 'after')}
+              >
+                <option value="after">then send</option>
+                <option value="before">and send first</option>
+              </select>
             </label>
             <input
               className="mono"
@@ -358,19 +368,22 @@ export function DiagnosticsPanel({
               disabled={!connected || busy || parsedProbe === null}
               onClick={() =>
                 parsedProbe &&
-                run(`Probe ${toHex(parsedProbe)} after ${probeFeedMm} mm`, () =>
-                  connection.driver.sendCommand(
-                    probeJob({
-                      // Gap stock either way: the probe never seeks, so the paper
-                      // type only decides a byte in the preamble.
-                      paperType: PaperType.Gap,
-                      density: DEFAULT_PRINT_SETTINGS.density,
-                      feedDots: DOTS_PER_MM * probeFeedMm,
-                      widthDots: headWidth,
-                      probe: parsedProbe,
-                    }),
-                    `probe job: ${probeFeedMm} mm blank then ${toHex(parsedProbe)}`,
-                  ),
+                run(
+                  `Probe ${toHex(parsedProbe)} ${probePosition === 'before' ? 'before' : 'after'} ${probeFeedMm} mm`,
+                  () =>
+                    connection.driver.sendCommand(
+                      probeJob({
+                        // Gap stock either way: the probe never seeks, so the paper
+                        // type only decides a byte in the preamble.
+                        paperType: PaperType.Gap,
+                        density: DEFAULT_PRINT_SETTINGS.density,
+                        feedDots: DOTS_PER_MM * probeFeedMm,
+                        widthDots: headWidth,
+                        probe: parsedProbe,
+                        position: probePosition,
+                      }),
+                      `probe job: ${probeFeedMm} mm blank, ${probePosition} ${toHex(parsedProbe)}`,
+                    ),
                 )
               }
             >
@@ -388,8 +401,14 @@ export function DiagnosticsPanel({
             end of the job.
             <br />
             Nothing else in it moves paper &mdash; no retract, no seek, no advance to the tear-off
-            &mdash; so whatever the paper does after the strip is down to your bytes. Feed a few
-            millimetres so there is something to measure against.
+            &mdash; so whatever the paper does is down to your bytes. Feed a few millimetres so
+            there is something to measure against.
+            <br />
+            <strong>Which side of the strip matters.</strong> The gap seek acts only after a raster
+            and is inert anywhere else, which is why it took four rounds to find.{' '}
+            <code>1f 11 51</code> looks like the opposite: it retracts when it comes before one, as
+            it does in a real job, and four of them after a raster moved nothing. A command that
+            does nothing on one side has not been ruled out, only ruled out there.
           </p>
           <p className="warn">
             <strong>Calibrate label gap does not work on a P50S.</strong> It runs the vendor

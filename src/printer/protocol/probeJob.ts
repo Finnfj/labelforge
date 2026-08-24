@@ -32,15 +32,33 @@ import { printJobFraming, printJobStream } from './commands'
  * What remains that moves paper is the blank raster, forward by exactly its own
  * height, and the bytes under test. Feed a few millimetres so there is a reference
  * to measure against, then read off what the command did.
+ *
+ * ## Position matters, and not the same way for everything
+ *
+ * `position` decides whether the bytes go before the raster or after it, and that
+ * is not a detail. The gap seek acts **only** after a raster — it is inert anywhere
+ * else, which is why it took four rounds and a capture to find. `alignPaperStart`
+ * appears to be the opposite: it retracts when it sits before the raster, as it does
+ * in an ordinary job, and four of them after a raster moved nothing at all.
+ *
+ * So a command that does nothing in one position has not been ruled out. It has
+ * been ruled out in that position.
  */
+export type ProbePosition = 'before' | 'after'
+
 export function probeJob(options: {
   paperType: PaperTypeValue
   density: number
   /** Blank rows printed before the probe, so any movement has a reference. */
   feedDots: number
   widthDots: number
-  /** The bytes under test, placed where commands have been shown to act. */
+  /** The bytes under test. */
   probe: Uint8Array
+  /**
+   * Which side of the raster to put them on. Defaults to after, where the gap seek
+   * acts; motion commands look as though they want the other side.
+   */
+  position?: ProbePosition
 }): Uint8Array {
   const framing = printJobFraming({
     paperType: options.paperType,
@@ -48,10 +66,12 @@ export function probeJob(options: {
     seekGap: false,
     alignStart: false,
   })
-  return printJobStream(
-    { ...framing, trailer: [{ bytes: options.probe, note: 'probe' }, ...framing.trailer] },
-    encodeImage(blank(options.widthDots, options.feedDots)),
-  )
+  const probe = { bytes: options.probe, note: 'probe' }
+  const placed: typeof framing =
+    options.position === 'before'
+      ? { ...framing, preamble: [...framing.preamble, probe] }
+      : { ...framing, trailer: [probe, ...framing.trailer] }
+  return printJobStream(placed, encodeImage(blank(options.widthDots, options.feedDots)))
 }
 
 function blank(widthDots: number, rows: number): PackedBitmap {

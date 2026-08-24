@@ -890,10 +890,33 @@ few millimetres for a reference, send the bytes, read off what happened.
 An empty probe is a legitimate control: it shows what the job alone does, which is
 the baseline every other reading is against.
 
-**Still unmeasured, and next in line:** `AdjustMode` has four values and only
-`BackwardDots` has ever been on the wire — at 8 dots and at 40, both ignored.
-`BackwardMm` (`1F 11 11`) has never been sent. If the firmware implements the
-millimetre modes and not the dot modes, that explains both failures exactly.
+**Which side of the raster the bytes go on is part of the question, not a detail.**
+The gap seek acts only _after_ a raster and is inert anywhere else — that is why it
+took four rounds and a capture to find. `alignPaperStart` looks like the opposite:
+it retracts when it comes before a raster, as it does in an ordinary job, and four
+of them sent after one moved nothing at all. So the probe offers both sides, and a
+command that does nothing on one side has not been ruled out — only ruled out
+there.
+
+### Rewinding: what has been tried, and where
+
+Nothing moves paper backwards on demand. The state of the search:
+
+|                            | before the raster           | after the raster                     |
+| -------------------------- | --------------------------- | ------------------------------------ |
+| `1F 11 51` alignPaperStart | retracts, ~20 mm            | **inert** — four in one job, nothing |
+| `1F 11 10` BackwardDots    | **inert** — 8 dots, 40 dots | **inert** — 640 dots                 |
+| `1F 11 11` BackwardMm      | **untried**                 | **inert** — 80 mm                    |
+
+`AdjustMode` has four values and only `BackwardDots` had ever been on the wire until
+`BackwardMm` was probed after a raster. The one cell left is `1F 11 11` _before_ a
+raster, which is where the only working retract lives. If the firmware implements the
+millimetre modes and not the dot modes, and only in the preamble, that would explain
+every failure above.
+
+The forward modes are also untried, and worth a probe of their own: a working
+`ForwardDots` would be a cheaper way to cross an inter-label gap than printing blank
+rows.
 
 ### Capturing the ground truth
 
