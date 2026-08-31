@@ -1011,25 +1011,42 @@ rule out a family of ideas rather than because anything computes with them:
 **Splitting is what registers a tall label**, and it is the default. Its seek rides in
 the same job as a real raster, and an in-job seek needs no approach at all.
 
-### The remaining question: what does a retract do mid-label?
+### What a retract does mid-label — [measured, and it closes the seam]
 
-The one thing `alignPaperStart` has never been asked. Every measurement of it comes from
-a job starting at the tear-off position, where it moves about 20 mm — but if it is an
-align rather than an offset, the distance is a consequence of where the paper was, not a
-property of the command.
+`alignPaperStart` in a band's preamble **works**, and the split seam is gone.
 
-That matters because of the split seam. A band's job takes up `SPLIT_SEAM_DOTS` (1 mm)
-before it lays down a raster, nothing has ever taken that back, and `alignPaperStart`
-acts in exactly the position a band's preamble puts it. Two outcomes, told apart at a
-glance:
+A two-band 80 mm label went out with a retract at the boundary and no rows skipped.
+It printed whole, retracted between the parts, and landed on a boundary — and the two
+parts overlapped by **exactly 7 mm**. That number is the whole finding:
 
-- **A return to the print-start position** undoes the take-up and nothing else. The
-  bands meet, the seam is gone, and a tall label prints whole at full quality.
-- **A fixed ~20 mm** puts the second band 20 mm over the first and spoils the label.
+|                                    | dots                 |
+| ---------------------------------- | -------------------- |
+| job take-up at the start of a band | +8                   |
+| the retract                        | −64                  |
+| net, per boundary                  | **−56 = 7 mm early** |
 
-`PrintSettings.closeSplitSeam` sends it, and pairs it with a planner that skips no rows
-at the boundary — the two decisions have to agree or the label is offset by a millimetre
-per boundary in whichever direction they disagree.
+So mid-label the retract winds back a fixed **8 mm** — not the ~20 mm it moves from
+the tear-off position, and not the 1 mm that would have closed the seam by itself. Two
+different distances from two different starting positions, which is worth stating
+plainly because it rules out both of the tidy stories: it is not a fixed offset, and it
+is not an align to the label start. The 20 mm reading came from a job that also had the
+tear-off advance to undo.
+
+**The correction is exact, and it costs nothing.** Each band after the first leads with
+56 blank rows. Blank rows advance the paper by precisely their count and fire no dots,
+so they carry the head forward over ground the previous band already printed — leaving
+its image untouched — and the band's own first row lands exactly where that band
+stopped. Every row of the design prints once, at the offset it was designed for.
+
+`SEAM_RETRACT_OVERSHOOT_DOTS` and `planBands()` in
+`src/printer/protocol/splitJob.ts`; `PrintSettings.closeSplitSeam` turns it on. The
+boundary is two decisions that have to agree — rows the cut gives up, blank rows the
+next band leads with — so both are made in `planBands()` and both drivers call it.
+
+It stays opt-in because 7 mm is one measurement. If it is out, the error shows as a
+seam or an overlap of the difference, which is the same millimetre the default spends
+but less predictable. The default still gives up `SPLIT_SEAM_DOTS` at each boundary and
+hides the cut in the quietest row nearby.
 
 ### Capturing the ground truth
 

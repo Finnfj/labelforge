@@ -1,4 +1,4 @@
-import { sliceRows, type PackedBitmap } from '../../model/bitmap'
+import { prependBlankRows, sliceRows, type PackedBitmap } from '../../model/bitmap'
 import { encodeImage } from './encodeImage'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
 
@@ -56,6 +56,55 @@ import { SEEK_SAFE_JOB_BYTES } from './constants'
  * by making it worse in known amounts.
  */
 export const SPLIT_SEAM_DOTS = 8
+
+/**
+ * How far past the boundary a mid-label retract leaves the paper, in dots.
+ *
+ * **Measured, and it is the number that makes a seamless split possible.** With a
+ * retract at the boundary and no rows skipped, a two-band 80 mm label came out
+ * overlapping by exactly 7 mm — so the retract reaches 7 mm further back than the
+ * take-up it was meant to undo. Net of the 8 dots the job takes up, `alignPaperStart`
+ * winds back 64 dots mid-label: a fixed 8 mm, and nothing like the ~20 mm it moves
+ * from the tear-off position.
+ *
+ * That settles what the command is. Twenty millimetres from the tear position, eight
+ * from mid-label — it is neither a fixed offset nor an align to the label start. It
+ * appears to wind back a fixed 8 mm from wherever it is, and the 20 mm reading was the
+ * tear-off advance being undone by something else in that job.
+ *
+ * Whichever it is, the correction is exact: print this many blank rows before the
+ * band's own first row. Blank rows advance the paper by precisely their count and fire
+ * no dots, so they carry the head forward over ground the previous band already
+ * printed, leaving its image untouched, and the band's first row lands exactly where
+ * that band stopped. Nothing is lost and nothing is doubled.
+ */
+export const SEAM_RETRACT_OVERSHOOT_DOTS = 56
+
+/**
+ * Plan the jobs one label prints as, given how the boundary is being handled.
+ *
+ * The one place both drivers get their bands, because the boundary is two decisions
+ * that have to agree — how many rows the cut gives up, and how many blank rows the
+ * next band leads with. Split between callers they drifted; a millimetre of
+ * disagreement is a visible step in the image.
+ */
+export function planBands(
+  bitmap: PackedBitmap,
+  options: { closeSeam?: boolean; limitBytes?: number } = {},
+): PackedBitmap[] {
+  const closeSeam = options.closeSeam === true
+  const bands = planSeekableBands(
+    bitmap,
+    options.limitBytes ?? SEEK_SAFE_JOB_BYTES,
+    closeSeam ? 0 : SPLIT_SEAM_DOTS,
+  )
+  if (!closeSeam) return bands
+  // The first band has a tear-off advance behind it rather than a boundary, and its
+  // retract undoes that instead — so it starts where it always did.
+  return bands.map((band, i) =>
+    i === 0 ? band : prependBlankRows(band, SEAM_RETRACT_OVERSHOOT_DOTS),
+  )
+}
 
 /**
  * How far the cut may be moved to find a whiter row, in dots.

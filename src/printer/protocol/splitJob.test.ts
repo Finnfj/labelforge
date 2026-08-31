@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { createPackedBitmap, type PackedBitmap } from '../../model/bitmap'
 import { encodeImage } from './encodeImage'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
-import { planSeekableBands, SPLIT_SEAM_DOTS } from './splitJob'
+import {
+  planBands,
+  planSeekableBands,
+  SEAM_RETRACT_OVERSHOOT_DOTS,
+  SPLIT_SEAM_DOTS,
+} from './splitJob'
 
 /**
  * Splitting one label across several jobs so the last of them can seek.
@@ -160,5 +165,64 @@ describe('planSeekableBands', () => {
     for (const band of planSeekableBands(noise(640), 4096)) {
       expect(encodeImage(band).length).toBeLessThanOrEqual(4096)
     }
+  })
+})
+
+describe('planBands', () => {
+  const W_ = W
+  const total = (bands: PackedBitmap[]) => bands.reduce((n, b) => n + b.heightDots, 0)
+
+  it('spends a millimetre at each boundary by default', () => {
+    const bm = noise(640)
+    const bands = planBands(bm)
+    expect(bands.length).toBeGreaterThan(1)
+    expect(total(bands)).toBe(bm.heightDots - SPLIT_SEAM_DOTS * (bands.length - 1))
+  })
+
+  it('leads each later band with the rows the retract overshot by', () => {
+    // Measured on hardware: a retract at the boundary put the next band 7 mm early,
+    // so it winds back further than the take-up it undoes. Blank rows advance the
+    // paper by exactly their count and fire no dots, so they carry the head back over
+    // ground the previous band printed — leaving its image alone — and the band's own
+    // first row lands where that band stopped.
+    const bm = noise(640)
+    const bands = planBands(bm, { closeSeam: true })
+    expect(bands.length).toBeGreaterThan(1)
+    expect(total(bands)).toBe(bm.heightDots + SEAM_RETRACT_OVERSHOOT_DOTS * (bands.length - 1))
+
+    for (const band of bands.slice(1)) {
+      const lead = band.data.subarray(0, SEAM_RETRACT_OVERSHOOT_DOTS * band.rowBytes)
+      expect(lead.some((b) => b !== 0)).toBe(false)
+    }
+  })
+
+  it('loses no row of the image when the seam is closed', () => {
+    // Every row of the design prints, once, at the offset it was designed for. The
+    // whole point: the millimetre a boundary used to cost is recovered rather than
+    // merely hidden.
+    const bm = noise(640)
+    const bands = planBands(bm, { closeSeam: true })
+    let row = 0
+    for (const [i, band] of bands.entries()) {
+      const lead = i === 0 ? 0 : SEAM_RETRACT_OVERSHOOT_DOTS
+      const image = band.data.subarray(lead * band.rowBytes)
+      expect(Array.from(image)).toEqual(
+        Array.from(bm.data.slice(row * (W_ >> 3), row * (W_ >> 3) + image.length)),
+      )
+      row += band.heightDots - lead
+    }
+    expect(row).toBe(bm.heightDots)
+  })
+
+  it('does not touch the first band, which has no boundary behind it', () => {
+    // Its retract undoes the tear-off advance instead, as it does on any print.
+    const bands = planBands(noise(640), { closeSeam: true })
+    expect(bands[0]).toEqual(planSeekableBands(noise(640), undefined, 0)[0])
+  })
+
+  it('leaves a label that already fits as one band either way', () => {
+    const bm = noise(64)
+    expect(planBands(bm)).toEqual([bm])
+    expect(planBands(bm, { closeSeam: true })).toEqual([bm])
   })
 })

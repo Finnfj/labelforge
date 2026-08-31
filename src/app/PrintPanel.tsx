@@ -342,9 +342,9 @@ export function PrintPanel({
             back that far.
             <br />
             The printer takes up 1 mm when a job starts, so each boundary costs a millimetre of the
-            picture. The cut is moved to whichever row nearby loses the least ink, which hides it in
-            white space where there is any &mdash; between two lines of text it disappears, across a
-            full-bleed photograph it will still show.
+            picture unless the option below is on. The cut is moved to whichever row nearby loses
+            the least ink, which hides it in white space where there is any &mdash; between two
+            lines of text it disappears, across a full-bleed photograph it will still show.
           </p>
 
           <label className="field field--check">
@@ -356,12 +356,12 @@ export function PrintPanel({
             <span>Try to close the seam by winding back at each boundary</span>
           </label>
           <p>
-            <strong>Experimental, and it costs a label to find out.</strong> Winding back is the one
-            thing that might undo the take-up, and it acts in exactly the place a boundary puts it.
-            What it does mid-label is unknown: if it returns the paper to where the last part
-            stopped, the seam closes and the picture is whole. If it winds back the ~20&nbsp;mm it
-            moves at the start of an ordinary print, the second part prints over the first and the
-            label is spoilt. The two outcomes are obvious at a glance.
+            <strong>Recovers the millimetre instead of hiding it.</strong> Winding back at each
+            boundary is the one thing that undoes the take-up, and it acts in exactly the place a
+            boundary puts it. It overshoots by 7&nbsp;mm &mdash; measured &mdash; so each part after
+            the first leads with that much blank, which carries the head forward over ground already
+            printed without firing a dot. Every row of the design then prints once, where it was
+            designed to go, and no boundary costs any picture.
           </p>
 
           {remedyFits && (

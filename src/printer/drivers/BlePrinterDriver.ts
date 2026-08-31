@@ -1,7 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import * as cmd from '../protocol/commands'
-import { DEFAULT_CHUNK_SIZE, printDurationMs, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
+import { DEFAULT_CHUNK_SIZE, printDurationMs } from '../protocol/constants'
 import { DEFAULT_PROFILE, matchProfile, type PrinterProfile } from '../profiles'
 import { CreditWindow } from '../protocol/CreditWindow'
 import {
@@ -12,7 +12,7 @@ import {
   faultFromFlags,
 } from '../protocol/responses'
 import { encodeImage } from '../protocol/encodeImage'
-import { planSeekableBands, SPLIT_SEAM_DOTS } from '../protocol/splitJob'
+import { planBands } from '../protocol/splitJob'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -321,9 +321,7 @@ export class BlePrinterDriver implements PrinterDriver {
       // made here, once, and handed to the planner and the framing together.
       const closeSeam = job.settings.closeSplitSeam === true
       const bands =
-        job.settings.splitForSeek === false
-          ? [job.bitmap]
-          : planSeekableBands(job.bitmap, SEEK_SAFE_JOB_BYTES, closeSeam ? 0 : SPLIT_SEAM_DOTS)
+        job.settings.splitForSeek === false ? [job.bitmap] : planBands(job.bitmap, { closeSeam })
       const image = encodeImage(job.bitmap)
       const framing = cmd.printJobFraming(job.settings)
       // Commands and raster are one stream per band, chunked without regard for

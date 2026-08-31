@@ -1,9 +1,9 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import { encodeImage } from '../protocol/encodeImage'
-import { planSeekableBands, SPLIT_SEAM_DOTS } from '../protocol/splitJob'
+import { planBands } from '../protocol/splitJob'
 import { DEFAULT_PROFILE } from '../profiles'
-import { DEFAULT_CHUNK_SIZE, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
+import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
 import * as cmd from '../protocol/commands'
 import type {
   PrintJob,
@@ -120,9 +120,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
       // real driver — a test concatenates both and compares.
       const closeSeam = job.settings.closeSplitSeam === true
       const bands =
-        job.settings.splitForSeek === false
-          ? [job.bitmap]
-          : planSeekableBands(job.bitmap, SEEK_SAFE_JOB_BYTES, closeSeam ? 0 : SPLIT_SEAM_DOTS)
+        job.settings.splitForSeek === false ? [job.bitmap] : planBands(job.bitmap, { closeSeam })
       const encoded = bands.length === 1 ? [image] : bands.map(encodeImage)
       const total = encoded.reduce((n, e) => n + e.length, 0) * job.settings.copies
 

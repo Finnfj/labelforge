@@ -92,21 +92,20 @@ export interface PrintSettings {
    */
   splitForSeek?: boolean
   /**
-   * Wind the paper back at each split boundary instead of skipping the rows.
+   * Wind the paper back at each split boundary instead of giving up the rows.
    *
-   * A band's job takes up `SPLIT_SEAM_DOTS` before it lays down a raster, and those
-   * rows are skipped so the rest of the label keeps its position — costing a
-   * millimetre of image at each boundary. `alignPaperStart` is the one command that
-   * winds paper back and it acts in exactly the position a band's preamble puts it,
-   * so it may undo that take-up and let the bands meet with nothing lost.
+   * A band's job takes up `SPLIT_SEAM_DOTS` before it lays down a raster, which is
+   * why a boundary costs a millimetre of image. `alignPaperStart` undoes it — the one
+   * command that moves paper backwards, acting in exactly the position a band's
+   * preamble puts it — and it overshoots by a measured
+   * `SEAM_RETRACT_OVERSHOOT_DOTS`, which the next band leads with as blank rows.
+   * Blank rows advance the paper by exactly their count and fire no dots, so the
+   * band's first row lands precisely where the last one stopped.
    *
-   * **Off by default: what it retracts mid-label is not known.** The only measurement
-   * of its reach comes from a job starting at the tear-off position, where it undoes
-   * the tear advance and moves about 20 mm. If it does that mid-label the second band
-   * prints 20 mm over the first and the label is ruined; if it is a return to the
-   * print-start position it undoes the 8-dot take-up and nothing else, which is
-   * exactly what is wanted. One label answers it, and the two outcomes are told apart
-   * at a glance.
+   * Confirmed on hardware: a tall label printed whole, registered on the boundary,
+   * with the bands meeting. Still opt-in because the correction is one measurement
+   * and a wrong one shows as a seam or an overlap of whatever it is out by — the same
+   * millimetre the default spends, but harder to see coming.
    */
   closeSplitSeam?: boolean
 }
