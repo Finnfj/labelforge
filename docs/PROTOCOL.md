@@ -935,30 +935,60 @@ roll inside the cartridge will not unwind that far in reverse. Two consequences:
   redesigned around forty rather than tuned. `MAX_STACKED_RETRACTS` in
   `src/printer/protocol/constants.ts` carries the number.
 
+### The seek has a minimum approach distance — [measured]
+
+**This is the fact the whole registration problem reduces to.** Calibration: set the
+paper with varying amounts of an 80 mm label still to run, then send a 1 mm blank feed
+carrying a gap seek, and see where it lands.
+
+| label still to run                  | seek lands on           |
+| ----------------------------------- | ----------------------- |
+| 100 % down to ~30 % (80 mm → 24 mm) | its own gap — correct   |
+| below ~25 % (under 20 mm)           | the gap after — a label |
+
+The seek is not choosing wrongly and it is not unreliable. **It cannot see a boundary
+that is nearly under it.** Below roughly twenty-four millimetres of approach it misses
+and runs a full pitch to the next one. `SEEK_MIN_APPROACH_DOTS` in
+`src/printer/protocol/constants.ts`.
+
+Every wasted label in this file follows from that. A full-height label ends _at_ its
+gap — approach zero — so a seek sent afterwards, in a job of its own, can only find
+the next one. Nothing about job size, the tear-off round trip or the retract was ever
+the deciding factor; those were all attempts to explain a threshold nobody had
+measured.
+
+**An in-job seek does not have this problem.** The split path's last band ends at the
+gap too, and it registers. So the same opcode behaves differently depending on whether
+a real raster preceded it in the same job — of a piece with `1F 12` being inert when
+sent standalone, and with `1F 11 51` acting only before a raster. Position and company
+decide what a command on this printer does, and that has now caught us four times.
+
+The practical consequence: **`splitForSeek` is the route that works for a tall label at
+full quality.** Its seek needs no approach at all. The follow-up needs 24 mm bought
+back by retracting, and the retract may not be able to buy that much.
+
 ### Why the follow-up seek ate a blank label
 
-Because the seek was starting at or past the boundary, and from there the first gap
-ahead is the _next_ label's. Two hardware rounds bracket it:
+Because it starts with zero approach. The runs, in order:
 
-| follow-up job                                              | result            |
-| ---------------------------------------------------------- | ----------------- |
-| `startPrintJob` · `1F 11 51` · raster · seek · `1F 11 50`  | whole blank label |
-| `startPrintJob` · raster · seek, no tear advance before it | whole blank label |
+| follow-up job                           | start position                                         | result            |
+| --------------------------------------- | ------------------------------------------------------ | ----------------- |
+| `1F 11 51` · raster · seek · `1F 11 50` | end of tall label                                      | whole blank label |
+| raster · seek, tear advance suppressed  | end of tall label                                      | whole blank label |
+| `1F 11 51` ×2 · raster · seek           | end of tall label                                      | whole blank label |
+| `1F 11 51` ×2 · raster · seek           | mid-label, print had been misaligned across two labels | **correct**       |
 
-Neither the tear-off round trip nor a single retract decides it, which rules out the
-two explanations that were on the table. What both share is the starting position.
+The last two are the same bytes from different positions, which is as clean a
+demonstration of the threshold as the wire can give. The retract in those runs was
+observed to be clearly less than a quarter of the label — under 20 mm for the pair — so
+two `1F 11 51` do not reach the approach the seek needs.
 
-The seek itself is not unreliable — it lands on the first gap ahead of it, every
-time. Every apparent success is a case where the paper happened to be behind the
-boundary: a print that stopped at 80 % of the label and was then fed 2 mm blank
-finished its registration correctly, and so did a 5 mm blank feed from a mid-label
-position on a fresh connection. Both are the same mechanism as a small label's in-job
-seek, which is the shape that works.
-
-So the follow-up now retracts before it seeks — as many `1F 11 51` as the label
-height asks for, capped at the two the roll will make. Forty millimetres puts the
-paper well inside the label just printed, where the first gap ahead is that label's
-own. `followUpSeekJob()` in `src/printer/protocol/commands.ts`.
+`ALIGN_START_RETRACT_DOTS` was therefore halved and more: an earlier eyeball put one
+retract at 20 mm, and the pair measuring under 20 mm makes each of them 8 mm at the
+outside. The follow-up now stacks three, which is both what the threshold asks for and
+the most the mechanism has been seen to give — a third retract has once left the label
+stale, the roll refusing to unwind further. If three still falls short, the rewind
+cannot reach the threshold and this route is finished.
 
 ### Capturing the ground truth
 

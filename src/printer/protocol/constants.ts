@@ -60,48 +60,74 @@ export const MAX_DENSITY = 15
 export const SEEK_SAFE_JOB_BYTES = 16 * 1024
 
 /**
+ * How near the gap a standalone seek may start and still catch it, in dots.
+ *
+ * **The number this whole route turns on, and it took a deliberate calibration to
+ * get.** The paper was set with varying amounts of an 80 mm label still to run and a
+ * 1 mm blank feed carrying a gap seek was sent at each position:
+ *
+ * | label still to run | seek lands on |
+ * | --- | --- |
+ * | 100 % down to ~30 % (80 mm → 24 mm) | its own gap — correct |
+ * | below ~25 % (under 20 mm) | skips a label, finds the next gap |
+ *
+ * So the seek is not choosing wrongly; it cannot see a boundary that is nearly under
+ * it. Below roughly twenty-four millimetres of approach it misses and runs a full
+ * pitch. That single fact explains every wasted label in this file: a full-height
+ * label ends *at* the gap, approach zero, so a seek sent afterwards can only find the
+ * next one.
+ *
+ * It also explains why the split path does not have this problem. Its seek rides in
+ * the same job as a real raster, and an in-job seek registers from zero approach —
+ * two different behaviours behind one opcode, which is of a piece with the rest of
+ * this protocol.
+ *
+ * 32 mm rather than the 24 mm observed working: the percentages were read off the
+ * label by eye, and the calibration jobs each carried an `alignPaperStart` of their
+ * own whose contribution is not separable from the position that was set. Erring long
+ * costs nothing — anything from 24 mm to a full label away worked.
+ */
+export const SEEK_MIN_APPROACH_DOTS = 256
+
+/**
  * How far one `alignPaperStart` winds the paper back, in dots.
  *
  * `1F 11 51` is the only command on this firmware that has ever been seen to move
- * paper backwards, and it took a purpose-built probe to establish it on its own:
- * a job of nothing but `startPrintJob`, one `1F 11 51`, two millimetres of blank
- * raster and `stopPrintJob` retracted the paper. Nothing else in that job moves
- * paper, so the movement is attributable to those three bytes.
+ * paper backwards, and it took a purpose-built probe to establish it on its own: a
+ * job of nothing but `startPrintJob`, one `1F 11 51`, two millimetres of blank raster
+ * and `stopPrintJob` retracted the paper. Nothing else in that job moves paper, so
+ * the movement is attributable to those three bytes.
  *
  * **It only acts before the raster.** Four of them after one moved nothing at all,
  * which is the same positional fussiness the gap seek has in the other direction —
  * the seek acts only *after* a raster and is inert before it.
  *
- * Twenty millimetres is by eye, not by instrument, and it is the figure the paper
- * moves when the roll sits at the tear-off position. That is very likely not a
- * coincidence: `alignPaperStart` and `alignPaperEnd` read as a matched pair, out to
- * the tear bar at the end of a job and back at the start of the next, so the
- * distance may well be the head-to-tear-bar gap rather than a constant the command
- * carries. If it turns out to be an *align* — wind back to a registration point —
- * rather than a fixed offset, then stacking them does nothing and the number here
- * is meaningless. That is exactly what the retract-stack probe is for.
+ * Eight millimetres is an upper bound rather than a measurement, and it replaces an
+ * earlier guess of twenty that was too generous by more than double. The bound comes
+ * from a print where two of them went out together and the retract was observed to be
+ * clearly less than a quarter of an 80 mm label — under 20 mm for the pair.
  */
-export const ALIGN_START_RETRACT_DOTS = 160
+export const ALIGN_START_RETRACT_DOTS = 64
 
 /**
- * Most retracts one job may stack, and it is the mechanism's limit, not a policy.
+ * Most retracts one job may stack.
  *
- * Measured on hardware: two `1F 11 51` in one job both moved paper. On the third
- * the label went stale — the paper stopped coming back, because the roll inside the
- * cartridge will not unwind that far in reverse. So the useful rewind on this
- * printer is about two of {@link ALIGN_START_RETRACT_DOTS}, roughly forty
- * millimetres, and no amount of asking gets more.
+ * Two both move paper. A third has been seen to leave the label stale — the paper
+ * stops coming back, because the roll inside the cartridge will not unwind further in
+ * reverse — but that reading was taken from a different paper position than the one
+ * that matters here, and a stalled retract costs a wasted command and nothing else.
+ * Since two of them fall short of {@link SEEK_MIN_APPROACH_DOTS}, three is the count
+ * worth spending a label on.
  *
  * That they stack at all is worth recording separately from the cap: it means
  * `alignPaperStart` is a relative move rather than an align to a fixed registration
- * point, which was the other reading of the name and would have closed this route
- * entirely.
+ * point, which was the other reading of the name and would have closed this route.
  *
- * The consequence is that a full-height label cannot be wound all the way back. An
- * 80 mm label gets forty millimetres, which is still twice what a single retract
- * gave — and a single retract is the one that has been observed failing.
+ * **If three still falls short, the route is out of road.** The rewind cannot reach
+ * the approach the seek needs, and `splitForSeek` — whose in-job seek does not need
+ * any approach at all — is the answer for a tall label at full quality.
  */
-export const MAX_STACKED_RETRACTS = 2
+export const MAX_STACKED_RETRACTS = 3
 
 /**
  * How fast the printer consumes rows once it is drain-limited.

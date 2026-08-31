@@ -95,13 +95,16 @@ export interface PrintSettings {
    * label can be followed by a 52-byte job carrying nothing but a millimetre of
    * blank raster and the same seek. See `followUpSeekJob()`.
    *
-   * **Off by default, because the rewind it now depends on is unproven.** The
-   * follow-up used to be a repair rather than a routine: on a roll that had not
-   * lost its place it cost a whole blank label, because a seek starting from the
-   * boundary the label just reached can only find the next one. It now winds the
-   * paper back the full height of what was printed before seeking, which makes the
-   * label's own gap the first one ahead. Whether that works rests on whether
-   * `alignPaperStart` stacks — it moves paper, but only ever once per job so far.
+   * **Off by default, and it may not be reachable at all.** A standalone seek needs
+   * the gap about 24 mm ahead to catch it — measured — and a full-height label ends
+   * on its gap, so the seek runs a full pitch and takes a blank label. The follow-up
+   * buys approach back by stacking `alignPaperStart`, the only backward motion this
+   * firmware has, worth perhaps 8 mm a time and stalling against the roll after
+   * three. Two have been flown and fell short.
+   *
+   * `splitForSeek` has no such problem: an in-job seek registers from zero approach,
+   * which is why a split label lands correctly. It is the better route for a tall
+   * label at full quality, and costs a millimetre of image per boundary.
    *
    * For keeping a tall label registered print to print without any of that,
    * `feedAfterDots` is the mechanism that behaves: blank rows move paper by exactly

@@ -11,6 +11,7 @@ import {
   MAX_DENSITY,
   MAX_STACKED_RETRACTS,
   MIN_DENSITY,
+  SEEK_MIN_APPROACH_DOTS,
   SEEK_SAFE_JOB_BYTES,
   type PaperTypeValue,
   type SpeedValue,
@@ -398,43 +399,58 @@ export function needsFollowUpSeek(encodedImageBytes: number): boolean {
  * The seek is not unreliable — it lands wherever the first gap ahead of it is, every
  * time. Whether that is the right gap is a question about where the paper starts.
  *
- * Hence `retractDots`: wind back past the boundary first, so the gap ahead is the
- * label's own. One `1F 11 51` moves about {@link ALIGN_START_RETRACT_DOTS}, and one
- * is the count that has been observed failing, so they are stacked. The paper is
- * still attached to the label just printed, so there is nothing to lose by going
- * back, and the blank raster fires no dots on the way forward again.
+ * ## What the seek actually needs
  *
- * They do stack — which also settles that `alignPaperStart` is a relative move and
- * not an align to a fixed point — but only twice. On a third the label goes stale,
- * because the roll will not unwind that far in reverse. So the rewind asked for here
- * is the label's height and the rewind delivered is at most
- * {@link MAX_STACKED_RETRACTS} of them, about forty millimetres. A full-height label
- * cannot be wound all the way back and does not need to be: forty millimetres puts
- * the paper well inside the label just printed, where the first gap ahead is that
- * label's own.
+ * Not distance past the boundary — distance *before* it. Calibration across an 80 mm
+ * label established that a standalone seek catches its own gap from anywhere between
+ * a full label and about 24 mm out, and misses below roughly 20 mm, running a full
+ * pitch instead. {@link SEEK_MIN_APPROACH_DOTS} carries the figure and the table.
+ *
+ * A full-height label ends *at* its gap. Approach zero. So the follow-up's job is to
+ * buy back approach, and the only thing on this firmware that winds paper back is
+ * `alignPaperStart`, worth at most {@link ALIGN_START_RETRACT_DOTS} a time. Hence
+ * stacking: enough of them to clear the threshold, capped at
+ * {@link MAX_STACKED_RETRACTS}. The paper is still attached to the label just
+ * printed, so there is nothing to lose by winding into it, and the blank raster fires
+ * no dots on the way forward again.
+ *
+ * Two of them have been flown and fell short — the retract was visibly under a
+ * quarter of the label, so under the threshold — and the follow-up skipped a label
+ * from an aligned start while succeeding from a misaligned one that had ended
+ * mid-label. Exactly what the threshold predicts, from both sides.
+ *
+ * `retractDots` is what is *available* to wind back into, not a target: the target is
+ * the threshold, and the available distance only ever caps it. On a short label
+ * winding back further than its own height would put the previous gap ahead of the
+ * paper, and the seek would land on that instead.
  */
 export function followUpSeekJob(
   framing: PrintJobFraming,
   widthDots: number,
-  retractDots = 0,
+  /** Room to wind back into — the height of the label just printed. */
+  availableDots = 0,
 ): Uint8Array {
   return printJobStream(
-    { ...framing, preamble: withRetracts(framing.preamble, retractDots) },
+    { ...framing, preamble: withRetracts(framing.preamble, availableDots) },
     encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)),
   )
 }
 
 /**
- * How many `alignPaperStart` commands it takes to wind back a given distance.
+ * How many `alignPaperStart` commands to stack, given the room to wind back into.
  *
- * Rounds up, because landing short of the boundary is the failure this exists to
- * fix, and overshooting costs nothing — the seek walks forward again and stops at
- * the first gap it finds. Capped at {@link MAX_STACKED_RETRACTS} so a bad height
- * cannot wind the roll out of the printer.
+ * Aims at {@link SEEK_MIN_APPROACH_DOTS} — the approach the seek needs — and never
+ * asks for more room than `availableDots`, so a short label cannot be wound back past
+ * its own previous gap and have the seek land on that.
+ *
+ * Rounds up, because falling short is the failure this exists to fix while
+ * overshooting within the label costs nothing: every approach from 24 mm to a full
+ * label away registered correctly.
  */
-export function retractCountFor(retractDots: number): number {
-  if (!(retractDots > 0)) return 0
-  return Math.min(MAX_STACKED_RETRACTS, Math.ceil(retractDots / ALIGN_START_RETRACT_DOTS))
+export function retractCountFor(availableDots: number): number {
+  const target = Math.min(availableDots, SEEK_MIN_APPROACH_DOTS)
+  if (!(target > 0)) return 0
+  return Math.min(MAX_STACKED_RETRACTS, Math.ceil(target / ALIGN_START_RETRACT_DOTS))
 }
 
 /**
@@ -444,9 +460,9 @@ export function retractCountFor(retractDots: number): number {
  * one `alignPaperStart` in it, and appending would silently make every count one
  * too many.
  */
-function withRetracts(preamble: PrintJobFraming['preamble'], retractDots: number) {
+function withRetracts(preamble: PrintJobFraming['preamble'], availableDots: number) {
   const without = preamble.filter((c) => c.note !== 'alignPaperStart')
-  const retracts = Array.from({ length: retractCountFor(retractDots) }, () => ({
+  const retracts = Array.from({ length: retractCountFor(availableDots) }, () => ({
     bytes: alignPaperStart(),
     note: 'alignPaperStart',
   }))

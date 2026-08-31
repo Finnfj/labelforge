@@ -399,10 +399,12 @@ export function PrintPanel({
           </div>
           <p>
             <strong>Register</strong> sends a second, tiny job carrying the seek, small enough for
-            the printer to read whole. It winds the paper back about 4&nbsp;cm first &mdash; a seek
-            that starts where the label ended can only find the <em>next</em> gap, which is what
-            used to cost a blank label. Four centimetres is all the roll will give back, so try it
-            on stock you can spare once.
+            the printer to read whole. It winds the paper back first, because the seek needs the gap
+            about 24&nbsp;mm ahead to see it at all and a full-height label ends right on the gap
+            &mdash; that is what costs a blank label. The rewind may not reach 24&nbsp;mm; it is the
+            only backward motion this printer has.{' '}
+            <strong>Splitting, above, needs no rewind</strong> and is the surer route at full
+            quality.
             <br />
             <strong>Gap feed</strong> is the fallback that needs no sensor: blank rows advance the
             paper by exactly as many as you send. It means measuring your stock, which is why it is

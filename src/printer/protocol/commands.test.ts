@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_STACKED_RETRACTS, PaperType, Speed } from './constants'
+import {
+  ALIGN_START_RETRACT_DOTS,
+  MAX_STACKED_RETRACTS,
+  PaperType,
+  SEEK_MIN_APPROACH_DOTS,
+  Speed,
+} from './constants'
 import { followUpSeekJob, printJobFraming, printJobStream, retractCountFor } from './commands'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
@@ -97,27 +103,35 @@ describe('followUpSeekJob', () => {
     expect(stream.slice(stream.indexOf('1f 10 00 30'))).not.toContain('1f 11 51')
   })
 
-  it('stacks one retract per 20 mm of label, up to what the roll allows', () => {
-    // Each `1F 11 51` is worth about that much, and the count is the difference
-    // between landing behind the boundary and in front of it — which is the
-    // difference between registering and eating a label. One is the count that has
-    // been observed failing.
-    const count = (retractDots: number) =>
-      hex(followUpSeekJob(framing(), 384, retractDots)).split('1f 11 51').length - 1
-    expect(count(160)).toBe(1)
-    // Rounds up: short of the boundary is the failure being fixed, and overshooting
-    // costs nothing because the seek walks forward again.
-    expect(count(161)).toBe(2)
-    // An 80 mm label asks for four and gets two, because a third retract stalls
-    // against the roll rather than moving paper.
+  it('stacks as many retracts as the approach threshold needs', () => {
+    // The seek needs the gap roughly 24 mm ahead or it misses and runs a full
+    // pitch, and a full-height label ends *at* its gap. So the count is aimed at
+    // the threshold, not at the label — two were flown and fell short.
+    const count = (availableDots: number) =>
+      hex(followUpSeekJob(framing(), 384, availableDots)).split('1f 11 51').length - 1
     expect(count(640)).toBe(MAX_STACKED_RETRACTS)
+    // And no more, however tall the label: past the threshold there is nothing to
+    // gain, and every retract is one more chance to stall against the roll.
+    expect(retractCountFor(4000)).toBe(retractCountFor(SEEK_MIN_APPROACH_DOTS))
+  })
+
+  it('never winds back further than the label it is winding into', () => {
+    // Room, not target. Winding past the label's own start puts the *previous* gap
+    // ahead of the paper, and the seek would register on that — turning a
+    // registration into a lost label, which is the failure being fixed.
+    expect(retractCountFor(ALIGN_START_RETRACT_DOTS)).toBe(1)
+    expect(retractCountFor(SEEK_MIN_APPROACH_DOTS)).toBeGreaterThan(1)
+    // Rounds up, because falling short is the failure and overshooting inside the
+    // label costs nothing — every approach from 24 mm to a full label registered.
+    expect(retractCountFor(ALIGN_START_RETRACT_DOTS + 1)).toBe(2)
   })
 
   it('replaces the label framing’s retract rather than adding to it', () => {
     // The framing handed in is the label's, which already carries one. Appending
     // would make every count one too many and the bug would be invisible in a log.
-    expect(retractCountFor(160)).toBe(1)
-    expect(hex(followUpSeekJob(framing(), 384, 160)).split('1f 11 51').length - 1).toBe(1)
+    const room = ALIGN_START_RETRACT_DOTS
+    expect(retractCountFor(room)).toBe(1)
+    expect(hex(followUpSeekJob(framing(), 384, room)).split('1f 11 51').length - 1).toBe(1)
   })
 
   it('sends no retract at all when asked for none', () => {
@@ -128,12 +142,13 @@ describe('followUpSeekJob', () => {
     expect(retractCountFor(-5)).toBe(0)
   })
 
-  it('never asks for a retract the roll cannot make', () => {
-    // Measured: two retracts move paper, a third leaves the label stale because the
-    // roll will not unwind further in reverse. Asking anyway would spend a command
-    // on nothing and risk slipping the very registration this is establishing.
+  it('stops where the mechanism stops', () => {
+    // Two retracts move paper; a third has been seen leaving the label stale,
+    // because the roll will not unwind further in reverse. Three is the count worth
+    // one label — two demonstrably fall short of the threshold — and it is also the
+    // ceiling, because a fourth cannot move paper a third could not.
     expect(retractCountFor(100_000)).toBe(MAX_STACKED_RETRACTS)
-    expect(MAX_STACKED_RETRACTS).toBe(2)
+    expect(MAX_STACKED_RETRACTS).toBe(3)
   })
 
   it('stays small enough for the printer to read in full', () => {
