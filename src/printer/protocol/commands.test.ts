@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   ALIGN_START_RETRACT_DOTS,
-  MAX_STACKED_RETRACTS,
+  MAX_RETRACT_JOBS,
   PaperType,
   SEEK_MIN_APPROACH_DOTS,
   Speed,
 } from './constants'
-import { followUpSeekJob, printJobFraming, printJobStream, retractCountFor } from './commands'
+import {
+  followUpSeekJob,
+  printJobFraming,
+  printJobStream,
+  retractJobsFor,
+  rewindJob,
+} from './commands'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
 
@@ -103,52 +109,87 @@ describe('followUpSeekJob', () => {
     expect(stream.slice(stream.indexOf('1f 10 00 30'))).not.toContain('1f 11 51')
   })
 
-  it('stacks as many retracts as the approach threshold needs', () => {
-    // The seek needs the gap roughly 24 mm ahead or it misses and runs a full
-    // pitch, and a full-height label ends *at* its gap. So the count is aimed at
-    // the threshold, not at the label — two were flown and fell short.
+  it('carries exactly one retract, however far there is to go', () => {
+    // Two in one job moved the paper the same distance one did, so the printer
+    // honours one per job and ignores repeats. Emitting more would read on the wire
+    // as a rewind that is not happening.
     const count = (availableDots: number) =>
       hex(followUpSeekJob(framing(), 384, availableDots)).split('1f 11 51').length - 1
-    expect(count(640)).toBe(MAX_STACKED_RETRACTS)
-    // And no more, however tall the label: past the threshold there is nothing to
-    // gain, and every retract is one more chance to stall against the roll.
-    expect(retractCountFor(4000)).toBe(retractCountFor(SEEK_MIN_APPROACH_DOTS))
+    expect(count(640)).toBe(1)
+    expect(count(4000)).toBe(1)
+    expect(count(ALIGN_START_RETRACT_DOTS)).toBe(1)
+  })
+
+  it('replaces the label framing’s retract rather than adding to it', () => {
+    // The framing handed in is the label's, which already carries one. Appending
+    // would double it, and on a printer that ignores the second the log would show a
+    // rewind that never happened.
+    expect(hex(rewindJob(framing(), 384)).split('1f 11 51').length - 1).toBe(1)
+  })
+
+  it('sends no retract at all when there is no room to wind into', () => {
+    // A caller that does not know the height should get the old shape rather than a
+    // guess at one.
+    expect(hex(followUpSeekJob(framing(), 384))).not.toContain('1f 11 51')
+    expect(retractJobsFor(0)).toBe(0)
+    expect(retractJobsFor(-5)).toBe(0)
+  })
+
+  it('counts the jobs a rewind needs rather than the commands', () => {
+    // The seek needs the gap roughly 24 mm ahead or it misses and runs a full pitch,
+    // and a full-height label ends *at* its gap. One retract does not cover that, so
+    // the distance is spread across jobs — the only arrangement in which retracts
+    // were seen to accumulate.
+    expect(retractJobsFor(640)).toBeGreaterThan(1)
+    expect(retractJobsFor(ALIGN_START_RETRACT_DOTS)).toBe(1)
+    // Past the threshold there is nothing to gain, and every extra job is one more
+    // chance to stall against the roll.
+    expect(retractJobsFor(4000)).toBe(retractJobsFor(SEEK_MIN_APPROACH_DOTS))
   })
 
   it('never winds back further than the label it is winding into', () => {
     // Room, not target. Winding past the label's own start puts the *previous* gap
     // ahead of the paper, and the seek would register on that — turning a
     // registration into a lost label, which is the failure being fixed.
-    expect(retractCountFor(ALIGN_START_RETRACT_DOTS)).toBe(1)
-    expect(retractCountFor(SEEK_MIN_APPROACH_DOTS)).toBeGreaterThan(1)
-    // Rounds up, because falling short is the failure and overshooting inside the
-    // label costs nothing — every approach from 24 mm to a full label registered.
-    expect(retractCountFor(ALIGN_START_RETRACT_DOTS + 1)).toBe(2)
-  })
-
-  it('replaces the label framing’s retract rather than adding to it', () => {
-    // The framing handed in is the label's, which already carries one. Appending
-    // would make every count one too many and the bug would be invisible in a log.
-    const room = ALIGN_START_RETRACT_DOTS
-    expect(retractCountFor(room)).toBe(1)
-    expect(hex(followUpSeekJob(framing(), 384, room)).split('1f 11 51').length - 1).toBe(1)
-  })
-
-  it('sends no retract at all when asked for none', () => {
-    // A caller that does not know the height should get the old shape rather than
-    // a guess at one.
-    expect(hex(followUpSeekJob(framing(), 384))).not.toContain('1f 11 51')
-    expect(retractCountFor(0)).toBe(0)
-    expect(retractCountFor(-5)).toBe(0)
+    expect(retractJobsFor(ALIGN_START_RETRACT_DOTS)).toBe(1)
+    expect(retractJobsFor(SEEK_MIN_APPROACH_DOTS)).toBeGreaterThan(1)
   })
 
   it('stops where the mechanism stops', () => {
-    // Two retracts move paper; a third has been seen leaving the label stale,
-    // because the roll will not unwind further in reverse. Three is the count worth
-    // one label — two demonstrably fall short of the threshold — and it is also the
-    // ceiling, because a fourth cannot move paper a third could not.
-    expect(retractCountFor(100_000)).toBe(MAX_STACKED_RETRACTS)
-    expect(MAX_STACKED_RETRACTS).toBe(3)
+    // Sent one per job, two retracts moved paper and a third left the label stale,
+    // the roll refusing to unwind further in reverse.
+    expect(retractJobsFor(100_000)).toBe(MAX_RETRACT_JOBS)
+    expect(MAX_RETRACT_JOBS).toBe(2)
+  })
+
+  describe('rewindJob', () => {
+    it('is a whole job with one retract and nothing that undoes it', () => {
+      const stream = hex(rewindJob(framing(), 384))
+      expect(stream.startsWith('1f 80 02 20')).toBe(true)
+      expect(stream.indexOf('1f c0 01 00')).toBeLessThan(stream.indexOf('1f 11 51'))
+      expect(stream.indexOf('1f 11 51')).toBeLessThan(stream.indexOf('1f 10 00 30'))
+      expect(stream.endsWith('1f c0 01 01')).toBe(true)
+    })
+
+    it('does not seek from a position half way through the rewind', () => {
+      // The seek belongs to the last job of the sequence. Run from here it would
+      // register on whichever gap happened to be ahead, which is the failure this
+      // sequence exists to avoid.
+      expect(hex(rewindJob(framing(), 384))).not.toContain('1f 12')
+    })
+
+    it('leaves the paper where the retract left it', () => {
+      // No tear-off advance: it would hand back the distance just bought, and the
+      // next job in the sequence would spend a retract undoing it.
+      expect(hex(rewindJob(framing(), 384))).not.toContain('1f 11 50')
+    })
+
+    it('feeds as little as a raster can', () => {
+      // Every row is distance the retract has to pay for again, and each job already
+      // gives back the printer's take-up at its start. One row, not the seek job's
+      // millimetre.
+      expect(hex(rewindJob(framing(), 384))).toContain('1f 10 00 30 00 01')
+    })
   })
 
   it('stays small enough for the printer to read in full', () => {

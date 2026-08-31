@@ -401,8 +401,9 @@ export function PrintPanel({
             <strong>Register</strong> sends a second, tiny job carrying the seek, small enough for
             the printer to read whole. It winds the paper back first, because the seek needs the gap
             about 24&nbsp;mm ahead to see it at all and a full-height label ends right on the gap
-            &mdash; that is what costs a blank label. The rewind may not reach 24&nbsp;mm; it is the
-            only backward motion this printer has.{' '}
+            &mdash; that is what costs a blank label. The rewind goes out as two small jobs, because
+            the printer honours only one wind-back per job. It is the only backward motion this
+            printer has, and it may still not reach far enough.{' '}
             <strong>Splitting, above, needs no rewind</strong> and is the surer route at full
             quality.
             <br />

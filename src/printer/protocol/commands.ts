@@ -9,7 +9,7 @@ import { createPackedBitmap } from '../../model/bitmap'
 import {
   ALIGN_START_RETRACT_DOTS,
   MAX_DENSITY,
-  MAX_STACKED_RETRACTS,
+  MAX_RETRACT_JOBS,
   MIN_DENSITY,
   SEEK_MIN_APPROACH_DOTS,
   SEEK_SAFE_JOB_BYTES,
@@ -408,21 +408,18 @@ export function needsFollowUpSeek(encodedImageBytes: number): boolean {
  *
  * A full-height label ends *at* its gap. Approach zero. So the follow-up's job is to
  * buy back approach, and the only thing on this firmware that winds paper back is
- * `alignPaperStart`, worth at most {@link ALIGN_START_RETRACT_DOTS} a time. Hence
- * stacking: enough of them to clear the threshold, capped at
- * {@link MAX_STACKED_RETRACTS}. The paper is still attached to the label just
- * printed, so there is nothing to lose by winding into it, and the blank raster fires
- * no dots on the way forward again.
+ * `alignPaperStart`, worth at most {@link ALIGN_START_RETRACT_DOTS} a time.
  *
- * Two of them have been flown and fell short — the retract was visibly under a
- * quarter of the label, so under the threshold — and the follow-up skipped a label
- * from an aligned start while succeeding from a misaligned one that had ended
- * mid-label. Exactly what the threshold predicts, from both sides.
+ * **It carries exactly one, however far there is to go.** Two of them in one job moved
+ * the paper the same distance a single one did, so the second was ignored; the
+ * printer honours one per job. Distance is bought by sending {@link rewindJob} several
+ * times over, each its own job and each acknowledged, which is how they were seen to
+ * stack when sent by hand. {@link retractJobsFor} says how many.
  *
- * `retractDots` is what is *available* to wind back into, not a target: the target is
- * the threshold, and the available distance only ever caps it. On a short label
- * winding back further than its own height would put the previous gap ahead of the
- * paper, and the seek would land on that instead.
+ * `availableDots` is the room to wind back *into*, not a target: the target is the
+ * threshold, and the room only ever caps it. On a short label winding back further
+ * than its own height would put the previous gap ahead of the paper, and the seek
+ * would land on that instead.
  */
 export function followUpSeekJob(
   framing: PrintJobFraming,
@@ -431,42 +428,76 @@ export function followUpSeekJob(
   availableDots = 0,
 ): Uint8Array {
   return printJobStream(
-    { ...framing, preamble: withRetracts(framing.preamble, availableDots) },
+    {
+      ...framing,
+      preamble:
+        retractJobsFor(availableDots) > 0
+          ? withOneRetract(framing.preamble)
+          : framing.preamble.filter((c) => c.note !== 'alignPaperStart'),
+    },
     encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)),
   )
 }
 
 /**
- * How many `alignPaperStart` commands to stack, given the room to wind back into.
+ * How many jobs a rewind needs, one retract each, given the room to wind back into.
  *
  * Aims at {@link SEEK_MIN_APPROACH_DOTS} — the approach the seek needs — and never
  * asks for more room than `availableDots`, so a short label cannot be wound back past
  * its own previous gap and have the seek land on that.
  *
+ * Counts *jobs* rather than commands because repeats within one job are ignored. The
+ * seek job carries the last of them, so a caller sends this many minus one
+ * {@link rewindJob}s first.
+ *
  * Rounds up, because falling short is the failure this exists to fix while
  * overshooting within the label costs nothing: every approach from 24 mm to a full
  * label away registered correctly.
  */
-export function retractCountFor(availableDots: number): number {
+export function retractJobsFor(availableDots: number): number {
   const target = Math.min(availableDots, SEEK_MIN_APPROACH_DOTS)
   if (!(target > 0)) return 0
-  return Math.min(MAX_STACKED_RETRACTS, Math.ceil(target / ALIGN_START_RETRACT_DOTS))
+  return Math.min(MAX_RETRACT_JOBS, Math.ceil(target / ALIGN_START_RETRACT_DOTS))
 }
 
 /**
- * Replace whatever retract the framing carries with the number this job wants.
+ * One job whose only purpose is to wind the paper back by one retract.
  *
- * Replace rather than add: the framing handed in is the label's, which already has
- * one `alignPaperStart` in it, and appending would silently make every count one
- * too many.
+ * Sent as many times as {@link retractJobsFor} calls for, each waiting to be
+ * acknowledged before the next — which is the only arrangement under which retracts
+ * accumulate. The raster is a single row rather than the seek job's millimetre,
+ * because everything this job feeds forward is distance the retract has to pay for
+ * again, and each job already gives back the printer's take-up at its start.
+ *
+ * No gap seek: seeking from an intermediate position is the mistake this whole
+ * sequence exists to avoid. No `alignPaperEnd` either, for the same reason the probe
+ * omits it — the paper must be left exactly where the retract left it.
  */
-function withRetracts(preamble: PrintJobFraming['preamble'], availableDots: number) {
-  const without = preamble.filter((c) => c.note !== 'alignPaperStart')
-  const retracts = Array.from({ length: retractCountFor(availableDots) }, () => ({
-    bytes: alignPaperStart(),
-    note: 'alignPaperStart',
-  }))
-  return [...without, ...retracts]
+export function rewindJob(framing: PrintJobFraming, widthDots: number): Uint8Array {
+  return printJobStream(
+    {
+      preamble: withOneRetract(framing.preamble),
+      trailer: framing.trailer.filter((c) => c.note !== 'locate'),
+      epilogue: [],
+    },
+    encodeImage(createPackedBitmap(widthDots, REWIND_JOB_ROWS)),
+  )
+}
+
+/** Rows a rewind job prints. As few as a raster can carry; see {@link rewindJob}. */
+export const REWIND_JOB_ROWS = 1
+
+/**
+ * Give a preamble exactly one retract, wherever it started from.
+ *
+ * Replace rather than add: the framing handed in is the label's, which already has one
+ * `alignPaperStart` in it, and appending would silently double every count.
+ */
+function withOneRetract(preamble: PrintJobFraming['preamble']) {
+  return [
+    ...preamble.filter((c) => c.note !== 'alignPaperStart'),
+    { bytes: alignPaperStart(), note: 'alignPaperStart' },
+  ]
 }
 
 /**

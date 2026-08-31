@@ -194,6 +194,13 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copies: job.settings.copies,
         })
         if (seeking) {
+          // One retract per job is honoured and repeats within a job are ignored, so
+          // the rewind is spread across jobs. The real driver waits for each to be
+          // acknowledged; there is nothing here to wait for.
+          const rewinds = Math.max(0, cmd.retractJobsFor(job.bitmap.heightDots) - 1)
+          for (let i = 0; i < rewinds; i++) {
+            send(cmd.rewindJob(framing, job.bitmap.widthDots), 'rewind job')
+          }
           send(
             cmd.followUpSeekJob(framing, job.bitmap.widthDots, job.bitmap.heightDots),
             'follow-up seek job',

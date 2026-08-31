@@ -7,7 +7,7 @@ import { createPackedBitmap } from '../../model/bitmap'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { CreditWindow } from '../protocol/CreditWindow'
 import { VirtualPrinterDriver } from './VirtualPrinterDriver'
-import { MAX_STACKED_RETRACTS, PaperType, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
+import { MAX_RETRACT_JOBS, PaperType, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
 import { findProfile } from '../profiles'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
@@ -362,29 +362,31 @@ describe('BlePrinterDriver', () => {
     expect(encodeImage(bitmap).length).toBeGreaterThan(SEEK_SAFE_JOB_BYTES)
     await driver.print({ bitmap, settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true } })
 
-    // Two complete jobs, in order, each with its own seek.
-    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(2)
+    // The label, then one job per retract the rewind needs, then the seek. The
+    // rewind jobs exist because the printer honours one `alignPaperStart` per job
+    // and ignores repeats within it, so distance is bought in jobs, not commands.
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1 + MAX_RETRACT_JOBS)
+    // And exactly two seeks: the label's own, which is too big to be read in time,
+    // and the follow-up's, which is the point of the exercise. None in between —
+    // seeking from half way through the rewind lands on whatever gap is nearest.
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(2)
 
-    // The second carries a raster, because a seek with nothing in front of it is
-    // documented as inert — and it is blank, so it costs 1 mm and a few bytes.
+    // Every retract sits before its own job's raster, which is the only position
+    // where `alignPaperStart` has ever moved paper.
     const stream = concat(transport.writes)
-    const second = stream.subarray(hex(stream).indexOf('1f 12 20 00') / 3 + 4)
-    expect(second.length).toBeLessThan(200)
-    expect(hex(second)).toContain('1f 10')
+    expect(occurrences(transport.writes, '1f 11 51')).toBe(1 + MAX_RETRACT_JOBS)
 
-    // The tear-off advance happens once, at the very end. Twice, with the retract
-    // between them, walked the paper past the boundary before the seek ran.
+    // The follow-up carries a raster, because a seek with nothing in front of it is
+    // documented as inert — and it is blank, so it costs 1 mm and a few bytes.
+    const followUp = stream.subarray(hex(stream).indexOf('1f 12 20 00') / 3 + 4)
+    expect(followUp.length).toBeLessThan(400)
+    expect(hex(followUp)).toContain('1f 10')
+    expect(hex(followUp).indexOf('1f 11 51')).toBeLessThan(hex(followUp).indexOf('1f 10'))
+
+    // The tear-off advance happens once, at the very end. Anywhere earlier it hands
+    // back the approach the rewind just bought.
     expect(occurrences(transport.writes, '1f 11 50')).toBe(1)
     expect(hex(stream).endsWith('1f 11 50')).toBe(true)
-    // One retract for the label, then as many as the roll will make before the
-    // seek. A seek starting where the label ended can only find the *next* gap —
-    // observed eating a blank label both with one retract in front of it and with
-    // none — so the follow-up winds back first. Two is the mechanism's ceiling: a
-    // third leaves the label stale.
-    expect(occurrences(transport.writes, '1f 11 51')).toBe(1 + MAX_STACKED_RETRACTS)
-    const followUp = hex(second)
-    expect(followUp.indexOf('1f 11 51')).toBeLessThan(followUp.indexOf('1f 10'))
   })
 
   it('sends each follow-up only after the printer says it has finished', async () => {
@@ -412,7 +414,10 @@ describe('BlePrinterDriver', () => {
       settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true },
     })
 
-    expect(order).toEqual(['job', 'ok', 'job', 'ok'])
+    // One pair per job, and the rewind jobs count: they move paper, and sending the
+    // next before the printer has finished is what lost a label when bands went
+    // out back-to-back.
+    expect(order).toEqual(Array.from({ length: 1 + MAX_RETRACT_JOBS }, () => ['job', 'ok']).flat())
   }, 30_000)
 
   it('splits an oversized label so the last band carries the seek', async () => {

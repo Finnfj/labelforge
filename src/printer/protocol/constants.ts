@@ -98,36 +98,35 @@ export const SEEK_MIN_APPROACH_DOTS = 256
  * and `stopPrintJob` retracted the paper. Nothing else in that job moves paper, so
  * the movement is attributable to those three bytes.
  *
- * **It only acts before the raster.** Four of them after one moved nothing at all,
- * which is the same positional fussiness the gap seek has in the other direction —
- * the seek acts only *after* a raster and is inert before it.
+ * **It only acts before the raster, and only once per job.** Four of them after a
+ * raster moved nothing. Two of them before one moved the paper exactly as far as a
+ * single one did — the same distance for double the commands, which is what "the
+ * second was ignored" looks like. Sent one per job they stack; sent together they do
+ * not. See {@link MAX_RETRACT_JOBS}.
  *
- * Eight millimetres is an upper bound rather than a measurement, and it replaces an
- * earlier guess of twenty that was too generous by more than double. The bound comes
- * from a print where two of them went out together and the retract was observed to be
- * clearly less than a quarter of an 80 mm label — under 20 mm for the pair.
+ * That correction pulls the distance back up. The measurement behind it — a pair
+ * moving visibly less than a quarter of an 80 mm label — was read as 10 mm each while
+ * the pair was believed to stack. If only one of them acted, the same observation
+ * bounds a *single* retract at under 20 mm, which is where the original eyeball put
+ * it. Sixteen is that bound with a little kept back.
  */
-export const ALIGN_START_RETRACT_DOTS = 64
+export const ALIGN_START_RETRACT_DOTS = 128
 
 /**
- * Most retracts one job may stack.
+ * Most jobs a rewind may be spread across, one retract each.
  *
- * Two both move paper. A third has been seen to leave the label stale — the paper
- * stops coming back, because the roll inside the cartridge will not unwind further in
- * reverse — but that reading was taken from a different paper position than the one
- * that matters here, and a stalled retract costs a wasted command and nothing else.
- * Since two of them fall short of {@link SEEK_MIN_APPROACH_DOTS}, three is the count
- * worth spending a label on.
+ * The printer honours one `alignPaperStart` per job and ignores repeats within it, so
+ * distance is bought by sending several small jobs rather than several commands. Sent
+ * that way they were observed to stack; on a third the label went stale, the roll
+ * refusing to unwind further in reverse.
  *
- * That they stack at all is worth recording separately from the cap: it means
- * `alignPaperStart` is a relative move rather than an align to a fixed registration
- * point, which was the other reading of the name and would have closed this route.
- *
- * **If three still falls short, the route is out of road.** The rewind cannot reach
- * the approach the seek needs, and `splitForSeek` — whose in-job seek does not need
- * any approach at all — is the answer for a tall label at full quality.
+ * Two of them is around 30 mm net of what each job's own take-up gives back, which
+ * clears {@link SEEK_MIN_APPROACH_DOTS}. It is also the whole rewind this printer
+ * has, so if it does not clear the threshold nothing else will, and `splitForSeek` —
+ * whose in-job seek needs no approach at all — is the answer for a tall label at full
+ * quality.
  */
-export const MAX_STACKED_RETRACTS = 3
+export const MAX_RETRACT_JOBS = 2
 
 /**
  * How fast the printer consumes rows once it is drain-limited.

@@ -983,12 +983,42 @@ demonstration of the threshold as the wire can give. The retract in those runs w
 observed to be clearly less than a quarter of the label — under 20 mm for the pair — so
 two `1F 11 51` do not reach the approach the seek needs.
 
-`ALIGN_START_RETRACT_DOTS` was therefore halved and more: an earlier eyeball put one
-retract at 20 mm, and the pair measuring under 20 mm makes each of them 8 mm at the
-outside. The follow-up now stacks three, which is both what the threshold asks for and
-the most the mechanism has been seen to give — a third retract has once left the label
-stale, the roll refusing to unwind further. If three still falls short, the rewind
-cannot reach the threshold and this route is finished.
+### One retract per job, and repeats within a job are ignored
+
+Two `1F 11 51` in one job moved the paper **the same distance a single one did**. Same
+distance for double the commands is what "the second was ignored" looks like, and sent
+by hand one at a time they did accumulate. So `alignPaperStart` is honoured once per
+job, and distance is bought by sending several jobs rather than several commands.
+
+That correction also puts the retract distance back up. The measurement behind the
+8 mm figure — a pair moving visibly less than a quarter of an 80 mm label — was read
+as 10 mm each while the pair was believed to stack. If only one of them acted, the
+same observation bounds a **single** retract at under 20 mm, which is where the
+original eyeball had it. `ALIGN_START_RETRACT_DOTS` is 16 mm: that bound with a little
+kept back.
+
+So the follow-up sequence is now, after the label is acknowledged:
+
+```
+1F 80 02 20  1F 70 …  1F C0 01 00  1F 11 51  1F 10 …1 row blank…  1F C0 01 01   ← rewind job
+                                                                    wait for 4F 4B
+1F 80 02 20  1F 70 …  1F C0 01 00  1F 11 51  1F 10 …1 row blank…  1F C0 01 01   ← ×(n−1)
+                                                                    wait for 4F 4B
+1F 80 02 20  1F 70 …  1F C0 01 00  1F 11 51  1F 10 …1 mm blank…  1F 12 20 00  1F C0 01 01
+1F 11 50
+```
+
+Each rewind job waits to be acknowledged — the printer will not take a job while
+working on one, established when back-to-back bands cost a label. A rewind job prints
+one row rather than the seek job's millimetre, because everything it feeds forward is
+distance the retract has to pay for again, and each job already gives back the
+printer's 8-dot take-up at its start. Two jobs net roughly 30 mm, which clears the
+24 mm threshold.
+
+Two is also the ceiling: a third retract has been seen leaving the label stale, the
+roll refusing to unwind further in reverse. **If two jobs do not clear the threshold,
+the rewind cannot reach it and this route is finished** — `splitForSeek`, whose in-job
+seek needs no approach at all, is then the answer for a tall label at full quality.
 
 ### Capturing the ground truth
 
