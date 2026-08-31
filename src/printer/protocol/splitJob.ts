@@ -83,6 +83,13 @@ const MIN_BAND_ROWS = SPLIT_SEAM_DOTS * 4
 export function planSeekableBands(
   bitmap: PackedBitmap,
   limitBytes = SEEK_SAFE_JOB_BYTES,
+  /**
+   * Rows given up at each boundary. {@link SPLIT_SEAM_DOTS} when the take-up is spent,
+   * zero when the caller is winding it back with `alignPaperStart` instead — see
+   * `PrintSettings.closeSplitSeam`. The two have to agree, or the label is offset by a
+   * millimetre per boundary in whichever direction they disagree.
+   */
+  seamDots = SPLIT_SEAM_DOTS,
 ): PackedBitmap[] {
   const budget = Math.max(1, Math.floor(limitBytes * HEADROOM))
   if (encodeImage(bitmap).length <= budget) return [bitmap]
@@ -99,7 +106,7 @@ export function planSeekableBands(
       break
     }
 
-    let rows = quietestCut(bitmap, from, Math.min(remaining, estimate))
+    let rows = quietestCut(bitmap, from, Math.min(remaining, estimate), seamDots)
     let band = sliceRows(bitmap, from, rows)
     // Compressed size is not linear in rows — dense image compresses worse than
     // the average — so the estimate can come out over. Halve until it fits, with a
@@ -110,9 +117,10 @@ export function planSeekableBands(
     }
 
     bands.push(band)
-    // Skip the rows that will be lost to the printer's take-up, rather than
-    // printing them late and shifting the rest of the label down.
-    from += rows + SPLIT_SEAM_DOTS
+    // Skip the rows that will be lost to the printer's take-up, rather than printing
+    // them late and shifting the rest of the label down. With a retract at the
+    // boundary there is nothing to lose and `seamDots` is zero, so the bands meet.
+    from += rows + seamDots
   }
   return bands
 }
@@ -126,12 +134,15 @@ export function planSeekableBands(
  * fully inked design scores the same everywhere and gets the estimate back
  * unchanged.
  */
-function quietestCut(bitmap: PackedBitmap, from: number, rows: number): number {
+function quietestCut(bitmap: PackedBitmap, from: number, rows: number, seamDots: number): number {
+  // Nothing is lost at a boundary that costs no rows, so every cut scores the same and
+  // the estimate stands — which keeps the bands as large as they can be.
+  if (seamDots <= 0) return rows
   const earliest = Math.max(MIN_BAND_ROWS, rows - SEAM_SEARCH_DOTS)
   let best = rows
   let bestInk = Infinity
   for (let candidate = rows; candidate >= earliest; candidate--) {
-    const ink = inkInRows(bitmap, from + candidate, SPLIT_SEAM_DOTS)
+    const ink = inkInRows(bitmap, from + candidate, seamDots)
     if (ink < bestInk) {
       bestInk = ink
       best = candidate

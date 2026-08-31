@@ -1,9 +1,9 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import { encodeImage } from '../protocol/encodeImage'
-import { planSeekableBands } from '../protocol/splitJob'
+import { planSeekableBands, SPLIT_SEAM_DOTS } from '../protocol/splitJob'
 import { DEFAULT_PROFILE } from '../profiles'
-import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
+import { DEFAULT_CHUNK_SIZE, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
 import * as cmd from '../protocol/commands'
 import type {
   PrintJob,
@@ -115,10 +115,14 @@ export class VirtualPrinterDriver implements PrinterDriver {
     try {
       const image = encodeImage(job.bitmap)
       const framing = cmd.printJobFraming(job.settings)
-      // One band unless splitting is asked for, so the ordinary path is the same
-      // code with a single-element array. Same planner as the real driver.
+      // One band unless the label needs splitting, so the ordinary path is the same
+      // code with a single-element array. Same planner and same seam decision as the
+      // real driver — a test concatenates both and compares.
+      const closeSeam = job.settings.closeSplitSeam === true
       const bands =
-        job.settings.splitForSeek === true ? planSeekableBands(job.bitmap) : [job.bitmap]
+        job.settings.splitForSeek === false
+          ? [job.bitmap]
+          : planSeekableBands(job.bitmap, SEEK_SAFE_JOB_BYTES, closeSeam ? 0 : SPLIT_SEAM_DOTS)
       const encoded = bands.length === 1 ? [image] : bands.map(encodeImage)
       const total = encoded.reduce((n, e) => n + e.length, 0) * job.settings.copies
 
@@ -141,11 +145,6 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-        const seeking =
-          bands.length === 1 &&
-          job.settings.followUpSeek !== false &&
-          cmd.needsFollowUpSeek(image.length)
-
         for (let band = 0; band < encoded.length; band++) {
           const last = band === encoded.length - 1
           // Only the first band retracts, only the last seeks, and the tear-off
@@ -153,7 +152,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
           // framing for the same reasons; a test concatenates both and compares.
           const bandFraming = cmd.printJobFraming({
             ...job.settings,
-            alignStart: band === 0,
+            alignStart: band === 0 || closeSeam,
             seekGap: last,
           })
           for (const { bytes, note } of bandFraming.preamble) send(bytes, note)
@@ -181,7 +180,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
           }
 
           for (const { bytes, note } of bandFraming.trailer) send(bytes, note)
-          if (last && !seeking) {
+          if (last) {
             for (const { bytes, note } of framing.epilogue) send(bytes, note)
           }
         }
@@ -193,23 +192,6 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-        if (seeking) {
-          // One retract per job is honoured and repeats within a job are ignored, so
-          // the rewind is spread across jobs. The real driver waits for each to be
-          // acknowledged; there is nothing here to wait for.
-          const rewinds = Math.max(0, cmd.retractJobsFor(job.bitmap.heightDots) - 1)
-          for (let i = 0; i < rewinds; i++) {
-            send(cmd.rewindJob(framing, job.bitmap.widthDots), 'rewind job')
-          }
-          send(
-            cmd.followUpSeekJob(framing, job.bitmap.widthDots, job.bitmap.heightDots),
-            'follow-up seek job',
-          )
-          // The tear advance ends the print, and it ends this job because this is
-          // the job that ends the print. Omitting it here once let the two drivers
-          // disagree about the last three bytes of an oversized label.
-          for (const { bytes, note } of framing.epilogue) send(bytes, note)
-        }
       }
 
       this.#printouts.push({ job, wire, at: Date.now() })

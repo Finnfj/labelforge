@@ -5,18 +5,13 @@
  * play and they are *not* two protocol generations: `1F` covers print control and
  * configuration, `10 FF` covers device-information queries.
  */
-import { createPackedBitmap } from '../../model/bitmap'
 import {
-  ALIGN_START_RETRACT_DOTS,
   MAX_DENSITY,
-  MAX_RETRACT_JOBS,
   MIN_DENSITY,
-  SEEK_MIN_APPROACH_DOTS,
   SEEK_SAFE_JOB_BYTES,
   type PaperTypeValue,
   type SpeedValue,
 } from './constants'
-import { encodeImage } from './encodeImage'
 
 const cmd = (...bytes: number[]) => Uint8Array.from(bytes)
 
@@ -321,184 +316,46 @@ export function printJobStream(framing: PrintJobFraming, image: Uint8Array): Uin
 }
 
 /**
- * Rows of blank raster in the follow-up seek job.
+ * Whether a raster this big needs splitting for its gap seek to be read.
  *
- * Enough to be a raster and little enough not to matter. 8 dots is 1 mm, and if
- * the seek fires that millimetre is absorbed into the travel to the gap; if it
- * does not, 1 mm is a smaller error than the whole gap the label is already
- * missing. One row would be less still, but nothing says a one-row raster is
- * valid and there is no way to ask.
+ * The printer honours a job's seek only when it read the job whole before the motor
+ * started; above {@link SEEK_SAFE_JOB_BYTES} it did not, and a tall label's own seek
+ * goes unread. Splitting is the answer — see `planSeekableBands()`.
+ *
+ * Takes the encoded `1F 10` command's length rather than the whole job's, because that
+ * is what a caller has before it has built any framing: the print panel warns from the
+ * same number the drivers decide on, and 29 bytes of framing is nothing against a
+ * 16 KB threshold. One basis everywhere beats a more precise one that two callers
+ * compute differently.
  */
-export const SEEK_JOB_ROWS = 8
-
-/*
- * A rewind used to sit here, and it is worth saying why it does not.
- *
- * The reasoning was that `1F 11 51` undoes the tear-off advance exactly, landing a
- * registered roll on the gap, so winding back 5 mm before the seek would put the
- * paper on the label side of the boundary. It was sent as `1F 11 10 00 28`, the
- * printer honoured it — the paper visibly pulled back — and a whole blank label
- * came out anyway.
- *
- * Five millimetres was the wrong size of correction: the excursion it was trying to
- * undo is the tear-off round trip, which is about twenty. The follow-up now avoids
- * making that excursion at all rather than trying to walk it back — see
- * {@link followUpSeekJob}.
- *
- * It also established something that turned out to be wrong, and the error is
- * worth leaving written down because two later attempts were built on it: the paper
- * did pull back, and that was read as `adjustPosition` working. It was not. That
- * job also carried `alignPaperStart`, which retracts about twenty millimetres and
- * is a known paper-mover. `1F 11 10` has since been sent at forty dots in a band
- * with nothing else that moves paper, was acknowledged, and did nothing.
- *
- * So `adjustPosition` is inert like every other dedicated motion command on this
- * firmware, and the note above that claimed otherwise is retracted. Printing rows
- * and the gap seek remain the only two things that move paper.
- */
-
-/**
- * Whether a raster this big will have its own gap seek read in time.
- *
- * Takes the encoded `1F 10` command's length rather than the whole job's, because
- * that is what a caller has before it has built any framing — the print panel
- * warns from the same number the drivers decide on, and 29 bytes of framing is
- * nothing against a 16 KB threshold. One basis everywhere beats a more precise
- * one that two callers compute differently.
- */
-export function needsFollowUpSeek(encodedImageBytes: number): boolean {
+export function needsSplitToSeek(encodedImageBytes: number): boolean {
   return encodedImageBytes > SEEK_SAFE_JOB_BYTES
 }
 
-/**
- * A complete job whose only purpose is to carry a gap seek that gets read.
+/*
+ * A follow-up seek job used to live here — a second, tiny job carrying nothing but a
+ * millimetre of blank raster and the gap seek, sent after a label too tall to seek for
+ * itself. It is gone, and the reason is worth keeping because it took five hardware
+ * rounds to establish and it rules out a whole family of ideas.
  *
- * Ordinary in every respect — same framing, same order, same everything — except
- * that the raster is a millimetre of blank instead of a label. Being ordinary is
- * the point: the shape below `SEEK_SAFE_JOB_BYTES` is the shape that is confirmed
- * to register a label, so the fix is to send one of those rather than to invent
- * something.
+ * It always took a blank label, and the cause turned out to be a property of the seek
+ * rather than anything about the job: **the seek cannot see a boundary that is nearly
+ * under it.** Calibrated across an 80 mm label, a standalone seek catches its own gap
+ * from anywhere between a full label and about 24 mm out, and misses below roughly
+ * 20 mm — running a full pitch to the next gap instead. A full-height label ends *at*
+ * its gap, approach zero, so nothing sent afterwards can register it.
  *
- * Blank rows compress to nothing, so this is a couple of dozen bytes on the wire
- * however wide the stock is.
+ * The only way to buy approach back is to wind the paper backwards, and the only
+ * command that does that is `alignPaperStart` — one retract, worth well under the
+ * 24 mm needed. It cannot be stacked: repeats within a job are ignored, and sent as
+ * separate jobs the second retract is acknowledged and moves nothing. One retract is
+ * all this mechanism physically has.
  *
- * ## Why it needs a rewind, and why one is not enough
- *
- * Sent from where a full-height label ends, this job takes a whole blank label. It
- * has been observed doing so twice, in the two configurations that differ by
- * exactly the thing that ought to matter:
- *
- * | follow-up | result |
- * | --- | --- |
- * | `startPrintJob` · `1F 11 51` · raster · seek | a whole blank label |
- * | `startPrintJob` · raster · seek (no retract, no tear advance before it) | a whole blank label |
- *
- * So neither the tear-off round trip nor a single retract is the deciding factor.
- * What both have in common is that the seek starts at or after the boundary the
- * label just reached, and from there the only boundary it can find is the next one.
- * The seek is not unreliable — it lands wherever the first gap ahead of it is, every
- * time. Whether that is the right gap is a question about where the paper starts.
- *
- * ## What the seek actually needs
- *
- * Not distance past the boundary — distance *before* it. Calibration across an 80 mm
- * label established that a standalone seek catches its own gap from anywhere between
- * a full label and about 24 mm out, and misses below roughly 20 mm, running a full
- * pitch instead. {@link SEEK_MIN_APPROACH_DOTS} carries the figure and the table.
- *
- * A full-height label ends *at* its gap. Approach zero. So the follow-up's job is to
- * buy back approach, and the only thing on this firmware that winds paper back is
- * `alignPaperStart`, worth at most {@link ALIGN_START_RETRACT_DOTS} a time.
- *
- * **It carries exactly one, however far there is to go.** Two of them in one job moved
- * the paper the same distance a single one did, so the second was ignored; the
- * printer honours one per job. Distance is bought by sending {@link rewindJob} several
- * times over, each its own job and each acknowledged, which is how they were seen to
- * stack when sent by hand. {@link retractJobsFor} says how many.
- *
- * `availableDots` is the room to wind back *into*, not a target: the target is the
- * threshold, and the room only ever caps it. On a short label winding back further
- * than its own height would put the previous gap ahead of the paper, and the seek
- * would land on that instead.
+ * So the follow-up route is closed, and splitting is what registers a tall label. Its
+ * seek rides in the same job as a real raster, and an in-job seek needs no approach at
+ * all — which is the asymmetry that took longest to see. docs/PROTOCOL.md carries the
+ * measurements.
  */
-export function followUpSeekJob(
-  framing: PrintJobFraming,
-  widthDots: number,
-  /** Room to wind back into — the height of the label just printed. */
-  availableDots = 0,
-): Uint8Array {
-  return printJobStream(
-    {
-      ...framing,
-      preamble:
-        retractJobsFor(availableDots) > 0
-          ? withOneRetract(framing.preamble)
-          : framing.preamble.filter((c) => c.note !== 'alignPaperStart'),
-    },
-    encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)),
-  )
-}
-
-/**
- * How many jobs a rewind needs, one retract each, given the room to wind back into.
- *
- * Aims at {@link SEEK_MIN_APPROACH_DOTS} — the approach the seek needs — and never
- * asks for more room than `availableDots`, so a short label cannot be wound back past
- * its own previous gap and have the seek land on that.
- *
- * Counts *jobs* rather than commands because repeats within one job are ignored. The
- * seek job carries the last of them, so a caller sends this many minus one
- * {@link rewindJob}s first.
- *
- * Rounds up, because falling short is the failure this exists to fix while
- * overshooting within the label costs nothing: every approach from 24 mm to a full
- * label away registered correctly.
- */
-export function retractJobsFor(availableDots: number): number {
-  const target = Math.min(availableDots, SEEK_MIN_APPROACH_DOTS)
-  if (!(target > 0)) return 0
-  return Math.min(MAX_RETRACT_JOBS, Math.ceil(target / ALIGN_START_RETRACT_DOTS))
-}
-
-/**
- * One job whose only purpose is to wind the paper back by one retract.
- *
- * Sent as many times as {@link retractJobsFor} calls for, each waiting to be
- * acknowledged before the next — which is the only arrangement under which retracts
- * accumulate. The raster is a single row rather than the seek job's millimetre,
- * because everything this job feeds forward is distance the retract has to pay for
- * again, and each job already gives back the printer's take-up at its start.
- *
- * No gap seek: seeking from an intermediate position is the mistake this whole
- * sequence exists to avoid. No `alignPaperEnd` either, for the same reason the probe
- * omits it — the paper must be left exactly where the retract left it.
- */
-export function rewindJob(framing: PrintJobFraming, widthDots: number): Uint8Array {
-  return printJobStream(
-    {
-      preamble: withOneRetract(framing.preamble),
-      trailer: framing.trailer.filter((c) => c.note !== 'locate'),
-      epilogue: [],
-    },
-    encodeImage(createPackedBitmap(widthDots, REWIND_JOB_ROWS)),
-  )
-}
-
-/** Rows a rewind job prints. As few as a raster can carry; see {@link rewindJob}. */
-export const REWIND_JOB_ROWS = 1
-
-/**
- * Give a preamble exactly one retract, wherever it started from.
- *
- * Replace rather than add: the framing handed in is the label's, which already has one
- * `alignPaperStart` in it, and appending would silently double every count.
- */
-function withOneRetract(preamble: PrintJobFraming['preamble']) {
-  return [
-    ...preamble.filter((c) => c.note !== 'alignPaperStart'),
-    { bytes: alignPaperStart(), note: 'alignPaperStart' },
-  ]
-}
 
 /**
  * Destructive commands. Deliberately grouped and named so they cannot be reached

@@ -76,44 +76,39 @@ export interface PrintSettings {
   /**
    * Print a label too large to seek as several jobs, so the last one can.
    *
-   * The printer honours a job's gap seek only when it read the job whole before
-   * the motor started, so a tall label's own seek goes unread. Splitting the
-   * raster into bands that each fit, sent back-to-back with the seek on the last,
-   * is the only route left that keeps the picture exactly as designed — the
-   * alternatives all trade image quality for compressed size, and the follow-up
-   * job behaves as a form feed.
+   * The printer honours a job's gap seek only when it read the job whole before the
+   * motor started, so a tall label's own seek goes unread. Splitting the raster into
+   * bands that each fit, sent one at a time with the seek on the last, is the only
+   * route that keeps the picture exactly as designed.
    *
-   * Off by default: untested on hardware, and the thing that could go wrong is a
-   * visible seam where one band ends and the next begins.
+   * **It is also the only route that registers a tall label at all.** An in-job seek
+   * needs no approach distance; a seek in a job of its own needs about 24 mm and there
+   * is no way to wind back that far. So this is on by default, and a raster that
+   * already fits comes back as a single band, which makes the ordinary path the same
+   * code.
+   *
+   * The cost is a millimetre of image at each boundary, hidden in the quietest row
+   * nearby. {@link closeSplitSeam} is an attempt at removing even that.
    */
   splitForSeek?: boolean
   /**
-   * Register the roll after a label too large to do it itself.
+   * Wind the paper back at each split boundary instead of skipping the rows.
    *
-   * A P50S honours a job's own gap seek only when it read the whole job before
-   * starting the motor; above `SEEK_SAFE_JOB_BYTES` it did not, so an oversized
-   * label can be followed by a 52-byte job carrying nothing but a millimetre of
-   * blank raster and the same seek. See `followUpSeekJob()`.
+   * A band's job takes up `SPLIT_SEAM_DOTS` before it lays down a raster, and those
+   * rows are skipped so the rest of the label keeps its position — costing a
+   * millimetre of image at each boundary. `alignPaperStart` is the one command that
+   * winds paper back and it acts in exactly the position a band's preamble puts it,
+   * so it may undo that take-up and let the bands meet with nothing lost.
    *
-   * **Off by default, and it may not be reachable at all.** A standalone seek needs
-   * the gap about 24 mm ahead to catch it — measured — and a full-height label ends
-   * on its gap, so the seek runs a full pitch and takes a blank label. The follow-up
-   * buys approach back with `alignPaperStart`, the only backward motion this firmware
-   * has, worth under 20 mm a time — sent as one retract per job, because repeats
-   * within a job are ignored, and stalling against the roll after two.
-   *
-   * `splitForSeek` has no such problem: an in-job seek registers from zero approach,
-   * which is why a split label lands correctly. It is the better route for a tall
-   * label at full quality, and costs a millimetre of image per boundary.
-   *
-   * For keeping a tall label registered print to print without any of that,
-   * `feedAfterDots` is the mechanism that behaves: blank rows move paper by exactly
-   * as many as you send. Open-loop, so a wrong gap accumulates — but it accumulates
-   * predictably, and one pass with the +/-1 mm buttons settles it for a given
-   * stock. `splitForSeek` is the other route, and costs a millimetre of image per
-   * boundary rather than a label.
+   * **Off by default: what it retracts mid-label is not known.** The only measurement
+   * of its reach comes from a job starting at the tear-off position, where it undoes
+   * the tear advance and moves about 20 mm. If it does that mid-label the second band
+   * prints 20 mm over the first and the label is ruined; if it is a return to the
+   * print-start position it undoes the 8-dot take-up and nothing else, which is
+   * exactly what is wanted. One label answers it, and the two outcomes are told apart
+   * at a glance.
    */
-  followUpSeek?: boolean
+  closeSplitSeam?: boolean
 }
 
 export interface PrintJob {
@@ -187,5 +182,8 @@ export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   // Deliberately absent — see PrintSettings.speed.
   paperType: 0x20, // gap labels
   copies: 1,
-  followUpSeek: false,
+  // On, because it is the only thing that registers a tall label. A raster that fits
+  // under the limit comes back as one band, so this changes nothing for small labels.
+  splitForSeek: true,
+  closeSplitSeam: false,
 }

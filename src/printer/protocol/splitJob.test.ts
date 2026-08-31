@@ -113,6 +113,49 @@ describe('planSeekableBands', () => {
     expect(planSeekableBands(noise(640)).length).toBeLessThanOrEqual(4)
   })
 
+  it('gives up nothing at a boundary the caller is winding back', () => {
+    // With `alignPaperStart` at each boundary the take-up is expected to be undone,
+    // so no row is skipped and the bands meet. The two decisions have to agree: rows
+    // skipped here plus rows the printer eats must come to the label, or it is offset
+    // by a millimetre per boundary in whichever direction they disagree.
+    const bm = noise(640)
+    const bands = planSeekableBands(bm, SEEK_SAFE_JOB_BYTES, 0)
+    expect(bands.length).toBeGreaterThan(1)
+    expect(bands.reduce((n, b) => n + b.heightDots, 0)).toBe(bm.heightDots)
+
+    let row = 0
+    for (const band of bands) {
+      expect(Array.from(band.data)).toEqual(
+        Array.from(bm.data.slice(row * RB, row * RB + band.data.length)),
+      )
+      row += band.heightDots
+    }
+    expect(row).toBe(bm.heightDots)
+  })
+
+  it('does not hunt for white space when the seam costs nothing', () => {
+    // The search only earns its keep by hiding lost rows. With none lost every cut
+    // scores the same, so the estimate stands and the bands stay as large as they can
+    // be — which means as few boundaries as possible.
+    //
+    // One bitmap, two plans differing only in `seamDots`: blanking rows changes how
+    // the raster compresses, so comparing plans of *different* bitmaps would be
+    // measuring the estimate rather than the search.
+    const bm = noise(640)
+    const quietRows = SPLIT_SEAM_DOTS * 2
+    const quietFrom = planSeekableBands(bm, SEEK_SAFE_JOB_BYTES, 0)[0].heightDots - 20
+    bm.data.fill(0, quietFrom * RB, (quietFrom + quietRows) * RB)
+
+    const spent = planSeekableBands(bm, SEEK_SAFE_JOB_BYTES, SPLIT_SEAM_DOTS)[0].heightDots
+    const wound = planSeekableBands(bm, SEEK_SAFE_JOB_BYTES, 0)[0].heightDots
+
+    // The one that loses rows moves its cut into the clear band; the one that loses
+    // none stays where the size estimate put it.
+    expect(spent).toBeGreaterThanOrEqual(quietFrom)
+    expect(spent).toBeLessThanOrEqual(quietFrom + quietRows - SPLIT_SEAM_DOTS)
+    expect(wound).toBeGreaterThan(spent)
+  })
+
   it('honours a limit passed in', () => {
     for (const band of planSeekableBands(noise(640), 4096)) {
       expect(encodeImage(band).length).toBeLessThanOrEqual(4096)

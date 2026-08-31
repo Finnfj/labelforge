@@ -1,7 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import * as cmd from '../protocol/commands'
-import { DEFAULT_CHUNK_SIZE, printDurationMs } from '../protocol/constants'
+import { DEFAULT_CHUNK_SIZE, printDurationMs, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
 import { DEFAULT_PROFILE, matchProfile, type PrinterProfile } from '../profiles'
 import { CreditWindow } from '../protocol/CreditWindow'
 import {
@@ -12,7 +12,7 @@ import {
   faultFromFlags,
 } from '../protocol/responses'
 import { encodeImage } from '../protocol/encodeImage'
-import { planSeekableBands } from '../protocol/splitJob'
+import { planSeekableBands, SPLIT_SEAM_DOTS } from '../protocol/splitJob'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -316,8 +316,14 @@ export class BlePrinterDriver implements PrinterDriver {
     try {
       // One band unless splitting is asked for and the label needs it, so the
       // ordinary path is the same code with a single-element array.
+      // A retract at each boundary is expected to undo the printer's take-up, so the
+      // rows it would have cost are kept. The two decisions have to agree; they are
+      // made here, once, and handed to the planner and the framing together.
+      const closeSeam = job.settings.closeSplitSeam === true
       const bands =
-        job.settings.splitForSeek === true ? planSeekableBands(job.bitmap) : [job.bitmap]
+        job.settings.splitForSeek === false
+          ? [job.bitmap]
+          : planSeekableBands(job.bitmap, SEEK_SAFE_JOB_BYTES, closeSeam ? 0 : SPLIT_SEAM_DOTS)
       const image = encodeImage(job.bitmap)
       const framing = cmd.printJobFraming(job.settings)
       // Commands and raster are one stream per band, chunked without regard for
@@ -327,7 +333,11 @@ export class BlePrinterDriver implements PrinterDriver {
         cmd.printJobStream(
           cmd.printJobFraming({
             ...job.settings,
-            alignStart: i === 0,
+            // Every band retracts when the seam is being closed: `alignPaperStart`
+            // acts in exactly this position, and undoing the take-up is the whole
+            // idea. Otherwise only the first, which has a tear-off advance behind it
+            // to undo.
+            alignStart: i === 0 || closeSeam,
             seekGap: i === bands.length - 1,
           }),
           bands.length === 1 ? image : encodeImage(band),
@@ -344,24 +354,6 @@ export class BlePrinterDriver implements PrinterDriver {
           copy,
           copies: job.settings.copies,
         })
-
-      // Too big for the printer to read before it starts printing, so its own gap
-      // seek goes unread. A second, tiny job carries one that does not — and winds
-      // the paper back the height of the label first, because a seek that starts at
-      // the boundary can only find the next one. That is the label height's only
-      // job here; see cmd.followUpSeekJob.
-      const seekJob =
-        bands.length === 1 &&
-        job.settings.followUpSeek !== false &&
-        cmd.needsFollowUpSeek(image.length)
-          ? cmd.followUpSeekJob(framing, job.bitmap.widthDots, job.bitmap.heightDots)
-          : null
-      // The retracts the seek job cannot carry itself. One `alignPaperStart` per job
-      // is honoured and repeats within a job are ignored — two in one moved the paper
-      // exactly as far as one — so the rewind is spread across jobs, each waiting to
-      // be acknowledged. The seek job carries the last of them.
-      const rewinds =
-        seekJob == null ? 0 : Math.max(0, cmd.retractJobsFor(job.bitmap.heightDots) - 1)
 
       // How long the printer will still be working after the last byte lands.
       // The fixed 5 s this used to wait was shorter than an 80 mm label takes, so
@@ -395,7 +387,7 @@ export class BlePrinterDriver implements PrinterDriver {
           const last = band === streams.length - 1
           await this.#sendJob(
             streams[band],
-            last && !seekJob ? framing.epilogue : [],
+            last ? framing.epilogue : [],
             opts.signal,
             (written) => {
               sent += written
@@ -435,48 +427,6 @@ export class BlePrinterDriver implements PrinterDriver {
               'through — check the label, and check the battery, since a flat one prints slowly ' +
               'and can give up mid-raster.',
           })
-        }
-
-        if (seekJob) {
-          if (acknowledged) {
-            // Strictly after the label is out. Sent any earlier this is one more
-            // thing queued behind the raster the printer is still consuming,
-            // which is the whole problem being worked around.
-            //
-            // The rewind first, in as many jobs as it takes. Each is a few dozen
-            // bytes and one row of blank, so the wait is the printer's own turnaround
-            // rather than a print; without the wait these would be dropped the same
-            // way back-to-back bands were.
-            const rewind = cmd.rewindJob(framing, job.bitmap.widthDots)
-            for (let i = 0; i < rewinds; i++) {
-              opts.signal?.throwIfAborted()
-              await this.#sendJob(rewind, [], opts.signal)
-              if (!(await this.#waitForDone(opts.signal))) {
-                // Seeking from a rewind that may not have finished is exactly the
-                // unpredictable case the acknowledgement above exists to rule out.
-                this.#emitter.emit('log', {
-                  level: 'warn',
-                  message:
-                    'The printer did not confirm winding the paper back, so the roll was left ' +
-                    'where the label ended rather than registered.',
-                })
-                break
-              }
-            }
-            await this.#sendJob(seekJob, framing.epilogue, opts.signal)
-            await this.#waitForDone(opts.signal)
-          } else {
-            // Without the acknowledgement there is nothing to say the printer has
-            // stopped, and a seek from an unknown position lands nowhere useful:
-            // a trial that fired anyway sent the paper through the gap and 20 mm
-            // into the next label. Leaving a roll unregistered is recoverable.
-            this.#emitter.emit('log', {
-              level: 'warn',
-              message:
-                'The roll was left where the label ended rather than registered, because seeking ' +
-                'from a position the printer has not confirmed lands somewhere unpredictable.',
-            })
-          }
         }
       }
 

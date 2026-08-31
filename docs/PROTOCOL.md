@@ -967,58 +967,69 @@ The practical consequence: **`splitForSeek` is the route that works for a tall l
 full quality.** Its seek needs no approach at all. The follow-up needs 24 mm bought
 back by retracting, and the retract may not be able to buy that much.
 
-### Why the follow-up seek ate a blank label
+### Why the follow-up seek route is closed — [settled]
 
-Because it starts with zero approach. The runs, in order:
+A follow-up seek — a second, tiny job carrying nothing but a millimetre of blank raster
+and the gap seek, sent after a label too tall to seek for itself — always took a blank
+label. Five rounds of hardware, and the answer is the threshold above plus one hard
+limit on the rewind.
 
-| follow-up job                           | start position                                         | result            |
-| --------------------------------------- | ------------------------------------------------------ | ----------------- |
-| `1F 11 51` · raster · seek · `1F 11 50` | end of tall label                                      | whole blank label |
-| raster · seek, tear advance suppressed  | end of tall label                                      | whole blank label |
-| `1F 11 51` ×2 · raster · seek           | end of tall label                                      | whole blank label |
-| `1F 11 51` ×2 · raster · seek           | mid-label, print had been misaligned across two labels | **correct**       |
+Everything tried, in order:
 
-The last two are the same bytes from different positions, which is as clean a
-demonstration of the threshold as the wire can give. The retract in those runs was
-observed to be clearly less than a quarter of the label — under 20 mm for the pair — so
-two `1F 11 51` do not reach the approach the seek needs.
+| follow-up job                                   | start position                                   | result            |
+| ----------------------------------------------- | ------------------------------------------------ | ----------------- |
+| `1F 11 51` · raster · seek · `1F 11 50`         | end of tall label                                | whole blank label |
+| raster · seek, tear advance suppressed          | end of tall label                                | whole blank label |
+| `1F 11 51` ×2 in one job · raster · seek        | end of tall label                                | whole blank label |
+| `1F 11 51` ×2 in one job · raster · seek        | mid-label (print had been misaligned across two) | **correct**       |
+| `1F 11 51` in a job of its own, then a seek job | end of tall label                                | whole blank label |
 
-### One retract per job, and repeats within a job are ignored
+The fourth row is the same bytes as the third from a different position, which is the
+threshold demonstrated from both sides. The rest all start with approach zero.
 
-Two `1F 11 51` in one job moved the paper **the same distance a single one did**. Same
-distance for double the commands is what "the second was ignored" looks like, and sent
-by hand one at a time they did accumulate. So `alignPaperStart` is honoured once per
-job, and distance is bought by sending several jobs rather than several commands.
+**One retract per job, and repeats within a job are ignored.** Two `1F 11 51` in one job
+moved the paper the same distance a single one did — same distance for double the
+commands is what an ignored second command looks like. Sending them as separate jobs
+instead gets them all acknowledged, and still moves the paper exactly one retract's
+worth. **One retract is all this mechanism physically has**, and it is well short of the
+24 mm the seek needs.
 
-That correction also puts the retract distance back up. The measurement behind the
-8 mm figure — a pair moving visibly less than a quarter of an 80 mm label — was read
-as 10 mm each while the pair was believed to stack. If only one of them acted, the
-same observation bounds a **single** retract at under 20 mm, which is where the
-original eyeball had it. `ALIGN_START_RETRACT_DOTS` is 16 mm: that bound with a little
-kept back.
+That also settles what `alignPaperStart` is. Not a relative move that happens to cap
+out — an _align_, to a position the printer already knows, which is exactly why the
+second one does nothing. The name was right all along.
 
-So the follow-up sequence is now, after the label is acknowledged:
+So there is no way to buy the approach a standalone seek needs, and the route is closed.
+The constants that drove it are gone from the code; the numbers are here because they
+rule out a family of ideas rather than because anything computes with them:
 
-```
-1F 80 02 20  1F 70 …  1F C0 01 00  1F 11 51  1F 10 …1 row blank…  1F C0 01 01   ← rewind job
-                                                                    wait for 4F 4B
-1F 80 02 20  1F 70 …  1F C0 01 00  1F 11 51  1F 10 …1 row blank…  1F C0 01 01   ← ×(n−1)
-                                                                    wait for 4F 4B
-1F 80 02 20  1F 70 …  1F C0 01 00  1F 11 51  1F 10 …1 mm blank…  1F 12 20 00  1F C0 01 01
-1F 11 50
-```
+- one retract reaches under 20 mm, from a job starting at the tear-off position, where
+  it undoes the tear advance
+- a standalone seek needs about 24 mm of approach
+- nothing else on the firmware moves paper backwards — `adjustPosition` is inert in all
+  four modes on both sides of the raster
 
-Each rewind job waits to be acknowledged — the printer will not take a job while
-working on one, established when back-to-back bands cost a label. A rewind job prints
-one row rather than the seek job's millimetre, because everything it feeds forward is
-distance the retract has to pay for again, and each job already gives back the
-printer's 8-dot take-up at its start. Two jobs net roughly 30 mm, which clears the
-24 mm threshold.
+**Splitting is what registers a tall label**, and it is the default. Its seek rides in
+the same job as a real raster, and an in-job seek needs no approach at all.
 
-Two is also the ceiling: a third retract has been seen leaving the label stale, the
-roll refusing to unwind further in reverse. **If two jobs do not clear the threshold,
-the rewind cannot reach it and this route is finished** — `splitForSeek`, whose in-job
-seek needs no approach at all, is then the answer for a tall label at full quality.
+### The remaining question: what does a retract do mid-label?
+
+The one thing `alignPaperStart` has never been asked. Every measurement of it comes from
+a job starting at the tear-off position, where it moves about 20 mm — but if it is an
+align rather than an offset, the distance is a consequence of where the paper was, not a
+property of the command.
+
+That matters because of the split seam. A band's job takes up `SPLIT_SEAM_DOTS` (1 mm)
+before it lays down a raster, nothing has ever taken that back, and `alignPaperStart`
+acts in exactly the position a band's preamble puts it. Two outcomes, told apart at a
+glance:
+
+- **A return to the print-start position** undoes the take-up and nothing else. The
+  bands meet, the seam is gone, and a tall label prints whole at full quality.
+- **A fixed ~20 mm** puts the second band 20 mm over the first and spoils the label.
+
+`PrintSettings.closeSplitSeam` sends it, and pairs it with a planner that skips no rows
+at the boundary — the two decisions have to agree or the label is offset by a millimetre
+per boundary in whichever direction they disagree.
 
 ### Capturing the ground truth
 

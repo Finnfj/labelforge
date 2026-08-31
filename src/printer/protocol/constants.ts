@@ -59,74 +59,14 @@ export const MAX_DENSITY = 15
  */
 export const SEEK_SAFE_JOB_BYTES = 16 * 1024
 
-/**
- * How near the gap a standalone seek may start and still catch it, in dots.
- *
- * **The number this whole route turns on, and it took a deliberate calibration to
- * get.** The paper was set with varying amounts of an 80 mm label still to run and a
- * 1 mm blank feed carrying a gap seek was sent at each position:
- *
- * | label still to run | seek lands on |
- * | --- | --- |
- * | 100 % down to ~30 % (80 mm → 24 mm) | its own gap — correct |
- * | below ~25 % (under 20 mm) | skips a label, finds the next gap |
- *
- * So the seek is not choosing wrongly; it cannot see a boundary that is nearly under
- * it. Below roughly twenty-four millimetres of approach it misses and runs a full
- * pitch. That single fact explains every wasted label in this file: a full-height
- * label ends *at* the gap, approach zero, so a seek sent afterwards can only find the
- * next one.
- *
- * It also explains why the split path does not have this problem. Its seek rides in
- * the same job as a real raster, and an in-job seek registers from zero approach —
- * two different behaviours behind one opcode, which is of a piece with the rest of
- * this protocol.
- *
- * 32 mm rather than the 24 mm observed working: the percentages were read off the
- * label by eye, and the calibration jobs each carried an `alignPaperStart` of their
- * own whose contribution is not separable from the position that was set. Erring long
- * costs nothing — anything from 24 mm to a full label away worked.
+/*
+ * Three constants for the follow-up seek route used to sit here — the seek's minimum
+ * approach distance, one retract's reach, and how many retract jobs could be stacked.
+ * The route is closed: one retract is all the mechanism has and it is well short of
+ * the approach the seek needs, so nothing computed from those numbers has a caller.
+ * The measurements behind them are in docs/PROTOCOL.md, which is where they are
+ * useful — they rule out a family of ideas rather than driving any code.
  */
-export const SEEK_MIN_APPROACH_DOTS = 256
-
-/**
- * How far one `alignPaperStart` winds the paper back, in dots.
- *
- * `1F 11 51` is the only command on this firmware that has ever been seen to move
- * paper backwards, and it took a purpose-built probe to establish it on its own: a
- * job of nothing but `startPrintJob`, one `1F 11 51`, two millimetres of blank raster
- * and `stopPrintJob` retracted the paper. Nothing else in that job moves paper, so
- * the movement is attributable to those three bytes.
- *
- * **It only acts before the raster, and only once per job.** Four of them after a
- * raster moved nothing. Two of them before one moved the paper exactly as far as a
- * single one did — the same distance for double the commands, which is what "the
- * second was ignored" looks like. Sent one per job they stack; sent together they do
- * not. See {@link MAX_RETRACT_JOBS}.
- *
- * That correction pulls the distance back up. The measurement behind it — a pair
- * moving visibly less than a quarter of an 80 mm label — was read as 10 mm each while
- * the pair was believed to stack. If only one of them acted, the same observation
- * bounds a *single* retract at under 20 mm, which is where the original eyeball put
- * it. Sixteen is that bound with a little kept back.
- */
-export const ALIGN_START_RETRACT_DOTS = 128
-
-/**
- * Most jobs a rewind may be spread across, one retract each.
- *
- * The printer honours one `alignPaperStart` per job and ignores repeats within it, so
- * distance is bought by sending several small jobs rather than several commands. Sent
- * that way they were observed to stack; on a third the label went stale, the roll
- * refusing to unwind further in reverse.
- *
- * Two of them is around 30 mm net of what each job's own take-up gives back, which
- * clears {@link SEEK_MIN_APPROACH_DOTS}. It is also the whole rewind this printer
- * has, so if it does not clear the threshold nothing else will, and `splitForSeek` —
- * whose in-job seek needs no approach at all — is the answer for a tall label at full
- * quality.
- */
-export const MAX_RETRACT_JOBS = 2
 
 /**
  * How fast the printer consumes rows once it is drain-limited.

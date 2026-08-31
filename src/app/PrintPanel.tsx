@@ -13,7 +13,7 @@ import { LabelTooWideError, headOriginDots } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
 import { MAX_DENSITY, MIN_DENSITY, SEEK_SAFE_JOB_BYTES } from '../printer/protocol/constants'
-import { needsFollowUpSeek } from '../printer/protocol/commands'
+import { needsSplitToSeek } from '../printer/protocol/commands'
 import { encodeImage } from '../printer/protocol/encodeImage'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../printer/types'
 import { resolveAssetUrl } from '../storage/assets'
@@ -201,7 +201,7 @@ export function PrintPanel({
   // dither compresses depends entirely on the picture. Stops at the first that
   // fits, so it is usually one or two.
   const photoIds = photoElementIds(doc)
-  const wantsTrial = needsFollowUpSeek(jobBytes) && photoIds.length > 0
+  const wantsTrial = needsSplitToSeek(jobBytes) && photoIds.length > 0
   useEffect(() => {
     if (!wantsTrial) {
       setRemedy(null)
@@ -224,7 +224,7 @@ export function PrintPanel({
         try {
           const result = await rasterize(withPhotoTone(doc, rung.tone), options)
           best = { rung, bytes: encodeImage(result.bitmap).length }
-          if (!needsFollowUpSeek(best.bytes)) break
+          if (!needsSplitToSeek(best.bytes)) break
         } catch {
           // The real raster already succeeded, so a failure here says nothing to
           // the user. No advice beats wrong advice.
@@ -240,7 +240,7 @@ export function PrintPanel({
   }, [wantsTrial, doc, padToHead, headWidth, align, offsetDots, feedAfterDots])
 
   /** True when the ladder found a rung that actually fits. */
-  const remedyFits = remedy != null && !needsFollowUpSeek(remedy.bytes)
+  const remedyFits = remedy != null && !needsSplitToSeek(remedy.bytes)
 
   const send = useCallback(
     async (target: PackedBitmap) => {
@@ -312,7 +312,7 @@ export function PrintPanel({
         </label>
       </div>
 
-      {needsFollowUpSeek(jobBytes) && (
+      {needsSplitToSeek(jobBytes) && (
         <div className={remedyFits || feedAfterDots > 0 ? 'hint' : 'warn'}>
           <p>
             This label is {(jobBytes / 1024).toFixed(1)} KB, which is more than the printer reads
@@ -324,23 +324,44 @@ export function PrintPanel({
           <label className="field field--check">
             <input
               type="checkbox"
-              checked={settings.splitForSeek === true}
+              checked={settings.splitForSeek !== false}
               onChange={(e) => setSettings((s) => ({ ...s, splitForSeek: e.target.checked }))}
             />
             <span>Split the print so the last part can seek</span>
           </label>
           <p>
-            <strong>Splitting costs nothing in the picture</strong>, which is why it is first, and
-            it is confirmed on hardware: the label registers and no paper is wasted. The raster goes
-            out as a few consecutive jobs, each small enough for the printer to read whole and only
-            the last one seeking, pausing between them because the printer will not take a new job
-            while it is working.
+            <strong>
+              Splitting costs nothing in the picture and is the only thing that registers a label
+              this size.
+            </strong>{' '}
+            Confirmed on hardware: the label registers and no paper is wasted. The raster goes out
+            as a few consecutive jobs, each small enough for the printer to read whole and only the
+            last one seeking, pausing between them because the printer will not take a new job while
+            it is working. A seek riding along with a real raster needs no run-up; one sent in a job
+            of its own needs about 24&nbsp;mm of paper before the gap, and there is no way to wind
+            back that far.
             <br />
-            The printer takes up 1 mm when a job starts and nothing will take it back, so each
-            boundary costs a millimetre of the picture. The cut is moved to whichever row nearby
-            loses the least ink, which hides it in white space where there is any &mdash; between
-            two lines of text it disappears, across a full-bleed photograph it will still show. If
-            that is not good enough, one of the two below avoids the boundary entirely.
+            The printer takes up 1 mm when a job starts, so each boundary costs a millimetre of the
+            picture. The cut is moved to whichever row nearby loses the least ink, which hides it in
+            white space where there is any &mdash; between two lines of text it disappears, across a
+            full-bleed photograph it will still show.
+          </p>
+
+          <label className="field field--check">
+            <input
+              type="checkbox"
+              checked={settings.closeSplitSeam === true}
+              onChange={(e) => setSettings((s) => ({ ...s, closeSplitSeam: e.target.checked }))}
+            />
+            <span>Try to close the seam by winding back at each boundary</span>
+          </label>
+          <p>
+            <strong>Experimental, and it costs a label to find out.</strong> Winding back is the one
+            thing that might undo the take-up, and it acts in exactly the place a boundary puts it.
+            What it does mid-label is unknown: if it returns the paper to where the last part
+            stopped, the seam closes and the picture is whole. If it winds back the ~20&nbsp;mm it
+            moves at the start of an ordinary print, the second part prints over the first and the
+            label is spoilt. The two outcomes are obvious at a glance.
           </p>
 
           {remedyFits && (
@@ -364,20 +385,12 @@ export function PrintPanel({
             <p>
               Nothing on the list gets it under the line &mdash; even ordered dithering leaves{' '}
               {(remedy.bytes / 1024).toFixed(1)} KB against the {SEEK_SAFE_JOB_BYTES / 1024} KB the
-              printer reads in full. This picture has too much fine detail to compress. One of the
-              two below, then.
+              printer reads in full. This picture has too much fine detail to compress. Splitting,
+              then, or the gap feed below.
             </p>
           )}
 
           <div className="row">
-            <label className="field field--check">
-              <input
-                type="checkbox"
-                checked={settings.followUpSeek === true}
-                onChange={(e) => setSettings((s) => ({ ...s, followUpSeek: e.target.checked }))}
-              />
-              <span>Register the roll after this print</span>
-            </label>
             <label className="field">
               <span style={{ minWidth: '5.5rem' }}>Gap feed</span>
               <input
@@ -398,18 +411,10 @@ export function PrintPanel({
             </label>
           </div>
           <p>
-            <strong>Register</strong> sends a second, tiny job carrying the seek, small enough for
-            the printer to read whole. It winds the paper back first, because the seek needs the gap
-            about 24&nbsp;mm ahead to see it at all and a full-height label ends right on the gap
-            &mdash; that is what costs a blank label. The rewind goes out as two small jobs, because
-            the printer honours only one wind-back per job. It is the only backward motion this
-            printer has, and it may still not reach far enough.{' '}
-            <strong>Splitting, above, needs no rewind</strong> and is the surer route at full
-            quality.
-            <br />
             <strong>Gap feed</strong> is the fallback that needs no sensor: blank rows advance the
             paper by exactly as many as you send. It means measuring your stock, which is why it is
-            last here rather than first.
+            last here rather than first &mdash; but it is open-loop and predictable, and one pass
+            with the &plusmn;1&nbsp;mm buttons settles it for a given roll.
           </p>
         </div>
       )}

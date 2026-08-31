@@ -7,7 +7,7 @@ import { createPackedBitmap } from '../../model/bitmap'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { CreditWindow } from '../protocol/CreditWindow'
 import { VirtualPrinterDriver } from './VirtualPrinterDriver'
-import { MAX_RETRACT_JOBS, PaperType, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
+import { PaperType, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
 import { findProfile } from '../profiles'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
@@ -349,76 +349,62 @@ describe('BlePrinterDriver', () => {
     expect(transport.blindWrites.map(hex)).toEqual([])
   })
 
-  it('follows an oversized job with a small one carrying the gap seek', async () => {
-    // A P50S only honours the seek in a job it read before the motor started, and
-    // above ~18 KB it did not. Confirmed by experiment: the same design at 30 mm
-    // registers and at 80 mm does not. See docs/PROTOCOL.md.
-    // Credits flowing, so chunks pace at 5 ms rather than the creditless 30 —
-    // an over-threshold job is ~190 chunks and the difference is 5 s of test.
-    // The mock never sends the end-of-job OK, and the follow-up waits for it, so
-    // the wait has to be cut short — which keeps the timeout path under test too.
-    const { transport, driver } = await connected({ credits: 1, doneTimeoutMs: 5 })
-    const bitmap = noisyBitmap(384, 360)
-    expect(encodeImage(bitmap).length).toBeGreaterThan(SEEK_SAFE_JOB_BYTES)
-    await driver.print({ bitmap, settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true } })
-
-    // The label, then one job per retract the rewind needs, then the seek. The
-    // rewind jobs exist because the printer honours one `alignPaperStart` per job
-    // and ignores repeats within it, so distance is bought in jobs, not commands.
-    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1 + MAX_RETRACT_JOBS)
-    // And exactly two seeks: the label's own, which is too big to be read in time,
-    // and the follow-up's, which is the point of the exercise. None in between —
-    // seeking from half way through the rewind lands on whatever gap is nearest.
-    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(2)
-
-    // Every retract sits before its own job's raster, which is the only position
-    // where `alignPaperStart` has ever moved paper.
-    const stream = concat(transport.writes)
-    expect(occurrences(transport.writes, '1f 11 51')).toBe(1 + MAX_RETRACT_JOBS)
-
-    // The follow-up carries a raster, because a seek with nothing in front of it is
-    // documented as inert — and it is blank, so it costs 1 mm and a few bytes.
-    const followUp = stream.subarray(hex(stream).indexOf('1f 12 20 00') / 3 + 4)
-    expect(followUp.length).toBeLessThan(400)
-    expect(hex(followUp)).toContain('1f 10')
-    expect(hex(followUp).indexOf('1f 11 51')).toBeLessThan(hex(followUp).indexOf('1f 10'))
-
-    // The tear-off advance happens once, at the very end. Anywhere earlier it hands
-    // back the approach the rewind just bought.
-    expect(occurrences(transport.writes, '1f 11 50')).toBe(1)
-    expect(hex(stream).endsWith('1f 11 50')).toBe(true)
-  })
-
-  it('sends each follow-up only after the printer says it has finished', async () => {
-    // The bug the first hardware trial found. An 80 mm label takes ~8.5 s to print
-    // after the last byte lands, the wait was a flat 5 s, and the follow-up went
-    // out mid-print — queued behind the raster it exists to get past. What has to
-    // hold is the ordering, whatever the timings: no job starts before the one
-    // before it has been acknowledged.
+  it('splits a label too big to seek without being asked', async () => {
+    // Splitting is the only thing that registers a label this size. A seek riding
+    // along with a real raster needs no run-up; one sent in a job of its own needs
+    // about 24 mm of paper before the gap, and one retract — all this mechanism has —
+    // does not reach that. So the follow-up route is gone and this is the default.
     const { transport, driver } = acknowledging()
     await driver.connect()
     transport.reset()
+    const bitmap = noisyBitmap(384, 360)
+    expect(encodeImage(bitmap).length).toBeGreaterThan(SEEK_SAFE_JOB_BYTES)
+    await driver.print({ bitmap, settings: { ...DEFAULT_PRINT_SETTINGS } })
 
-    const order: string[] = []
-    const underlying = transport.autoRespond!
-    transport.autoRespond = (bytes) => {
-      if (hex(bytes).includes('1f c0 01 00')) order.push('job')
-      return underlying(bytes)
-    }
-    transport.on('wire', (w) => {
-      if (w.direction === 'in' && hex(w.bytes) === '4f 4b') order.push('ok')
-    })
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBeGreaterThan(1)
+    // One seek for the whole label, in the last band.
+    const stream = hex(concat(transport.writes))
+    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
+    expect(stream.indexOf('1f 12 20 00')).toBeGreaterThan(stream.lastIndexOf('1f c0 01 00'))
+  }, 60_000)
 
+  it('leaves a label that already fits as a single job', async () => {
+    // The planner returns one band when the raster fits, so the ordinary path is the
+    // same code and nothing about a small label changed when splitting became the
+    // default.
+    const { transport, driver } = acknowledging()
+    await driver.connect()
+    transport.reset()
+    const bitmap = noisyBitmap(384, 64)
+    expect(encodeImage(bitmap).length).toBeLessThan(SEEK_SAFE_JOB_BYTES)
+    await driver.print({ bitmap, settings: { ...DEFAULT_PRINT_SETTINGS } })
+
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1)
+    expect(occurrences(transport.writes, '1f 11 51')).toBe(1)
+  }, 20_000)
+
+  it('retracts at every boundary when told to close the seam', async () => {
+    // `alignPaperStart` is the only command that moves paper backwards and it acts in
+    // exactly the position a band's preamble puts it, so it is the one candidate for
+    // undoing the take-up that costs a millimetre at each boundary. What it does
+    // mid-label is unknown, which is why it is opt-in.
+    const { transport, driver } = acknowledging()
+    await driver.connect()
+    transport.reset()
     await driver.print({
-      bitmap: noisyBitmap(384, 360),
-      settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true },
+      bitmap: noisyBitmap(384, 640),
+      settings: { ...DEFAULT_PRINT_SETTINGS, closeSplitSeam: true },
     })
 
-    // One pair per job, and the rewind jobs count: they move paper, and sending the
-    // next before the printer has finished is what lost a label when bands went
-    // out back-to-back.
-    expect(order).toEqual(Array.from({ length: 1 + MAX_RETRACT_JOBS }, () => ['job', 'ok']).flat())
-  }, 30_000)
+    const bands = occurrences(transport.writes, '1f c0 01 00')
+    expect(bands).toBeGreaterThan(1)
+    expect(occurrences(transport.writes, '1f 11 51')).toBe(bands)
+    // Still one retract per job, before that job's raster. Repeats within a job are
+    // ignored by the printer, so more than one would only read as a rewind that is
+    // not happening.
+    const stream = hex(concat(transport.writes))
+    expect(stream.indexOf('1f 11 51')).toBeLessThan(stream.indexOf('1f 10 00 30'))
+  }, 60_000)
 
   it('splits an oversized label so the last band carries the seek', async () => {
     // The one route to a registered tall label that costs no image quality. Each
@@ -429,7 +415,7 @@ describe('BlePrinterDriver', () => {
     transport.reset()
     await driver.print({
       bitmap: noisyBitmap(384, 640),
-      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true },
+      settings: { ...DEFAULT_PRINT_SETTINGS },
     })
 
     const stream = hex(concat(transport.writes))
@@ -440,7 +426,9 @@ describe('BlePrinterDriver', () => {
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
     expect(stream.indexOf('1f 12 20 00')).toBeGreaterThan(stream.lastIndexOf('1f c0 01 00'))
 
-    // Only the first band retracts — retracting mid-label would tear the image.
+    // Only the first band retracts by default — what a retract does mid-label is not
+    // known, and if it is the 20 mm it moves at the start of an ordinary print it
+    // would print the next band over this one.
     expect(occurrences(transport.writes, '1f 11 51')).toBe(1)
     expect(stream.indexOf('1f 11 51')).toBeLessThan(stream.indexOf('1f 10 00 30'))
 
@@ -476,7 +464,7 @@ describe('BlePrinterDriver', () => {
 
     await driver.print({
       bitmap: noisyBitmap(384, 640),
-      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true },
+      settings: { ...DEFAULT_PRINT_SETTINGS },
     })
 
     // Never two bands in a row: each is acknowledged before the next is sent.
@@ -503,7 +491,7 @@ describe('BlePrinterDriver', () => {
     })
     await driver.print({
       bitmap: noisyBitmap(384, 640),
-      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true },
+      settings: { ...DEFAULT_PRINT_SETTINGS },
     })
 
     // One band went out, then it gave up rather than guessing.
@@ -511,16 +499,17 @@ describe('BlePrinterDriver', () => {
     expect(warnings.join(' ')).toMatch(/label is incomplete/i)
   }, 60_000)
 
-  it('does not follow a split label with a seek job as well', async () => {
-    // Belt and braces would be a blank label: the split's own last band already
-    // seeks, and the follow-up is a form feed on this firmware.
+  it('seeks once per label however many bands it takes', async () => {
+    // Two seeks would be a blank label: the first would register the roll and the
+    // second, starting from the boundary, would run a full pitch to the next gap.
     const { transport, driver } = acknowledging()
     await driver.connect()
     transport.reset()
     await driver.print({
       bitmap: noisyBitmap(384, 640),
-      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true, followUpSeek: true },
+      settings: { ...DEFAULT_PRINT_SETTINGS, closeSplitSeam: true },
     })
+    expect(occurrences(transport.writes, '1f c0 01 00')).toBeGreaterThan(1)
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
   }, 60_000)
 
@@ -529,7 +518,7 @@ describe('BlePrinterDriver', () => {
     await driver.connect()
     transport.reset()
     const bitmap = noisyBitmap(384, 640)
-    const settings = { ...DEFAULT_PRINT_SETTINGS, splitForSeek: true }
+    const settings = { ...DEFAULT_PRINT_SETTINGS }
     await driver.print({ bitmap, settings })
 
     const virtual = new VirtualPrinterDriver(Infinity)
@@ -538,53 +527,19 @@ describe('BlePrinterDriver', () => {
     expect(hex(concat([...virtual.printouts[0].wire]))).toBe(hex(concat(transport.writes)))
   }, 60_000)
 
-  it('can be told to leave the roll where the label ended', async () => {
-    // The follow-up registers a roll that needs it and costs a blank label on one
-    // that does not — a full-height label already ends at the gap, and seeking
-    // from there advances to the next one. Nothing on this firmware reports which
-    // case you are in, so it is a choice rather than a behaviour.
+  it('can be told not to split, and then nothing registers the roll', async () => {
+    // Splitting is a choice because it costs a millimetre of picture at each
+    // boundary. Turned off, a tall label prints in one job whose own seek the printer
+    // never reads, and the roll drifts a gap-width per print — which is the behaviour
+    // this whole investigation started from, kept reachable on purpose.
     const { transport, driver } = await connected({ credits: 1 })
     await driver.print({
       bitmap: noisyBitmap(384, 360),
-      settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: false },
+      settings: { ...DEFAULT_PRINT_SETTINGS, splitForSeek: false },
     })
     expect(occurrences(transport.writes, '1f c0 01 00')).toBe(1)
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
   }, 20_000)
-
-  it('does not seek from a position the printer never confirmed', async () => {
-    // A trial where `4F 4B` never arrived ran the whole wait and then sent the
-    // follow-up anyway: the paper went through the gap and 20 mm into the next
-    // label. Without the acknowledgement there is nothing to say the printer has
-    // stopped, and a seek from an unknown position lands nowhere useful. Leaving
-    // the roll unregistered is recoverable; that is not.
-    const transport = new MockTransport({ autoRespond: identityResponder() })
-    transport.creditsPerWrite = 1
-    // Silent on the epilogue, so the end-of-job wait can only time out.
-    const identity = identityResponder()
-    transport.autoRespond = (bytes) => (hex(bytes) === '1f 11 50' ? undefined : identity(bytes))
-    const driver = new BlePrinterDriver(transport, { doneTimeoutMs: 1 })
-    await driver.connect()
-    transport.reset()
-
-    const warnings: string[] = []
-    driver.on('log', (l) => {
-      if (l.level === 'warn') warnings.push(l.message)
-    })
-    await driver.print({
-      // Wide and short on purpose. The follow-up is decided by encoded size and
-      // the wait by row count, so this is over the threshold while costing under
-      // two seconds to time out — 360 rows of the same volume would cost
-      // seventeen.
-      bitmap: noisyBitmap(4000, 40),
-      settings: { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true },
-    })
-
-    expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
-    // Both halves of it: the label may be incomplete, and the roll was left alone.
-    expect(warnings.join(' ')).toMatch(/never confirmed it finished/i)
-    expect(warnings.join(' ')).toMatch(/left where the label ended/i)
-  }, 40_000)
 
   it('waits for the printer to finish even when nothing follows', async () => {
     // Without this, `done` fired while a full-height label still had ten seconds
@@ -615,16 +570,17 @@ describe('BlePrinterDriver', () => {
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
   })
 
-  it('emits the same bytes as the virtual printer for an oversized label too', async () => {
-    // The small-label case below did not cover the follow-up, and the drivers
-    // promptly disagreed about it: the virtual one sent the seek job's stream and
-    // stopped, leaving off the tear advance that ends the print. Anything the
-    // oversize path does has to be in both.
+  it('emits the same bytes as the virtual printer when closing the seam', async () => {
+    // The small-label case below did not cover the oversize path once, and the
+    // drivers promptly disagreed about it: the virtual one left off the tear advance
+    // that ends the print. Anything the oversize path does has to be in both, and the
+    // seam decision is made twice — once for the planner, once for the framing — so
+    // it is exactly the kind of thing that drifts.
     const { transport, driver } = acknowledging()
     await driver.connect()
     transport.reset()
     const bitmap = noisyBitmap(384, 360)
-    const settings = { ...DEFAULT_PRINT_SETTINGS, followUpSeek: true }
+    const settings = { ...DEFAULT_PRINT_SETTINGS, closeSplitSeam: true }
     await driver.print({ bitmap, settings })
 
     const virtual = new VirtualPrinterDriver(Infinity)
