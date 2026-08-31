@@ -95,21 +95,20 @@ export interface PrintSettings {
    * label can be followed by a 52-byte job carrying nothing but a millimetre of
    * blank raster and the same seek. See `followUpSeekJob()`.
    *
-   * **Off by default, because it is a repair rather than a routine.** It does
-   * register a roll that has lost its place. On a roll that has not, it costs
-   * paper and does not settle: a full-height label ends at the gap, and seeking
-   * from there has been observed both to run a whole pitch onto the label after
-   * next, and to stop 20 mm into the next label. Where it stops is not something
-   * the wire can predict, and nothing on this firmware reports where the paper
-   * is.
+   * **Off by default, because the rewind it now depends on is unproven.** The
+   * follow-up used to be a repair rather than a routine: on a roll that had not
+   * lost its place it cost a whole blank label, because a seek starting from the
+   * boundary the label just reached can only find the next one. It now winds the
+   * paper back the full height of what was printed before seeking, which makes the
+   * label's own gap the first one ahead. Whether that works rests on whether
+   * `alignPaperStart` stacks — it moves paper, but only ever once per job so far.
    *
-   * For keeping a tall label registered print to print, `feedAfterDots` is the
-   * mechanism that behaves: blank rows move paper by exactly as many as you send.
-   * Open-loop, so a wrong gap accumulates — but it accumulates predictably, and
-   * one pass with the +/-1 mm buttons settles it for a given stock.
-   *
-   * Ignored for a label small enough to seek inside its own job, where the
-   * printer does this itself and gets it right.
+   * For keeping a tall label registered print to print without any of that,
+   * `feedAfterDots` is the mechanism that behaves: blank rows move paper by exactly
+   * as many as you send. Open-loop, so a wrong gap accumulates — but it accumulates
+   * predictably, and one pass with the +/-1 mm buttons settles it for a given
+   * stock. `splitForSeek` is the other route, and costs a millimetre of image per
+   * boundary rather than a label.
    */
   followUpSeek?: boolean
 }

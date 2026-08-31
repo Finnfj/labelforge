@@ -60,6 +60,50 @@ export const MAX_DENSITY = 15
 export const SEEK_SAFE_JOB_BYTES = 16 * 1024
 
 /**
+ * How far one `alignPaperStart` winds the paper back, in dots.
+ *
+ * `1F 11 51` is the only command on this firmware that has ever been seen to move
+ * paper backwards, and it took a purpose-built probe to establish it on its own:
+ * a job of nothing but `startPrintJob`, one `1F 11 51`, two millimetres of blank
+ * raster and `stopPrintJob` retracted the paper. Nothing else in that job moves
+ * paper, so the movement is attributable to those three bytes.
+ *
+ * **It only acts before the raster.** Four of them after one moved nothing at all,
+ * which is the same positional fussiness the gap seek has in the other direction —
+ * the seek acts only *after* a raster and is inert before it.
+ *
+ * Twenty millimetres is by eye, not by instrument, and it is the figure the paper
+ * moves when the roll sits at the tear-off position. That is very likely not a
+ * coincidence: `alignPaperStart` and `alignPaperEnd` read as a matched pair, out to
+ * the tear bar at the end of a job and back at the start of the next, so the
+ * distance may well be the head-to-tear-bar gap rather than a constant the command
+ * carries. If it turns out to be an *align* — wind back to a registration point —
+ * rather than a fixed offset, then stacking them does nothing and the number here
+ * is meaningless. That is exactly what the retract-stack probe is for.
+ */
+export const ALIGN_START_RETRACT_DOTS = 160
+
+/**
+ * Most retracts one job may stack, and it is the mechanism's limit, not a policy.
+ *
+ * Measured on hardware: two `1F 11 51` in one job both moved paper. On the third
+ * the label went stale — the paper stopped coming back, because the roll inside the
+ * cartridge will not unwind that far in reverse. So the useful rewind on this
+ * printer is about two of {@link ALIGN_START_RETRACT_DOTS}, roughly forty
+ * millimetres, and no amount of asking gets more.
+ *
+ * That they stack at all is worth recording separately from the cap: it means
+ * `alignPaperStart` is a relative move rather than an align to a fixed registration
+ * point, which was the other reading of the name and would have closed this route
+ * entirely.
+ *
+ * The consequence is that a full-height label cannot be wound all the way back. An
+ * 80 mm label gets forty millimetres, which is still twice what a single retract
+ * gave — and a single retract is the one that has been observed failing.
+ */
+export const MAX_STACKED_RETRACTS = 2
+
+/**
  * How fast the printer consumes rows once it is drain-limited.
  *
  * From the 80 mm wire log: 640 rows between the job being accepted and `4F 4B`,

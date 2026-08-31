@@ -35,14 +35,24 @@ import { printJobFraming, printJobStream } from './commands'
  *
  * ## Position matters, and not the same way for everything
  *
- * `position` decides whether the bytes go before the raster or after it, and that
- * is not a detail. The gap seek acts **only** after a raster — it is inert anywhere
- * else, which is why it took four rounds and a capture to find. `alignPaperStart`
- * appears to be the opposite: it retracts when it sits before the raster, as it does
- * in an ordinary job, and four of them after a raster moved nothing at all.
+ * `position` decides whether the bytes go before the raster or after it, and that is
+ * not a detail. The gap seek acts **only** after a raster — inert anywhere else,
+ * which is why it took four rounds and a capture to find. `alignPaperStart` is the
+ * opposite: it retracts before a raster and four of them after one moved nothing.
  *
- * So a command that does nothing in one position has not been ruled out. It has
- * been ruled out in that position.
+ * So a command that does nothing in one position has not been ruled out. It has been
+ * ruled out in that position, and both sides are worth the paper.
+ *
+ * ## What it has settled so far
+ *
+ * - **`adjustPosition` is not implemented.** All four `AdjustMode` values were probed
+ *   on both sides of the raster; every one was acknowledged and moved nothing.
+ * - **`alignPaperStart` retracts on its own**, in a job with nothing else in it that
+ *   moves paper — which is what makes the earlier attribution of a full print's
+ *   movement to one command in it a mistake rather than a guess.
+ * - **It stacks twice.** Two moved paper; a third left the label stale against the
+ *   roll. So it is a relative move rather than an align, and about forty millimetres
+ *   is the whole rewind this printer has.
  */
 export type ProbePosition = 'before' | 'after'
 

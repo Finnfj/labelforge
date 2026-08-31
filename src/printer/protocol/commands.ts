@@ -7,7 +7,9 @@
  */
 import { createPackedBitmap } from '../../model/bitmap'
 import {
+  ALIGN_START_RETRACT_DOTS,
   MAX_DENSITY,
+  MAX_STACKED_RETRACTS,
   MIN_DENSITY,
   SEEK_SAFE_JOB_BYTES,
   type PaperTypeValue,
@@ -379,21 +381,76 @@ export function needsFollowUpSeek(encodedImageBytes: number): boolean {
  * Blank rows compress to nothing, so this is a couple of dozen bytes on the wire
  * however wide the stock is.
  *
- * **`alignPaperStart` is left out, and the label job's `alignPaperEnd` with it.**
- * Those two are the tear-off round trip — forward about twenty millimetres at the
- * end of a job, back again at the start of the next — and having them between the
- * label and its seek walks the paper out past the boundary and back before the seek
- * runs. A small label's in-job seek registers correctly precisely because nothing
- * moves the paper between the raster and the seek; this makes the follow-up the
- * same shape. One label is one print, so the tear advance happens once, at the end
- * of the whole thing, which the driver arranges by handing the label job an empty
- * epilogue.
+ * ## Why it needs a rewind, and why one is not enough
+ *
+ * Sent from where a full-height label ends, this job takes a whole blank label. It
+ * has been observed doing so twice, in the two configurations that differ by
+ * exactly the thing that ought to matter:
+ *
+ * | follow-up | result |
+ * | --- | --- |
+ * | `startPrintJob` · `1F 11 51` · raster · seek | a whole blank label |
+ * | `startPrintJob` · raster · seek (no retract, no tear advance before it) | a whole blank label |
+ *
+ * So neither the tear-off round trip nor a single retract is the deciding factor.
+ * What both have in common is that the seek starts at or after the boundary the
+ * label just reached, and from there the only boundary it can find is the next one.
+ * The seek is not unreliable — it lands wherever the first gap ahead of it is, every
+ * time. Whether that is the right gap is a question about where the paper starts.
+ *
+ * Hence `retractDots`: wind back past the boundary first, so the gap ahead is the
+ * label's own. One `1F 11 51` moves about {@link ALIGN_START_RETRACT_DOTS}, and one
+ * is the count that has been observed failing, so they are stacked. The paper is
+ * still attached to the label just printed, so there is nothing to lose by going
+ * back, and the blank raster fires no dots on the way forward again.
+ *
+ * They do stack — which also settles that `alignPaperStart` is a relative move and
+ * not an align to a fixed point — but only twice. On a third the label goes stale,
+ * because the roll will not unwind that far in reverse. So the rewind asked for here
+ * is the label's height and the rewind delivered is at most
+ * {@link MAX_STACKED_RETRACTS} of them, about forty millimetres. A full-height label
+ * cannot be wound all the way back and does not need to be: forty millimetres puts
+ * the paper well inside the label just printed, where the first gap ahead is that
+ * label's own.
  */
-export function followUpSeekJob(framing: PrintJobFraming, widthDots: number): Uint8Array {
+export function followUpSeekJob(
+  framing: PrintJobFraming,
+  widthDots: number,
+  retractDots = 0,
+): Uint8Array {
   return printJobStream(
-    { ...framing, preamble: framing.preamble.filter((c) => c.note !== 'alignPaperStart') },
+    { ...framing, preamble: withRetracts(framing.preamble, retractDots) },
     encodeImage(createPackedBitmap(widthDots, SEEK_JOB_ROWS)),
   )
+}
+
+/**
+ * How many `alignPaperStart` commands it takes to wind back a given distance.
+ *
+ * Rounds up, because landing short of the boundary is the failure this exists to
+ * fix, and overshooting costs nothing — the seek walks forward again and stops at
+ * the first gap it finds. Capped at {@link MAX_STACKED_RETRACTS} so a bad height
+ * cannot wind the roll out of the printer.
+ */
+export function retractCountFor(retractDots: number): number {
+  if (!(retractDots > 0)) return 0
+  return Math.min(MAX_STACKED_RETRACTS, Math.ceil(retractDots / ALIGN_START_RETRACT_DOTS))
+}
+
+/**
+ * Replace whatever retract the framing carries with the number this job wants.
+ *
+ * Replace rather than add: the framing handed in is the label's, which already has
+ * one `alignPaperStart` in it, and appending would silently make every count one
+ * too many.
+ */
+function withRetracts(preamble: PrintJobFraming['preamble'], retractDots: number) {
+  const without = preamble.filter((c) => c.note !== 'alignPaperStart')
+  const retracts = Array.from({ length: retractCountFor(retractDots) }, () => ({
+    bytes: alignPaperStart(),
+    note: 'alignPaperStart',
+  }))
+  return [...without, ...retracts]
 }
 
 /**

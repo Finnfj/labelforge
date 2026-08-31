@@ -194,7 +194,10 @@ export class VirtualPrinterDriver implements PrinterDriver {
           copies: job.settings.copies,
         })
         if (seeking) {
-          send(cmd.followUpSeekJob(framing, job.bitmap.widthDots), 'follow-up seek job')
+          send(
+            cmd.followUpSeekJob(framing, job.bitmap.widthDots, job.bitmap.heightDots),
+            'follow-up seek job',
+          )
           // The tear advance ends the print, and it ends this job because this is
           // the job that ends the print. Omitting it here once let the two drivers
           // disagree about the last three bytes of an oversized label.

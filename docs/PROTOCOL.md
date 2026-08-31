@@ -898,25 +898,67 @@ of them sent after one moved nothing at all. So the probe offers both sides, and
 command that does nothing on one side has not been ruled out — only ruled out
 there.
 
-### Rewinding: what has been tried, and where
+### Rewinding: what has been tried, and where — [answered]
 
-Nothing moves paper backwards on demand. The state of the search:
+`adjustPosition` is dead in every mode and every position. `alignPaperStart` is the
+one command that winds paper back, it only does so before a raster, and it stacks
+twice before the roll refuses.
 
-|                            | before the raster           | after the raster                     |
-| -------------------------- | --------------------------- | ------------------------------------ |
-| `1F 11 51` alignPaperStart | retracts, ~20 mm            | **inert** — four in one job, nothing |
-| `1F 11 10` BackwardDots    | **inert** — 8 dots, 40 dots | **inert** — 640 dots                 |
-| `1F 11 11` BackwardMm      | **untried**                 | **inert** — 80 mm                    |
+|                            | before the raster               | after the raster                     |
+| -------------------------- | ------------------------------- | ------------------------------------ |
+| `1F 11 51` alignPaperStart | **retracts, ~20 mm; stacks ×2** | **inert** — four in one job, nothing |
+| `1F 11 10` BackwardDots    | **inert** — 8 dots, 40 dots     | **inert** — 640 dots                 |
+| `1F 11 11` BackwardMm      | **inert** — 80 mm               | **inert** — 80 mm                    |
+| `1F 11 00` ForwardDots     | **inert** — 40 dots             | **inert** — 40 dots                  |
 
-`AdjustMode` has four values and only `BackwardDots` had ever been on the wire until
-`BackwardMm` was probed after a raster. The one cell left is `1F 11 11` _before_ a
-raster, which is where the only working retract lives. If the firmware implements the
-millimetre modes and not the dot modes, and only in the preamble, that would explain
-every failure above.
+So `AdjustMode` is not implemented on this firmware in any of its four values. All
+four combinations of mode and position were probed with `probeJob()`, each in a job
+carrying nothing else that moves paper, and each was acknowledged with `4F 4B` and
+moved nothing. The command exists in the SDK facade and the printer accepts it; it
+does not act. Printing rows, the gap seek and `alignPaperStart` remain the only three
+things that move paper.
 
-The forward modes are also untried, and worth a probe of their own: a working
-`ForwardDots` would be a cheaper way to cross an inter-label gap than printing blank
-rows.
+**The retract was isolated properly.** A probe job of `startPrintJob` · `1F 11 51` ·
+2 mm blank raster · `stopPrintJob` — no gap seek, no `alignPaperEnd`, nothing else
+that moves paper — retracted the paper. That matters because the previous evidence
+for `1F 11 51` was a full print, and reading a full print's movement as belonging to
+one command in it is the mistake that cost three labels earlier in this file.
+
+**It stacks, and the ceiling is mechanical.** Two `1F 11 51` in one job both moved
+paper. On a third the label went stale — the paper stopped coming back, because the
+roll inside the cartridge will not unwind that far in reverse. Two consequences:
+
+- `alignPaperStart` is a **relative move**, not an align to a fixed registration
+  point. The name allowed both readings and only one of them left this route open.
+- The usable rewind is about **forty millimetres**, full stop. A full-height 80 mm
+  label cannot be wound all the way back, so any scheme that needs to must be
+  redesigned around forty rather than tuned. `MAX_STACKED_RETRACTS` in
+  `src/printer/protocol/constants.ts` carries the number.
+
+### Why the follow-up seek ate a blank label
+
+Because the seek was starting at or past the boundary, and from there the first gap
+ahead is the _next_ label's. Two hardware rounds bracket it:
+
+| follow-up job                                              | result            |
+| ---------------------------------------------------------- | ----------------- |
+| `startPrintJob` · `1F 11 51` · raster · seek · `1F 11 50`  | whole blank label |
+| `startPrintJob` · raster · seek, no tear advance before it | whole blank label |
+
+Neither the tear-off round trip nor a single retract decides it, which rules out the
+two explanations that were on the table. What both share is the starting position.
+
+The seek itself is not unreliable — it lands on the first gap ahead of it, every
+time. Every apparent success is a case where the paper happened to be behind the
+boundary: a print that stopped at 80 % of the label and was then fed 2 mm blank
+finished its registration correctly, and so did a 5 mm blank feed from a mid-label
+position on a fresh connection. Both are the same mechanism as a small label's in-job
+seek, which is the shape that works.
+
+So the follow-up now retracts before it seeks — as many `1F 11 51` as the label
+height asks for, capped at the two the roll will make. Forty millimetres puts the
+paper well inside the label just printed, where the first gap ahead is that label's
+own. `followUpSeekJob()` in `src/printer/protocol/commands.ts`.
 
 ### Capturing the ground truth
 

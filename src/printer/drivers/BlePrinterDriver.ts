@@ -346,14 +346,15 @@ export class BlePrinterDriver implements PrinterDriver {
         })
 
       // Too big for the printer to read before it starts printing, so its own gap
-      // seek will go unread. A second, tiny job carries one that will not.
-      // Too big for the printer to read before it starts printing, so its own gap
-      // seek goes unread. A second, tiny job carries one that does not.
+      // seek goes unread. A second, tiny job carries one that does not — and winds
+      // the paper back the height of the label first, because a seek that starts at
+      // the boundary can only find the next one. That is the label height's only
+      // job here; see cmd.followUpSeekJob.
       const seekJob =
         bands.length === 1 &&
         job.settings.followUpSeek !== false &&
         cmd.needsFollowUpSeek(image.length)
-          ? cmd.followUpSeekJob(framing, job.bitmap.widthDots)
+          ? cmd.followUpSeekJob(framing, job.bitmap.widthDots, job.bitmap.heightDots)
           : null
 
       // How long the printer will still be working after the last byte lands.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { PaperType, Speed } from './constants'
-import { followUpSeekJob, printJobFraming, printJobStream } from './commands'
+import { MAX_STACKED_RETRACTS, PaperType, Speed } from './constants'
+import { followUpSeekJob, printJobFraming, printJobStream, retractCountFor } from './commands'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
 
@@ -75,27 +75,72 @@ describe('printJobFraming', () => {
 })
 
 describe('followUpSeekJob', () => {
-  it('does not walk the paper out to the tear position before seeking', () => {
-    // A small label's in-job seek registers correctly because nothing moves the
-    // paper between the raster and the seek. This job is the same shape: no
-    // `alignPaperStart`, and the driver withholds the label job's `alignPaperEnd`
-    // to match, so the tear-off round trip does not happen in the middle of what
-    // is really one print. A 5 mm rewind was tried first and did nothing, which is
-    // unsurprising against an excursion of about twenty.
-    const framing = printJobFraming({ paperType: PaperType.Gap, density: 8 })
-    const stream = hex(followUpSeekJob(framing, 384))
+  const framing = () => printJobFraming({ paperType: PaperType.Gap, density: 8 })
 
-    expect(stream).not.toContain('1f 11 51') //   no retract
-    expect(stream).not.toContain('1f 11 10') //   and no rewind either
-    expect(stream).toContain('1f c0 01 00') //    still an ordinary job
+  it('winds back past the boundary before seeking', () => {
+    // The reason this job exists at all, and the thing two hardware rounds got
+    // wrong. A seek that starts where the label ended can only find the *next*
+    // gap, and it took a whole blank label both with a single retract in front of
+    // it and with none. Going back the label's own height makes its own gap the
+    // first one ahead.
+    const stream = hex(followUpSeekJob(framing(), 384, 640))
+    expect(stream.indexOf('1f c0 01 00')).toBeLessThan(stream.indexOf('1f 11 51'))
+    expect(stream.lastIndexOf('1f 11 51')).toBeLessThan(stream.indexOf('1f 10 00 30'))
     expect(stream.indexOf('1f 10 00 30')).toBeLessThan(stream.indexOf('1f 12 20 00'))
+  })
+
+  it('retracts before the raster, never after it', () => {
+    // Position is the whole finding. `1F 11 51` moved paper in a job where it came
+    // first and moved nothing at all when four of them followed a raster — the
+    // mirror image of the gap seek, which only acts after one.
+    const stream = hex(followUpSeekJob(framing(), 384, 640))
+    expect(stream.slice(stream.indexOf('1f 10 00 30'))).not.toContain('1f 11 51')
+  })
+
+  it('stacks one retract per 20 mm of label, up to what the roll allows', () => {
+    // Each `1F 11 51` is worth about that much, and the count is the difference
+    // between landing behind the boundary and in front of it — which is the
+    // difference between registering and eating a label. One is the count that has
+    // been observed failing.
+    const count = (retractDots: number) =>
+      hex(followUpSeekJob(framing(), 384, retractDots)).split('1f 11 51').length - 1
+    expect(count(160)).toBe(1)
+    // Rounds up: short of the boundary is the failure being fixed, and overshooting
+    // costs nothing because the seek walks forward again.
+    expect(count(161)).toBe(2)
+    // An 80 mm label asks for four and gets two, because a third retract stalls
+    // against the roll rather than moving paper.
+    expect(count(640)).toBe(MAX_STACKED_RETRACTS)
+  })
+
+  it('replaces the label framing’s retract rather than adding to it', () => {
+    // The framing handed in is the label's, which already carries one. Appending
+    // would make every count one too many and the bug would be invisible in a log.
+    expect(retractCountFor(160)).toBe(1)
+    expect(hex(followUpSeekJob(framing(), 384, 160)).split('1f 11 51').length - 1).toBe(1)
+  })
+
+  it('sends no retract at all when asked for none', () => {
+    // A caller that does not know the height should get the old shape rather than
+    // a guess at one.
+    expect(hex(followUpSeekJob(framing(), 384))).not.toContain('1f 11 51')
+    expect(retractCountFor(0)).toBe(0)
+    expect(retractCountFor(-5)).toBe(0)
+  })
+
+  it('never asks for a retract the roll cannot make', () => {
+    // Measured: two retracts move paper, a third leaves the label stale because the
+    // roll will not unwind further in reverse. Asking anyway would spend a command
+    // on nothing and risk slipping the very registration this is establishing.
+    expect(retractCountFor(100_000)).toBe(MAX_STACKED_RETRACTS)
+    expect(MAX_STACKED_RETRACTS).toBe(2)
   })
 
   it('stays small enough for the printer to read in full', () => {
     // Its whole reason for existing. A job the printer streams is one whose seek
-    // it never reads, which is the problem this is working around.
-    const framing = printJobFraming({ paperType: PaperType.Gap, density: 8 })
-    expect(followUpSeekJob(framing, 384).length).toBeLessThan(200)
+    // it never reads, which is the problem this is working around. Four retracts
+    // are twelve bytes; the margin is not in danger.
+    expect(followUpSeekJob(framing(), 384, 640).length).toBeLessThan(200)
   })
 })
 
@@ -114,8 +159,9 @@ describe('band framing', () => {
       ),
     )
     expect(later).not.toContain('1f 11 51')
-    // And no motion command in its place: winding back the seam was tried and the
-    // printer ignored it. The bands overlap instead — see splitJob.ts.
+    // And no motion command in its place: winding back the seam was tried at eight
+    // dots and at forty and ignored both times. The rows that land in the seam are
+    // skipped instead — see splitJob.ts.
     expect(later).not.toContain('1f 11 10')
   })
 })

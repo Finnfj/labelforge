@@ -399,8 +399,10 @@ export function PrintPanel({
           </div>
           <p>
             <strong>Register</strong> sends a second, tiny job carrying the seek, small enough for
-            the printer to read whole. It used to walk the paper out to the tear-off position and
-            back before seeking, which cost a blank label; it no longer does.
+            the printer to read whole. It winds the paper back about 4&nbsp;cm first &mdash; a seek
+            that starts where the label ended can only find the <em>next</em> gap, which is what
+            used to cost a blank label. Four centimetres is all the roll will give back, so try it
+            on stock you can spare once.
             <br />
             <strong>Gap feed</strong> is the fallback that needs no sensor: blank rows advance the
             paper by exactly as many as you send. It means measuring your stock, which is why it is

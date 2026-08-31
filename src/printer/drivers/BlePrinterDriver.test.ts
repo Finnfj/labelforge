@@ -7,7 +7,7 @@ import { createPackedBitmap } from '../../model/bitmap'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { CreditWindow } from '../protocol/CreditWindow'
 import { VirtualPrinterDriver } from './VirtualPrinterDriver'
-import { PaperType, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
+import { MAX_STACKED_RETRACTS, PaperType, SEEK_SAFE_JOB_BYTES } from '../protocol/constants'
 import { findProfile } from '../profiles'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
@@ -377,8 +377,14 @@ describe('BlePrinterDriver', () => {
     // between them, walked the paper past the boundary before the seek ran.
     expect(occurrences(transport.writes, '1f 11 50')).toBe(1)
     expect(hex(stream).endsWith('1f 11 50')).toBe(true)
-    // And the retract happens only for the label, never before the seek.
-    expect(occurrences(transport.writes, '1f 11 51')).toBe(1)
+    // One retract for the label, then as many as the roll will make before the
+    // seek. A seek starting where the label ended can only find the *next* gap —
+    // observed eating a blank label both with one retract in front of it and with
+    // none — so the follow-up winds back first. Two is the mechanism's ceiling: a
+    // third leaves the label stale.
+    expect(occurrences(transport.writes, '1f 11 51')).toBe(1 + MAX_STACKED_RETRACTS)
+    const followUp = hex(second)
+    expect(followUp.indexOf('1f 11 51')).toBeLessThan(followUp.indexOf('1f 10'))
   })
 
   it('sends each follow-up only after the printer says it has finished', async () => {
