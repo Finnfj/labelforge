@@ -390,7 +390,9 @@ describe('EditorCanvas', () => {
     }
 
     await mount(withText('https://example.com'))
-    const qrIndex = canvas!.getObjects().findIndex((o) => (o as { elementId?: string }).elementId === 'q1')
+    const qrIndex = canvas!
+      .getObjects()
+      .findIndex((o) => (o as { elementId?: string }).elementId === 'q1')
     expect(qrIndex).toBeGreaterThanOrEqual(0)
     const before = sourceFingerprint(qrIndex)
 
