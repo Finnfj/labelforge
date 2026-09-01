@@ -254,9 +254,22 @@ function readGeometry(object: TaggedObject, doc: LabelDoc): ElementPatch {
     rotation: object.angle ?? 0,
   } as ElementPatch
 
-  if (element?.kind === 'text' && scaleY !== 1) {
-    const current = (element as TextElement).fontSizePt
-    ;(patch as Partial<TextElement>).fontSizePt = dotsToPt(ptToDots(current) * scaleY)
+  if (element?.kind === 'text') {
+    // A text element's height is a box the user set, not a measurement of the
+    // glyphs, so only a deliberate vertical resize may change it — a drag must
+    // hand it back exactly as it came. The declared value is scaled rather than
+    // re-read from the object for two reasons: millimetres round to whole dots on
+    // the way out, so a round trip through `dotsToMm` quietly truncates anything
+    // that is not a multiple of an eighth of a millimetre; and the document must
+    // not depend on Fabric agreeing about the height at all, which it owns and
+    // recomputes from the content (see `BoxedTextbox` in render/toFabric.ts).
+    const text = element as TextElement
+    ;(patch as Partial<TextElement>).heightMm = text.heightMm * scaleY
+    if (scaleY !== 1) {
+      // A vertical resize is a font-size change: the box and the type in it grow
+      // together, which is what dragging the handle looks like it is doing.
+      ;(patch as Partial<TextElement>).fontSizePt = dotsToPt(ptToDots(text.fontSizePt) * scaleY)
+    }
   }
 
   // The scale is deliberately *not* reset here. This object is about to be replaced

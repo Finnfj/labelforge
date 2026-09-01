@@ -259,9 +259,55 @@ function placement(element: LabelElement, widthDots: number, heightDots: number)
   }
 }
 
+/**
+ * A text box that is the height the document asked for.
+ *
+ * Fabric's Textbox owns its height: `initDimensions` replaces whatever height it
+ * is given with `calcTextHeight()`, on construction and again on every text or
+ * style change. A 24 x 6 mm box at 10 pt is 48 dots by the document and 31.86 as
+ * an object, and everything downstream then believes the shorter figure. The
+ * selection rectangle comes out smaller than the box the user typed; `placement`
+ * centres the object on the middle of the *document's* box, so the shorter object
+ * is inset a millimetre at the top and bottom; and `readGeometry` reads the
+ * measurement back over the declared height, which is how one horizontal drag
+ * turned a 6 mm box into 3.98 and moved it a millimetre down the label.
+ *
+ * So the measurement loses. The height of a text element is a box the user set,
+ * the same kind of thing as its width, and Fabric's idea of how tall the glyphs
+ * happen to be does not get to overwrite it. Text that outgrows its box overflows
+ * it visibly, which is honest and is what `autoShrink` is for.
+ *
+ * Overriding `initDimensions` rather than assigning `height` once is what makes it
+ * hold: Fabric recomputes on every edit, so a plain assignment would be undone by
+ * the first keystroke typed on the canvas.
+ *
+ * Width is deliberately left to Fabric. It only ever widens a Textbox past the
+ * width it was given when a single word cannot be broken, and letting that show
+ * beats clipping the word away.
+ */
+class BoxedTextbox extends Textbox {
+  /** Declared height in dots. Undefined while the base constructor still runs. */
+  private boxHeightDots?: number
+
+  /** Fix the box height, after construction has measured the content. */
+  setBoxHeight(dots: number): void {
+    this.boxHeightDots = dots
+    this.initDimensions()
+    // The height changed under the cached corner coordinates, which is what hit
+    // testing and the selection handles are drawn from.
+    this.setCoords()
+  }
+
+  override initDimensions(): void {
+    super.initDimensions()
+    if (this.boxHeightDots) this.height = this.boxHeightDots
+  }
+}
+
 function textToFabric(element: TextElement): Textbox {
-  return new Textbox(element.text, {
-    ...placement(element, mmToDots(element.widthMm), mmToDots(element.heightMm)),
+  const heightDots = mmToDots(element.heightMm)
+  const textbox = new BoxedTextbox(element.text, {
+    ...placement(element, mmToDots(element.widthMm), heightDots),
     width: mmToDots(element.widthMm),
     fontSize: ptToDots(element.fontSizePt),
     fontFamily: element.fontFamily,
@@ -274,6 +320,11 @@ function textToFabric(element: TextElement): Textbox {
     strokeWidth: 0,
     splitByGrapheme: false,
   })
+  // After construction, so it overwrites the height Fabric measured on the way
+  // in. `placement` above has already centred the object on the document's box,
+  // which is now the object's own box, so top-left lands where the document says.
+  textbox.setBoxHeight(heightDots)
+  return textbox
 }
 
 function shapeToFabric(element: ShapeElement): FabricObject {
