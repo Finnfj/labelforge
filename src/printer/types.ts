@@ -103,9 +103,13 @@ export interface PrintSettings {
    * band's first row lands precisely where the last one stopped.
    *
    * Confirmed on hardware: a tall label printed whole, registered on the boundary,
-   * with the bands meeting. Still opt-in because the correction is one measurement
-   * and a wrong one shows as a seam or an overlap of whatever it is out by — the same
-   * millimetre the default spends, but harder to see coming.
+   * with the bands meeting and no row lost. On by default for that reason — a
+   * boundary then costs nothing at all, so there is nothing to weigh up.
+   *
+   * Turning it off falls back to giving up `SPLIT_SEAM_DOTS` at each boundary and
+   * hiding the cut in the quietest row nearby. Worth having if the 7 mm ever reads
+   * differently on other stock: being out shows as a seam or an overlap of the
+   * difference, and the fallback's millimetre is at least predictable.
    */
   closeSplitSeam?: boolean
 }
@@ -184,5 +188,7 @@ export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   // On, because it is the only thing that registers a tall label. A raster that fits
   // under the limit comes back as one band, so this changes nothing for small labels.
   splitForSeek: true,
-  closeSplitSeam: false,
+  // On with it: the boundary costs nothing once the retract is accounted for, so
+  // there is no reason to spend a millimetre of picture at each one.
+  closeSplitSeam: true,
 }

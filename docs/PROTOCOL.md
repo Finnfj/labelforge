@@ -1043,10 +1043,14 @@ stopped. Every row of the design prints once, at the offset it was designed for.
 boundary is two decisions that have to agree — rows the cut gives up, blank rows the
 next band leads with — so both are made in `planBands()` and both drivers call it.
 
-It stays opt-in because 7 mm is one measurement. If it is out, the error shows as a
-seam or an overlap of the difference, which is the same millimetre the default spends
-but less predictable. The default still gives up `SPLIT_SEAM_DOTS` at each boundary and
-hides the cut in the quietest row nearby.
+**Confirmed on hardware and on by default**, along with splitting itself: a boundary
+now costs nothing, so there is nothing left to weigh up and the print panel says so in
+one sentence with the controls behind a disclosure.
+
+Turning it off falls back to giving up `SPLIT_SEAM_DOTS` at each boundary and hiding
+the cut in the quietest row nearby. Worth keeping, because 7 mm is one measurement: if
+it ever reads differently on other stock the error shows as a seam or an overlap of the
+difference, and the fallback's millimetre is at least predictable.
 
 ### Capturing the ground truth
 

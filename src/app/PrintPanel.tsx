@@ -312,110 +312,131 @@ export function PrintPanel({
         </label>
       </div>
 
+      {/*
+        Oversize used to be a problem the user had to solve, and this block was three
+        remedies and the reasoning to choose between them. It is not a problem any
+        more: splitting registers the label and the boundary retract costs no picture,
+        both on by default. So the visible part is one sentence saying what is
+        happening, and everything that was deliberation goes behind the disclosure.
+      */}
       {needsSplitToSeek(jobBytes) && (
-        <div className={remedyFits || feedAfterDots > 0 ? 'hint' : 'warn'}>
+        // A hint while it is being handled, a warning once the user has turned the
+        // handling off — which is the only state now where an oversized label is
+        // actually a problem.
+        <div className={settings.splitForSeek === false ? 'warn' : 'hint'}>
           <p>
-            This label is {(jobBytes / 1024).toFixed(1)} KB, which is more than the printer reads
-            before it starts printing &mdash; so the gap seek at the end of the job goes unread and
-            it will not find the next label on its own. Confirmed on hardware: left to itself, every
-            print of a label this size starts a gap-width earlier than the last.
+            This label is {(jobBytes / 1024).toFixed(1)} KB &mdash; more than the printer reads
+            before it starts printing, so the gap seek at the end of the job would go unread and it
+            could not find the next label on its own.{' '}
+            {settings.splitForSeek === false ? (
+              <strong>Splitting is off, so it will drift by a gap-width on every print.</strong>
+            ) : (
+              <>
+                It goes out in parts instead, the last of them seeking, which registers the roll and
+                costs nothing in the picture.
+              </>
+            )}
           </p>
 
-          <label className="field field--check">
-            <input
-              type="checkbox"
-              checked={settings.splitForSeek !== false}
-              onChange={(e) => setSettings((s) => ({ ...s, splitForSeek: e.target.checked }))}
-            />
-            <span>Split the print so the last part can seek</span>
-          </label>
-          <p>
-            <strong>
-              Splitting costs nothing in the picture and is the only thing that registers a label
-              this size.
-            </strong>{' '}
-            Confirmed on hardware: the label registers and no paper is wasted. The raster goes out
-            as a few consecutive jobs, each small enough for the printer to read whole and only the
-            last one seeking, pausing between them because the printer will not take a new job while
-            it is working. A seek riding along with a real raster needs no run-up; one sent in a job
-            of its own needs about 24&nbsp;mm of paper before the gap, and there is no way to wind
-            back that far.
-            <br />
-            The printer takes up 1 mm when a job starts, so each boundary costs a millimetre of the
-            picture unless the option below is on. The cut is moved to whichever row nearby loses
-            the least ink, which hides it in white space where there is any &mdash; between two
-            lines of text it disappears, across a full-bleed photograph it will still show.
-          </p>
+          <details className="advanced">
+            <summary>
+              How an oversized label is handled
+              <span className="advanced__hint">
+                on by default &mdash; you should not need these
+              </span>
+            </summary>
+            <div className="advanced__body">
+              <label className="field field--check">
+                <input
+                  type="checkbox"
+                  checked={settings.splitForSeek !== false}
+                  onChange={(e) => setSettings((s) => ({ ...s, splitForSeek: e.target.checked }))}
+                />
+                <span>Split the print so the last part can seek</span>
+              </label>
+              <p>
+                The only thing that registers a label this size. The raster goes out as a few
+                consecutive jobs, each small enough for the printer to read whole and only the last
+                one seeking, pausing between them because the printer will not take a new job while
+                it is working. A seek riding along with a real raster needs no run-up; one sent in a
+                job of its own needs about 24&nbsp;mm of paper before the gap, and there is no way
+                to wind back that far.
+              </p>
 
-          <label className="field field--check">
-            <input
-              type="checkbox"
-              checked={settings.closeSplitSeam === true}
-              onChange={(e) => setSettings((s) => ({ ...s, closeSplitSeam: e.target.checked }))}
-            />
-            <span>Try to close the seam by winding back at each boundary</span>
-          </label>
-          <p>
-            <strong>Recovers the millimetre instead of hiding it.</strong> Winding back at each
-            boundary is the one thing that undoes the take-up, and it acts in exactly the place a
-            boundary puts it. It overshoots by 7&nbsp;mm &mdash; measured &mdash; so each part after
-            the first leads with that much blank, which carries the head forward over ground already
-            printed without firing a dot. Every row of the design then prints once, where it was
-            designed to go, and no boundary costs any picture.
-          </p>
+              <label className="field field--check">
+                <input
+                  type="checkbox"
+                  checked={settings.closeSplitSeam !== false}
+                  onChange={(e) => setSettings((s) => ({ ...s, closeSplitSeam: e.target.checked }))}
+                />
+                <span>Wind back at each boundary so no picture is lost</span>
+              </label>
+              <p>
+                The printer takes up 1&nbsp;mm when a job starts, which is what a boundary would
+                otherwise cost. Winding back undoes it, and overshoots by a measured 7&nbsp;mm, so
+                each part after the first leads with that much blank &mdash; carrying the head
+                forward over ground already printed without firing a dot. Every row then prints
+                once, where it was designed to go.
+                <br />
+                Turned off, the boundary gives up its millimetre and the cut moves to whichever row
+                nearby loses the least ink. Between two lines of text that disappears; across a
+                full-bleed photograph it shows.
+              </p>
 
-          {remedyFits && (
-            <p>
-              Otherwise, <strong>{remedy!.rung.label.toLowerCase()}</strong> and the printer handles
-              the rest by itself. The same label comes to {(remedy!.bytes / 1024).toFixed(1)} KB
-              that way &mdash; under the {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full
-              &mdash; so it registers itself, print after print, with nothing below needed at all.
-              The cost is {remedy!.rung.describe}. This is the mildest change on the list that fits:
-              the picture is the only thing on a label whose size is a choice, since text and codes
-              compress to almost nothing however large it is.{' '}
-              <button
-                className="linklike"
-                onClick={() => photoIds.forEach((id) => updateElement(id, remedy!.rung.tone))}
-              >
-                Apply to {photoIds.length === 1 ? 'the photo' : 'the photos'}
-              </button>
-            </p>
-          )}
-          {remedy != null && !remedyFits && (
-            <p>
-              Nothing on the list gets it under the line &mdash; even ordered dithering leaves{' '}
-              {(remedy.bytes / 1024).toFixed(1)} KB against the {SEEK_SAFE_JOB_BYTES / 1024} KB the
-              printer reads in full. This picture has too much fine detail to compress. Splitting,
-              then, or the gap feed below.
-            </p>
-          )}
+              {remedyFits && (
+                <p>
+                  A smaller raster avoids the split altogether:{' '}
+                  <strong>{remedy!.rung.label.toLowerCase()}</strong> brings the same label to{' '}
+                  {(remedy!.bytes / 1024).toFixed(1)} KB, under the {SEEK_SAFE_JOB_BYTES / 1024} KB
+                  the printer reads in full, so it registers itself in a single job. The cost is{' '}
+                  {remedy!.rung.describe}. This is the mildest change that fits: the picture is the
+                  only thing on a label whose size is a choice, since text and codes compress to
+                  almost nothing however large it is.{' '}
+                  <button
+                    className="linklike"
+                    onClick={() => photoIds.forEach((id) => updateElement(id, remedy!.rung.tone))}
+                  >
+                    Apply to {photoIds.length === 1 ? 'the photo' : 'the photos'}
+                  </button>
+                </p>
+              )}
+              {remedy != null && !remedyFits && (
+                <p>
+                  Nothing on the tone list would get it under the line &mdash; even ordered
+                  dithering leaves {(remedy.bytes / 1024).toFixed(1)} KB against the{' '}
+                  {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full. This picture has too
+                  much fine detail to compress, so splitting is the only route.
+                </p>
+              )}
 
-          <div className="row">
-            <label className="field">
-              <span style={{ minWidth: '5.5rem' }}>Gap feed</span>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                value={feedAfterDots / DOTS_PER_MM}
-                onChange={(e) =>
-                  connection.setGeometry({
-                    feedAfterDots: Math.max(
-                      0,
-                      Math.round((Number(e.target.value) || 0) * DOTS_PER_MM),
-                    ),
-                  })
-                }
-              />
-              <em>mm</em>
-            </label>
-          </div>
-          <p>
-            <strong>Gap feed</strong> is the fallback that needs no sensor: blank rows advance the
-            paper by exactly as many as you send. It means measuring your stock, which is why it is
-            last here rather than first &mdash; but it is open-loop and predictable, and one pass
-            with the &plusmn;1&nbsp;mm buttons settles it for a given roll.
-          </p>
+              <div className="row">
+                <label className="field">
+                  <span style={{ minWidth: '5.5rem' }}>Gap feed</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={feedAfterDots / DOTS_PER_MM}
+                    onChange={(e) =>
+                      connection.setGeometry({
+                        feedAfterDots: Math.max(
+                          0,
+                          Math.round((Number(e.target.value) || 0) * DOTS_PER_MM),
+                        ),
+                      })
+                    }
+                  />
+                  <em>mm</em>
+                </label>
+              </div>
+              <p>
+                <strong>Gap feed</strong> is the fallback that needs no sensor: blank rows advance
+                the paper by exactly as many as you send. It means measuring your stock, which is
+                why it is last &mdash; but it is open-loop and predictable, and one pass with the
+                &plusmn;1&nbsp;mm buttons settles it for a given roll.
+              </p>
+            </div>
+          </details>
         </div>
       )}
 

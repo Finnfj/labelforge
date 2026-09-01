@@ -118,7 +118,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
       // One band unless the label needs splitting, so the ordinary path is the same
       // code with a single-element array. Same planner and same seam decision as the
       // real driver — a test concatenates both and compares.
-      const closeSeam = job.settings.closeSplitSeam === true
+      const closeSeam = job.settings.closeSplitSeam !== false
       const bands =
         job.settings.splitForSeek === false ? [job.bitmap] : planBands(job.bitmap, { closeSeam })
       const encoded = bands.length === 1 ? [image] : bands.map(encodeImage)

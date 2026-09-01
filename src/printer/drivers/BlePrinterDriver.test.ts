@@ -426,10 +426,10 @@ describe('BlePrinterDriver', () => {
     expect(occurrences(transport.writes, '1f 12 20 00')).toBe(1)
     expect(stream.indexOf('1f 12 20 00')).toBeGreaterThan(stream.lastIndexOf('1f c0 01 00'))
 
-    // Only the first band retracts by default — what a retract does mid-label is not
-    // known, and if it is the 20 mm it moves at the start of an ordinary print it
-    // would print the next band over this one.
-    expect(occurrences(transport.writes, '1f 11 51')).toBe(1)
+    // Every band retracts: the first to undo the tear-off advance behind it, the rest
+    // to undo the take-up their own job start costs. One per job, before that job's
+    // raster, which is the only position where it moves paper.
+    expect(occurrences(transport.writes, '1f 11 51')).toBe(bands)
     expect(stream.indexOf('1f 11 51')).toBeLessThan(stream.indexOf('1f 10 00 30'))
 
     // No motion command anywhere. Wind-backs of 8 and 40 dots were both sent to a

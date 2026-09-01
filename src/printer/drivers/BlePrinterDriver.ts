@@ -319,7 +319,7 @@ export class BlePrinterDriver implements PrinterDriver {
       // A retract at each boundary is expected to undo the printer's take-up, so the
       // rows it would have cost are kept. The two decisions have to agree; they are
       // made here, once, and handed to the planner and the framing together.
-      const closeSeam = job.settings.closeSplitSeam === true
+      const closeSeam = job.settings.closeSplitSeam !== false
       const bands =
         job.settings.splitForSeek === false ? [job.bitmap] : planBands(job.bitmap, { closeSeam })
       const image = encodeImage(job.bitmap)
