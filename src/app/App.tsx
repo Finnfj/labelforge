@@ -17,6 +17,7 @@ import { REPO_URL } from './links'
 import { resolveAssetUrl } from '../storage/assets'
 import { registerStoredFonts } from '../storage/fonts'
 import { placeForTurnedView } from '../editor/insertPlacement'
+import { Shortcuts } from '../editor/panels/Shortcuts'
 
 /**
  * Editor zoom. "fit" leads because it is what you want on almost every screen:
@@ -226,49 +227,59 @@ export default function App() {
       </section>
 
       <section className="panel">
-        <div className="row row--between">
-          <h2>Design</h2>
+        <h2>Design</h2>
+        {/* Toolbar and view controls share one band: the toolbar takes the width
+            that is left and wraps within it, the selects keep their own column at
+            the right. `min-width: 0` on the toolbar is what makes it wrap instead
+            of pushing the selects off the end. */}
+        <div className="design__controls">
+          <Toolbar
+            editor={editor}
+            // Inserting into a turned canvas should give what the button implies:
+            // something upright, on the label. See editor/insertPlacement.ts.
+            place={
+              turned ? (draft) => placeForTurnedView(draft, editor.doc.size.heightMm) : undefined
+            }
+          />
           {/*
-            A view control, not a document one — hence its place beside Zoom rather
-            than in the label-size panel above. Offered as the orientation you get
-            because that is the question being asked; the turn needed to reach it is
-            arithmetic the user should not have to do.
-          */}
-          <label className="field">
-            <span>Editor</span>
-            <select
-              value={shownAcross ? 'horizontal' : 'vertical'}
-              onChange={(e) => setTurned((e.target.value === 'horizontal') !== docAcross)}
-            >
-              <option value="vertical">Vertical</option>
-              <option value="horizontal">Horizontal</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Zoom</span>
-            <select
-              value={String(zoom)}
-              onChange={(e) =>
-                setZoom(e.target.value === 'fit' ? 'fit' : (Number(e.target.value) as EditZoom))
-              }
-            >
-              {EDIT_ZOOMS.map((z) => (
-                <option key={z} value={z}>
-                  {z === 'fit' ? 'Fit' : `${z}×`}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+            Both are view controls, not document ones — hence their place here rather
+            than in the label-size panel above, which is about the label itself.
+            Stacked in one two-column grid so the two labels and the two selects line
+            up with each other; each `label` is display: contents so it associates
+            with its select without adding a box that would break that alignment.
 
-        <Toolbar
-          editor={editor}
-          // Inserting into a turned canvas should give what the button implies:
-          // something upright, on the label. See editor/insertPlacement.ts.
-          place={
-            turned ? (draft) => placeForTurnedView(draft, editor.doc.size.heightMm) : undefined
-          }
-        />
+            Orientation is offered as the orientation you get, because that is the
+            question being asked. The quarter turn needed to reach it is arithmetic
+            the user should not have to do.
+          */}
+          <div className="views">
+            <label className="views__row">
+              <span>Zoom</span>
+              <select
+                value={String(zoom)}
+                onChange={(e) =>
+                  setZoom(e.target.value === 'fit' ? 'fit' : (Number(e.target.value) as EditZoom))
+                }
+              >
+                {EDIT_ZOOMS.map((z) => (
+                  <option key={z} value={z}>
+                    {z === 'fit' ? 'Fit' : `${z}×`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="views__row">
+              <span>Editor</span>
+              <select
+                value={shownAcross ? 'horizontal' : 'vertical'}
+                onChange={(e) => setTurned((e.target.value === 'horizontal') !== docAcross)}
+              >
+                <option value="vertical">Vertical</option>
+                <option value="horizontal">Horizontal</option>
+              </select>
+            </label>
+          </div>
+        </div>
 
         <div className="editor">
           <div className="editor__stage" ref={stageRef}>
@@ -284,6 +295,8 @@ export default function App() {
           </div>
           <Inspector editor={editor} />
         </div>
+
+        <Shortcuts />
       </section>
 
       <TemplatesPanel doc={editor.doc} onLoad={editor.replaceDoc} />

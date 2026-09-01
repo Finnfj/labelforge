@@ -3,6 +3,17 @@ import type { DraftElement } from '../../model/labelDoc'
 import { iconsByGroup, iconToSvg } from '../../render/icons'
 import { putAsset } from '../../storage/assets'
 import type { LabelEditor } from '../useLabelEditor'
+import {
+  BackwardIcon,
+  DeleteIcon,
+  DuplicateIcon,
+  EllipseIcon,
+  ForwardIcon,
+  LineIcon,
+  RectIcon,
+  RedoIcon,
+  UndoIcon,
+} from './ToolbarIcons'
 
 /** Sensible starting geometry, in mm, for a newly added element. */
 const NEW_TEXT = {
@@ -72,7 +83,13 @@ export function Toolbar({
     <div className="toolbar">
       <div className="toolbar__group">
         <button onClick={() => add({ ...NEW_TEXT })}>Text</button>
+        {/* Shapes as glyphs. A rectangle, an ellipse and a line are the three
+            icons in this toolbar that need no explaining, and dropping their words
+            buys back the width the named inserts beside them want. */}
         <button
+          className="btn--icon"
+          aria-label="Rectangle"
+          title="Rectangle"
           onClick={() =>
             add({
               kind: 'shape',
@@ -87,9 +104,12 @@ export function Toolbar({
             })
           }
         >
-          Rectangle
+          <RectIcon />
         </button>
         <button
+          className="btn--icon"
+          aria-label="Ellipse"
+          title="Ellipse"
           onClick={() =>
             add({
               kind: 'shape',
@@ -104,9 +124,12 @@ export function Toolbar({
             })
           }
         >
-          Ellipse
+          <EllipseIcon />
         </button>
         <button
+          className="btn--icon"
+          aria-label="Line"
+          title="Line"
           onClick={() =>
             add({
               kind: 'shape',
@@ -121,11 +144,11 @@ export function Toolbar({
             })
           }
         >
-          Line
+          <LineIcon />
         </button>
       </div>
 
-      <div className="toolbar__group">
+      <div className="toolbar__group toolbar__group--divided">
         <button
           onClick={() =>
             add({
@@ -175,48 +198,78 @@ export function Toolbar({
         </button>
       </div>
 
-      {/* Titles carry the shortcuts, because a key nobody can discover is a key
-          nobody uses. Copy, cut and paste have no button of their own — they are
-          the one set every user already expects to work without being told. */}
-      <div className="toolbar__group">
+      {/* Acting on the selection, and undoing it. Icons here and words above, which
+          is the whole shape of this toolbar: inserting is deliberate and read once,
+          so it is named; these are pressed constantly and are the icons every editor
+          already agrees on. Splitting them that way is also what stops the row
+          reading as one undifferentiated wall of buttons.
+
+          Every title names its shortcut, because a key nobody can discover is a key
+          nobody uses. Copy, cut and paste get no button at all — they are the set
+          every user expects to work without being shown. */}
+      <div className="toolbar__group toolbar__group--divided">
         <button
+          className="btn--icon"
           disabled={!editor.selected}
           onClick={editor.duplicateSelected}
-          title="Ctrl+D — or Ctrl+C then Ctrl+V"
+          aria-label="Duplicate"
+          title="Duplicate — Ctrl+D"
         >
-          Duplicate
+          <DuplicateIcon />
         </button>
-        <button disabled={!editor.selected} onClick={editor.deleteSelected} title="Delete">
-          Delete
+        <button
+          className="btn--icon btn--icon-danger"
+          disabled={!editor.selected}
+          onClick={editor.deleteSelected}
+          aria-label="Delete"
+          title="Delete — Del"
+        >
+          <DeleteIcon />
         </button>
       </div>
 
       {/* Layering. One step at a time rather than to-front/to-back: a label holds a
-          handful of elements, so stepping is enough to resolve any overlap, and two
-          buttons beat four in a toolbar this wide. */}
-      <div className="toolbar__group">
+          handful of elements, so stepping resolves any overlap, and two buttons beat
+          four in a toolbar this wide. */}
+      <div className="toolbar__group toolbar__group--divided">
         <button
+          className="btn--icon"
           disabled={!editor.selected}
           onClick={editor.raiseSelected}
+          aria-label="Bring forward"
           title="Bring one step towards the front"
         >
-          Forward
+          <ForwardIcon />
         </button>
         <button
+          className="btn--icon"
           disabled={!editor.selected}
           onClick={editor.lowerSelected}
+          aria-label="Send backward"
           title="Send one step towards the back"
         >
-          Backward
+          <BackwardIcon />
         </button>
       </div>
 
-      <div className="toolbar__group">
-        <button disabled={!editor.canUndo} onClick={editor.undo} title="Ctrl+Z">
-          Undo
+      <div className="toolbar__group toolbar__group--divided">
+        <button
+          className="btn--icon"
+          disabled={!editor.canUndo}
+          onClick={editor.undo}
+          aria-label="Undo"
+          title="Undo — Ctrl+Z"
+        >
+          <UndoIcon />
         </button>
-        <button disabled={!editor.canRedo} onClick={editor.redo} title="Ctrl+Shift+Z or Ctrl+Y">
-          Redo
+        <button
+          className="btn--icon"
+          disabled={!editor.canRedo}
+          onClick={editor.redo}
+          aria-label="Redo"
+          title="Redo — Ctrl+Shift+Z or Ctrl+Y"
+        >
+          <RedoIcon />
         </button>
       </div>
 

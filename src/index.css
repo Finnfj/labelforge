@@ -6,6 +6,11 @@
   --muted: #949aa6;
   --accent: #6ea8fe;
   --danger: #f08a8a;
+  /* One step up from the page, for controls that sit on a panel. Panels are
+     already lighter than the page, so a flat --bg button on one reads as a hole
+     rather than a raised control. */
+  --surface: #232830;
+  --line-strong: #3b424e;
 
   color-scheme: dark light;
   font-family:
@@ -27,6 +32,8 @@
     --muted: #626a78;
     --accent: #1f6feb;
     --danger: #b42318;
+    --surface: #f7f8fa;
+    --line-strong: #c6ccd6;
   }
 }
 
@@ -100,29 +107,83 @@ button {
   font: inherit;
   font-size: 0.9rem;
   padding: 0.4rem 0.7rem;
-  border-radius: 7px;
+  border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--bg);
   color: var(--text);
 }
 
+select {
+  transition: border-color 120ms ease;
+}
+
+select:hover {
+  border-color: var(--line-strong);
+}
+
+/* Ordinary buttons are quiet.
+
+   Every button used to carry an accent border, which made a toolbar of eight
+   inserts read as eight equally urgent choices and left nothing for the one
+   button on the page that really is the action — Print. Neutral by default,
+   accent on hover and focus, and `.primary` keeps the fill to itself. */
 button {
   cursor: pointer;
-  border-color: var(--accent);
+  background: var(--surface);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 
 button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+}
+
+/* Focus is drawn explicitly because the hover treatment is subtle enough that
+   the browser default ring would be the only thing keyboard users had, and on a
+   dark background it is nearly invisible. */
+button:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: not-allowed;
   border-color: var(--line);
 }
 
 button.danger {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--line));
+  color: var(--danger);
+}
+
+button.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
   border-color: var(--danger);
+}
+
+/* Square, so a row of them reads as a group of controls rather than a row of
+   words of different lengths. The explicit size keeps them aligned with the
+   labelled buttons beside them, which are taller than their glyph. */
+.btn--icon {
+  display: grid;
+  place-items: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  padding: 0;
+}
+
+.btn--icon-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--line));
   color: var(--danger);
 }
 
@@ -193,18 +254,101 @@ button.danger {
   margin: 2rem 0;
 }
 
+/* Toolbar on the left, view controls on the right, sharing one horizontal band.
+
+   The toolbar is the flexible one and carries `min-width: 0`, without which a flex
+   item refuses to shrink below its content and the buttons would push the selects
+   out of the panel instead of wrapping. `align-items: start` so a toolbar that has
+   wrapped to two lines does not drag the selects down with it. */
+.design__controls {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.design__controls .toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* The container owns the space below the band now. */
+  margin-bottom: 0;
+}
+
+.design__controls .views {
+  flex: 0 0 auto;
+}
+
+/* Narrow enough that the toolbar wants every pixel of the row: give it the whole
+   width and let the selects sit under it rather than squeezing both. */
+@media (max-width: 44rem) {
+  .design__controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .design__controls .views {
+    justify-content: start;
+  }
+}
+
+/* The two view controls above the editor, stacked at the right of the heading.
+
+   One grid for both rows rather than two independent fields, so the labels share a
+   column and the selects share theirs — two `.field`s side by side would size their
+   selects to their own content and step in and out down the stack. */
+.views {
+  display: grid;
+  grid-template-columns: max-content minmax(5.5rem, max-content);
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* No box of its own: the label exists to associate the text with the select, and
+   the grid places both of its children directly. */
+.views__row {
+  display: contents;
+}
+
+.views select {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 6px;
+  width: 100%;
+}
+
 /* ---- editor ---- */
 
 .toolbar {
   display: flex;
-  gap: 1.25rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
+  align-items: center;
   margin-bottom: 0.9rem;
 }
 
 .toolbar__group {
   display: flex;
-  gap: 0.4rem;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* A hairline between groups instead of a wide gap. The gap alone had to be big
+   to read as a separation at all, which cost more width than the rule does and
+   still left the row looking like one long queue of buttons. Suppressed when the
+   row wraps, where a leading rule would hang off the start of a line. */
+.toolbar__group--divided {
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--line);
+}
+
+@media (max-width: 40rem) {
+  .toolbar__group--divided {
+    padding-left: 0;
+    border-left: none;
+  }
 }
 
 .editor {
@@ -630,4 +774,81 @@ input.mono {
   font-size: 0.8rem;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* ---- keyboard shortcuts ---- */
+
+.shortcuts {
+  margin-top: 0.75rem;
+}
+
+.shortcuts__body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 2rem;
+  padding-top: 0.7rem;
+}
+
+.shortcuts__group {
+  min-width: 11rem;
+}
+
+.shortcuts__heading {
+  margin: 0 0 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.shortcuts__list {
+  margin: 0;
+  display: grid;
+  /* The keys column sizes to its widest cap so the meanings line up, rather than
+     stepping in and out down the list. */
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+}
+
+/* `dl` rows are a wrapper div so the grid can lay dt and dd out as columns; the
+   wrapper is display: contents so it adds no box of its own. */
+.shortcuts__row {
+  display: contents;
+}
+
+.shortcuts__list dt {
+  white-space: nowrap;
+}
+
+.shortcuts__list dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.shortcuts__plus {
+  color: var(--muted);
+  margin: 0 0.15rem;
+  font-size: 0.72rem;
+}
+
+.shortcuts__note {
+  flex-basis: 100%;
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+kbd {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
 }
