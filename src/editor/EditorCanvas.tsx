@@ -3,6 +3,7 @@ import { Canvas, type FabricObject } from 'fabric'
 import type { ElementPatch, LabelDoc, TextElement } from '../model/labelDoc'
 import { elementsInDrawOrder } from '../model/labelDoc'
 import { dotsToMm, dotsToPt, mmToDots, ptToDots } from '../model/units'
+import { ensureDocumentFonts } from '../render/fonts'
 import { toFabricObject, type AssetResolver } from '../render/toFabric'
 
 /** Fabric objects carry the id of the document element they represent. */
@@ -172,6 +173,22 @@ export function EditorCanvas({
 
     let cancelled = false
     void (async () => {
+      // Fonts first, exactly as the rasteriser does it, and for the same reason
+      // spelled out in render/fonts.ts: naming a family on a canvas neither starts
+      // a load nor redraws when one finishes. Fabric measures a string once, when
+      // the object is built, so building against an unloaded face caches the
+      // *fallback* metrics — and then the real face arrives, the glyphs are painted
+      // in it, and every offset computed from that cache is wrong.
+      //
+      // Left-aligned text hides it, starting at offset zero either way. Centred
+      // text puts half the error on the left of every line, and the caret, placed
+      // from the same stale advances, sits away from the words it is inside.
+      //
+      // Awaited before the loop rather than per element: it is one call for the
+      // whole document, and it resolves immediately once the faces are in.
+      await ensureDocumentFonts(doc)
+      if (cancelled || canvasRef.current !== canvas) return
+
       const built: TaggedObject[] = []
       for (const element of elementsInDrawOrder(doc)) {
         let object: TaggedObject | null = null
