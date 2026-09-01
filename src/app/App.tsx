@@ -30,12 +30,32 @@ export default function App() {
   const connection = usePrinter()
   const diagnostics = useDiagnosticFlags()
   const [zoom, setZoom] = useState<EditZoom>('fit')
+  /**
+   * Whether the editing canvas is shown a quarter turn round.
+   *
+   * Stored as the turn rather than as an orientation, so that resizing the label
+   * cannot silently spin the canvas: a document that goes from tall to wide keeps
+   * whatever view the user chose. The select below reads the orientation back out
+   * for its label, which is what a user actually thinks in.
+   *
+   * Deliberately not in the document. The print and the preview show the label as
+   * designed whatever this says.
+   */
+  const [turned, setTurned] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
   const stageWidth = useElementWidth(stageRef)
   // Resolved to a number here rather than inside EditorCanvas, which keeps the
-  // canvas ignorant of where its scale came from.
-  const effectiveZoom =
-    zoom === 'fit' ? fitScale(stageWidth, mmToDots(editor.doc.size.widthMm)) : zoom
+  // canvas ignorant of where its scale came from. Fit measures whichever dimension
+  // is across the screen, so turning the canvas re-fits it rather than letting a
+  // tall label overflow the panel on its side.
+  const editWidthDots = mmToDots(turned ? editor.doc.size.heightMm : editor.doc.size.widthMm)
+  const effectiveZoom = zoom === 'fit' ? fitScale(stageWidth, editWidthDots) : zoom
+  // Which way the label reads on screen, so the select can name what you get. The
+  // turn is negated rather than the dimensions re-compared, which matters for a
+  // square label: comparing would call it vertical either way, and the control would
+  // snap back to "Vertical" while the canvas sat there visibly turned.
+  const docAcross = editor.doc.size.widthMm > editor.doc.size.heightMm
+  const shownAcross = turned ? !docAcross : docAcross
   // Dimensions are the preset's to define; "Custom…" hands them back to the user.
   const isPreset = editor.doc.size.presetId != null
 
@@ -158,6 +178,22 @@ export default function App() {
       <section className="panel">
         <div className="row row--between">
           <h2>Design</h2>
+          {/*
+            A view control, not a document one — hence its place beside Zoom rather
+            than in the label-size panel above. Offered as the orientation you get
+            because that is the question being asked; the turn needed to reach it is
+            arithmetic the user should not have to do.
+          */}
+          <label className="field">
+            <span>Editor</span>
+            <select
+              value={shownAcross ? 'horizontal' : 'vertical'}
+              onChange={(e) => setTurned((e.target.value === 'horizontal') !== docAcross)}
+            >
+              <option value="vertical">Vertical</option>
+              <option value="horizontal">Horizontal</option>
+            </select>
+          </label>
           <label className="field">
             <span>Zoom</span>
             <select
@@ -183,6 +219,7 @@ export default function App() {
               doc={editor.doc}
               selectedId={editor.selectedId}
               zoom={effectiveZoom}
+              turned={turned}
               onSelect={editor.select}
               onUpdate={editor.updateElement}
               resolveAsset={resolveAssetUrl}

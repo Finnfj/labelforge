@@ -5,6 +5,7 @@ import type { Canvas, Textbox } from 'fabric'
 import { act } from 'react'
 import { EditorCanvas } from './EditorCanvas'
 import { createEmptyDoc, type LabelDoc, type LabelElement } from '../model/labelDoc'
+import { mmToDots } from '../model/units'
 
 /**
  * Renders the editor in a real browser, deliberately inside StrictMode.
@@ -30,7 +31,7 @@ afterEach(async () => {
   host = null
 })
 
-async function mount(doc: LabelDoc, zoom = 2, selectedId: string | null = null) {
+async function mount(doc: LabelDoc, zoom = 2, selectedId: string | null = null, turned = false) {
   updates = []
   canvas = null
   host = document.createElement('div')
@@ -43,6 +44,7 @@ async function mount(doc: LabelDoc, zoom = 2, selectedId: string | null = null) 
           doc={doc}
           selectedId={selectedId}
           zoom={zoom}
+          turned={turned}
           onSelect={() => {}}
           onUpdate={(id, patch, options) =>
             updates.push({
@@ -423,5 +425,105 @@ describe('EditorCanvas', () => {
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))
     })
     expect(tally(liveCanvas()).dark).toBe(0)
+  })
+})
+
+/**
+ * Turning the editing canvas a quarter turn.
+ *
+ * A view-only affordance, so what has to hold is that it changes what is on the
+ * screen and nothing else: the same document coordinates go out, and a pointer over
+ * a given spot still means the spot it looks like.
+ *
+ * The pointer is the part worth testing. The turn is a Fabric viewport transform
+ * rather than a CSS `rotate()` precisely so that Fabric inverts it for pointer
+ * arithmetic — with CSS it would measure an axis-aligned bounding box and put every
+ * click in the wrong place, and the canvas would look right while being unusable.
+ */
+describe('EditorCanvas turned', () => {
+  const W_MM = 40
+  const H_MM = 30
+  const ZOOM = 2
+  const widthDots = mmToDots(W_MM)
+  const heightDots = mmToDots(H_MM)
+
+  /** The interaction surface, which is what a pointer event actually lands on. */
+  const upper = () => host!.querySelector('canvas.upper-canvas') as HTMLCanvasElement
+
+  /** Where Fabric thinks a viewport point is, in scene coordinates. */
+  const sceneAt = (sx: number, sy: number) => {
+    const rect = upper().getBoundingClientRect()
+    return canvas!.getScenePoint(
+      new MouseEvent('mousemove', { clientX: rect.left + sx, clientY: rect.top + sy }),
+    )
+  }
+
+  it('swaps the canvas dimensions', async () => {
+    await mount(createEmptyDoc(W_MM, H_MM), ZOOM, null, true)
+    expect(canvas!.getWidth()).toBe(heightDots * ZOOM)
+    expect(canvas!.getHeight()).toBe(widthDots * ZOOM)
+  })
+
+  it('puts the label in the canvas rather than beside it', async () => {
+    // A rotation about the origin alone would swing the label out of view entirely.
+    // Every corner of the page has to land inside the canvas, or the design is off
+    // screen and no amount of scrolling helps.
+    await mount(createEmptyDoc(W_MM, H_MM), ZOOM, null, true)
+    const vpt = canvas!.viewportTransform
+    const corners: Array<[number, number]> = [
+      [0, 0],
+      [widthDots, 0],
+      [0, heightDots],
+      [widthDots, heightDots],
+    ]
+    for (const [x, y] of corners) {
+      const sx = vpt[0] * x + vpt[2] * y + vpt[4]
+      const sy = vpt[1] * x + vpt[3] * y + vpt[5]
+      expect(sx).toBeGreaterThanOrEqual(-0.001)
+      expect(sx).toBeLessThanOrEqual(canvas!.getWidth() + 0.001)
+      expect(sy).toBeGreaterThanOrEqual(-0.001)
+      expect(sy).toBeLessThanOrEqual(canvas!.getHeight() + 0.001)
+    }
+  })
+
+  it('maps a pointer back to the spot it is over', async () => {
+    // The whole reason the turn is a viewport transform. Fabric inverts this matrix
+    // to find what a click is on, so if it is right here then dragging, resizing and
+    // the selection handles are right for free.
+    await mount(createEmptyDoc(W_MM, H_MM), ZOOM, null, true)
+    const scene = sceneAt((heightDots - 60) * ZOOM, 100 * ZOOM)
+    expect(scene.x).toBeCloseTo(100, 3)
+    expect(scene.y).toBeCloseTo(60, 3)
+  })
+
+  it('maps a pointer the ordinary way when it is not turned', async () => {
+    await mount(createEmptyDoc(W_MM, H_MM), ZOOM)
+    const scene = sceneAt(100 * ZOOM, 60 * ZOOM)
+    expect(scene.x).toBeCloseTo(100, 3)
+    expect(scene.y).toBeCloseTo(60, 3)
+  })
+
+  it('reports the same document coordinates whether turned or not', async () => {
+    // The document must not be able to tell. If the turn leaked into `readGeometry`
+    // the label would print rotated, which is the one thing this feature promises
+    // not to do.
+    const geometry = async (turned: boolean) => {
+      await mount(docWithRect(), ZOOM, null, turned)
+      const object = canvas!.getObjects()[0]
+      await act(async () => {
+        object.set({ left: 80, top: 40 })
+        canvas!.fire('object:modified', { target: object })
+      })
+      await settle()
+      return updates.at(-1)!.patch
+    }
+
+    const upright = await geometry(false)
+    await act(async () => {
+      root!.unmount()
+    })
+    host!.remove()
+    const sideways = await geometry(true)
+    expect(sideways).toEqual(upright)
   })
 })

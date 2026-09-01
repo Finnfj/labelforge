@@ -12,6 +12,15 @@ export interface EditorCanvasProps {
   doc: LabelDoc
   selectedId: string | null
   zoom: number
+  /**
+   * Show the label turned a quarter turn, so a tall label can be worked on across
+   * a wide screen.
+   *
+   * A property of the view and nothing else. The document keeps its dimensions and
+   * every element keeps its coordinates, so the raster, the preview and the print
+   * are bit-for-bit what they would have been — see the effect that applies it.
+   */
+  turned?: boolean
   onSelect(id: string | null): void
   onUpdate(id: string, patch: ElementPatch, options?: { transient?: boolean }): void
   resolveAsset?: AssetResolver
@@ -23,6 +32,7 @@ export function EditorCanvas({
   doc,
   selectedId,
   zoom,
+  turned = false,
   onSelect,
   onUpdate,
   resolveAsset,
@@ -114,13 +124,36 @@ export function EditorCanvas({
     }
   }, [])
 
+  const shownWidth = (turned ? heightDots : widthDots) * zoom
+  const shownHeight = (turned ? widthDots : heightDots) * zoom
+
+  /**
+   * Scale and, when asked for, a quarter turn — both as Fabric's viewport transform.
+   *
+   * The turn lives here rather than in a CSS `rotate()` on the canvas, and that is
+   * the whole reason this works. Fabric maps a pointer into scene coordinates by
+   * inverting this matrix, so dragging, resizing and the selection handles all come
+   * out right for free. A CSS transform is invisible to that arithmetic — Fabric
+   * measures the element's axis-aligned bounding box and would put every pointer in
+   * the wrong place.
+   *
+   * It also keeps the turn out of the document. Objects stay at the coordinates the
+   * elements give them, `readGeometry` reads scene coordinates back, and nothing
+   * downstream of the editor can tell the canvas was turned.
+   *
+   * The matrix is [a, b, c, d, e, f] for x' = ax + cy + e, y' = bx + dy + f. A
+   * quarter turn clockwise sends (x, y) to (h - y, x), scaled, which puts the label
+   * in the top-left corner of a canvas whose width and height have swapped.
+   */
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    canvas.setDimensions({ width: widthDots * zoom, height: heightDots * zoom })
-    canvas.setZoom(zoom)
+    canvas.setDimensions({ width: shownWidth, height: shownHeight })
+    canvas.setViewportTransform(
+      turned ? [0, zoom, -zoom, 0, shownWidth, 0] : [zoom, 0, 0, zoom, 0, 0],
+    )
     canvas.requestRenderAll()
-  }, [widthDots, heightDots, zoom, epoch])
+  }, [shownWidth, shownHeight, turned, zoom, epoch])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -175,7 +208,7 @@ export function EditorCanvas({
     <div
       ref={hostRef}
       className="editor__paper"
-      style={{ width: widthDots * zoom, height: heightDots * zoom }}
+      style={{ width: shownWidth, height: shownHeight }}
     />
   )
 }
