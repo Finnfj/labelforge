@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Canvas, type FabricObject } from 'fabric'
-import type { ElementPatch, LabelDoc, TextElement } from '../model/labelDoc'
+import type { BarcodeElement, ElementPatch, LabelDoc, TextElement } from '../model/labelDoc'
 import { elementsInDrawOrder } from '../model/labelDoc'
 import { dotsToMm, dotsToPt, mmToDots, ptToDots } from '../model/units'
 import { ensureDocumentFonts } from '../render/fonts'
@@ -253,6 +253,18 @@ function readGeometry(object: TaggedObject, doc: LabelDoc): ElementPatch {
     heightMm: dotsToMm(height),
     rotation: object.angle ?? 0,
   } as ElementPatch
+
+  if (element?.kind === 'barcode' || element?.kind === 'qr') {
+    // A code's box is the user's too, and for the same reason as text: it is a
+    // frame the code is drawn inside, not a measurement of the code. The canvas
+    // is the size of the box now (see `renderCode`), so this is not correcting a
+    // mismatch — it is keeping the declared millimetres out of a round trip
+    // through whole dots, which truncates anything finer than an eighth of a
+    // millimetre, and keeping a code that will not fit its box from writing its
+    // overflowing size over the box on the first drag.
+    ;(patch as Partial<BarcodeElement>).widthMm = element.widthMm * (object.scaleX ?? 1)
+    ;(patch as Partial<BarcodeElement>).heightMm = element.heightMm * scaleY
+  }
 
   if (element?.kind === 'text') {
     // A text element's height is a box the user set, not a measurement of the

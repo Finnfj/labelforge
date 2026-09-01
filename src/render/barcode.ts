@@ -120,27 +120,65 @@ export function renderCode(
   const naturalWidthAt1 = probe.width + 2 * quietPxAt1
   const scale = Math.max(1, Math.floor(boxWidthDots / naturalWidthAt1))
 
+  const quietPx = quietPxAt1 * scale
+  // Sideways only, for a linear symbology. A quiet zone is what tells a scanner
+  // where the symbol begins, and for a linear code that is a left and right
+  // requirement — the bars run the full height and nothing reads across them.
+  // White above and below buys no scannability and costs twenty modules of the
+  // height the user allowed for, which is what used to push a barcode out of its
+  // own box. A matrix code is scanned in both axes and needs all four sides.
+  const quietYPx = matrix ? quietPx : 0
+
   const finalOptions: Record<string, unknown> = { ...baseOptions, scale }
+  let symbol: HTMLCanvasElement
   if (element.kind === 'barcode') {
     // Solve for the bar height in bwip-js millimetres that lands on the box
-    // height in dots once scaled, leaving room for the human-readable text.
+    // height in dots once scaled, leaving room for the human-readable text and
+    // for the quiet zone if this symbology has one above and below.
     const textPx = element.showText ? TEXT_PX_AT_SCALE_1 * scale : 0
-    const barPx = Math.max(scale * 4, boxHeightDots - textPx)
-    finalOptions.height = Math.max(1, barPx / (PX_PER_MM_AT_SCALE_1 * scale))
+    const target = Math.max(scale * 4, boxHeightDots - textPx - 2 * quietYPx)
+    const heightMm = Math.max(1, target / (PX_PER_MM_AT_SCALE_1 * scale))
+    symbol = draw({ ...finalOptions, height: heightMm })
+
+    // PX_PER_MM_AT_SCALE_1 is an estimate of bwip-js's own millimetre, and it is
+    // not exact: the first solve overshot a 96 dot box by nineteen. Rather than
+    // chase a better constant — which would still be a guess, and a different one
+    // per symbology — measure what came out and correct once. Two draws, and the
+    // result fits by construction instead of by luck.
+    const wanted = boxHeightDots - 2 * quietYPx
+    if (symbol.height > wanted) {
+      const corrected = Math.max(1, (heightMm * wanted) / symbol.height)
+      symbol = draw({ ...finalOptions, height: corrected })
+    }
+  } else {
+    symbol = draw(finalOptions)
   }
 
-  const symbol = draw(finalOptions)
-  const quietPx = quietPxAt1 * scale
-
+  // The canvas is the element's box, with the symbol centred in it — the same
+  // shape as `imageToFabric`, and for the same reason. An object the size of its
+  // box is one the editor can read its geometry back off without replacing the
+  // box the user set with a measurement of what happens to be inside it: that is
+  // how one drag of a 30 x 12 mm barcode used to turn it into 24.75 x 16.9.
+  //
+  // Never smaller than the symbol. A code that will not fit overflows visibly,
+  // which is honest and is already reported through `moduleDots`; cropping it
+  // would leave a code that looks fine and does not scan.
   const canvas = document.createElement('canvas')
-  canvas.width = symbol.width + 2 * quietPx
-  canvas.height = symbol.height + 2 * quietPx
+  canvas.width = Math.max(boxWidthDots, symbol.width + 2 * quietPx)
+  canvas.height = Math.max(boxHeightDots, symbol.height + 2 * quietYPx)
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new BarcodeError('2D canvas context unavailable')
   ctx.fillStyle = '#ffffff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
   ctx.imageSmoothingEnabled = false
-  ctx.drawImage(symbol, quietPx, quietPx)
+  // Rounded, because a symbol landing on a half dot is a symbol whose modules are
+  // resampled across two dots — the exact thing the integer scale above exists to
+  // prevent.
+  ctx.drawImage(
+    symbol,
+    Math.round((canvas.width - symbol.width) / 2),
+    Math.round((canvas.height - symbol.height) / 2),
+  )
 
   return { canvas, moduleDots: modulePxAt1 * scale }
 }

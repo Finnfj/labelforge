@@ -196,6 +196,37 @@ describe('module geometry', () => {
   it('never exceeds the box it was given', () => {
     const { canvas } = renderCode(barcode(), 200, 80)
     expect(canvas.width).toBeLessThanOrEqual(200)
+    // Height too, which this used to leave unchecked. A linear symbology got a
+    // quiet zone above and below it on top of a bar height already solved to fill
+    // the box, so a 240 x 96 box came out 198 x 135 — the code overflowed by five
+    // millimetres, and the first drag wrote that size over the box.
+    expect(canvas.height).toBeLessThanOrEqual(80)
+  })
+
+  it('fills the box it was given', () => {
+    // The other half, and what lets the editor read a code's geometry back
+    // without measuring the symbol instead of the box: the canvas *is* the box,
+    // with the code centred in it, exactly as an image element works.
+    for (const [w, h] of [
+      [200, 80],
+      [240, 96],
+      [240, 200],
+    ]) {
+      const { canvas } = renderCode(barcode(), w, h)
+      expect([canvas.width, canvas.height], `box ${w}x${h}`).toEqual([w, h])
+    }
+  })
+
+  it('keeps a code that cannot fit rather than cropping it', () => {
+    // A long payload in a narrow box overflows. Clipping it would leave something
+    // that looks like a barcode and does not scan, which is the one outcome worth
+    // avoiding; the module width is already reported so the panel can warn.
+    const { canvas } = renderCode(
+      barcode({ value: 'THIS-IS-A-VERY-LONG-BARCODE-VALUE-1234567890' }),
+      120,
+      80,
+    )
+    expect(canvas.width).toBeGreaterThan(120)
   })
 
   it('flags a module width that is too small to scan reliably', () => {
