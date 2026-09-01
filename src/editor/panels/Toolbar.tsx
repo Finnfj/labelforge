@@ -21,12 +21,26 @@ const NEW_TEXT = {
   rotation: 0,
 } satisfies DraftElement
 
-export function Toolbar({ editor }: { editor: LabelEditor }) {
+export function Toolbar({
+  editor,
+  place,
+}: {
+  editor: LabelEditor
+  /**
+   * Last word on where a new element lands, applied to every draft below.
+   *
+   * The drafts describe the element the button promises; this decides where that
+   * lands given the state of the view — today, a counter-rotation when the canvas
+   * is turned. Keeping it a function of the caller's means the toolbar knows
+   * nothing about the canvas, and the geometry is unit-testable on its own.
+   */
+  place?: (draft: DraftElement) => DraftElement
+}) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [symbolsOpen, setSymbolsOpen] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
 
-  const add = (element: DraftElement) => editor.addElement(element)
+  const add = (element: DraftElement) => editor.addElement(place ? place(element) : element)
 
   async function onFile(file: File | undefined) {
     if (!file) return
@@ -161,20 +175,47 @@ export function Toolbar({ editor }: { editor: LabelEditor }) {
         </button>
       </div>
 
+      {/* Titles carry the shortcuts, because a key nobody can discover is a key
+          nobody uses. Copy, cut and paste have no button of their own — they are
+          the one set every user already expects to work without being told. */}
       <div className="toolbar__group">
-        <button disabled={!editor.selected} onClick={editor.duplicateSelected}>
+        <button
+          disabled={!editor.selected}
+          onClick={editor.duplicateSelected}
+          title="Ctrl+D — or Ctrl+C then Ctrl+V"
+        >
           Duplicate
         </button>
-        <button disabled={!editor.selected} onClick={editor.deleteSelected}>
+        <button disabled={!editor.selected} onClick={editor.deleteSelected} title="Delete">
           Delete
         </button>
       </div>
 
+      {/* Layering. One step at a time rather than to-front/to-back: a label holds a
+          handful of elements, so stepping is enough to resolve any overlap, and two
+          buttons beat four in a toolbar this wide. */}
       <div className="toolbar__group">
-        <button disabled={!editor.canUndo} onClick={editor.undo}>
+        <button
+          disabled={!editor.selected}
+          onClick={editor.raiseSelected}
+          title="Bring one step towards the front"
+        >
+          Forward
+        </button>
+        <button
+          disabled={!editor.selected}
+          onClick={editor.lowerSelected}
+          title="Send one step towards the back"
+        >
+          Backward
+        </button>
+      </div>
+
+      <div className="toolbar__group">
+        <button disabled={!editor.canUndo} onClick={editor.undo} title="Ctrl+Z">
           Undo
         </button>
-        <button disabled={!editor.canRedo} onClick={editor.redo}>
+        <button disabled={!editor.canRedo} onClick={editor.redo} title="Ctrl+Shift+Z or Ctrl+Y">
           Redo
         </button>
       </div>

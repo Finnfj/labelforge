@@ -16,6 +16,7 @@ import { fitScale } from './zoom'
 import { REPO_URL } from './links'
 import { resolveAssetUrl } from '../storage/assets'
 import { registerStoredFonts } from '../storage/fonts'
+import { placeForTurnedView } from '../editor/insertPlacement'
 
 /**
  * Editor zoom. "fit" leads because it is what you want on almost every screen:
@@ -24,6 +25,20 @@ import { registerStoredFonts } from '../storage/fonts'
  */
 const EDIT_ZOOMS = ['fit', 1, 1.5, 2, 3] as const
 type EditZoom = (typeof EDIT_ZOOMS)[number]
+
+/**
+ * Next zoom along, for Ctrl+plus and Ctrl+minus.
+ *
+ * Steps through the same list the select offers rather than multiplying, so the
+ * keyboard and the menu can never disagree about what zooms exist. "Fit" is the
+ * first entry and so the bottom of the range: zooming out from 1x lands on it,
+ * which is where a user pressing Ctrl+minus repeatedly wants to end up.
+ */
+function stepZoom(current: EditZoom, direction: 1 | -1): EditZoom {
+  const at = EDIT_ZOOMS.indexOf(current)
+  const next = Math.min(EDIT_ZOOMS.length - 1, Math.max(0, at + direction))
+  return EDIT_ZOOMS[next]
+}
 
 export default function App() {
   const editor = useLabelEditor()
@@ -66,24 +81,59 @@ export default function App() {
     void registerStoredFonts()
   }, [])
 
-  // Keyboard shortcuts. Deliberately skipped while a field has focus, so that
-  // Delete in a text box removes a character rather than the whole element.
+  /**
+   * Keyboard shortcuts.
+   *
+   * Skipped while a field has focus, so Delete in a text box removes a character
+   * rather than the whole element — and so Ctrl+C in the name field copies the
+   * text the user selected rather than the element behind it. Fabric edits text in
+   * a hidden `textarea`, so typing on the canvas is covered by the same guard.
+   */
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return
 
       const meta = event.ctrlKey || event.metaKey
-      if (meta && event.key.toLowerCase() === 'z') {
-        event.preventDefault()
+      const key = event.key.toLowerCase()
+      // Every branch that acts calls preventDefault, because most of these are
+      // browser shortcuts too: unhandled, Ctrl+- shrinks the whole page and Ctrl+V
+      // fires a paste event at the document.
+      const handled = () => event.preventDefault()
+
+      if (meta && key === 'z') {
+        handled()
         if (event.shiftKey) editor.redo()
         else editor.undo()
-      } else if (meta && event.key.toLowerCase() === 'd') {
-        event.preventDefault()
+      } else if (meta && key === 'y') {
+        // Redo the Windows way as well as the Shift+Ctrl+Z way, since this runs in
+        // a browser on whatever the user already has habits from.
+        handled()
+        editor.redo()
+      } else if (meta && key === 'c') {
+        handled()
+        editor.copySelected()
+      } else if (meta && key === 'x') {
+        handled()
+        editor.cutSelected()
+      } else if (meta && key === 'v') {
+        handled()
+        editor.paste()
+      } else if (meta && key === 'd') {
+        handled()
         editor.duplicateSelected()
+      } else if (meta && (key === '=' || key === '+')) {
+        handled()
+        setZoom((z) => stepZoom(z, 1))
+      } else if (meta && (key === '-' || key === '_')) {
+        handled()
+        setZoom((z) => stepZoom(z, -1))
+      } else if (meta && key === '0') {
+        handled()
+        setZoom('fit')
       } else if (event.key === 'Delete' || event.key === 'Backspace') {
         if (editor.selectedId) {
-          event.preventDefault()
+          handled()
           editor.deleteSelected()
         }
       } else if (event.key === 'Escape') {
@@ -211,7 +261,14 @@ export default function App() {
           </label>
         </div>
 
-        <Toolbar editor={editor} />
+        <Toolbar
+          editor={editor}
+          // Inserting into a turned canvas should give what the button implies:
+          // something upright, on the label. See editor/insertPlacement.ts.
+          place={
+            turned ? (draft) => placeForTurnedView(draft, editor.doc.size.heightMm) : undefined
+          }
+        />
 
         <div className="editor">
           <div className="editor__stage" ref={stageRef}>

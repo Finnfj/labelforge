@@ -3,6 +3,7 @@ import {
   createEmptyDoc,
   newId,
   nextZ,
+  withElementShifted,
   type LabelDoc,
   type LabelElement,
   type DraftElement,
@@ -13,6 +14,9 @@ import { DEFAULT_PRESET_ID, findPreset } from '../model/presets'
 
 const AUTOSAVE_KEY = 'labelforge.doc.v1'
 const HISTORY_LIMIT = 100
+
+/** How far each paste steps from the original, in mm, so copies do not hide. */
+const PASTE_OFFSET_MM = 2
 
 function initialDoc(): LabelDoc {
   const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(AUTOSAVE_KEY) : null
@@ -42,6 +46,15 @@ export interface LabelEditor {
   updateElement(id: string, patch: ElementPatch, options?: { transient?: boolean }): void
   deleteSelected(): void
   duplicateSelected(): void
+  copySelected(): void
+  cutSelected(): void
+  paste(): void
+  /** Whether anything has been copied or cut in this session. */
+  canPaste: boolean
+  /** Move the selection one place up the draw order. */
+  raiseSelected(): void
+  /** Move the selection one place down the draw order. */
+  lowerSelected(): void
   setSize(widthMm: number, heightMm: number, presetId?: string): void
   setPaper(type: 'gap' | 'continuous'): void
   rename(name: string): void
@@ -66,6 +79,18 @@ export function useLabelEditor(): LabelEditor {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const past = useRef<LabelDoc[]>([])
   const future = useRef<LabelDoc[]>([])
+  /**
+   * The clipboard, in app rather than in the system.
+   *
+   * A `LabelElement` is a plain object, so the system clipboard could carry it as
+   * JSON — but reading that back needs an async permission prompt the user did not
+   * ask for, and a paste would then have to cope with arbitrary text from any other
+   * application. Keeping it here makes copy and paste exact and silent. The cost is
+   * that it does not cross tabs, which templates already cover.
+   */
+  const [clipboard, setClipboard] = useState<LabelElement | null>(null)
+  /** Pastes since the copy, so repeated pastes cascade instead of stacking. */
+  const pasteRun = useRef(0)
   const [historyTick, setHistoryTick] = useState(0)
 
   useEffect(() => {
@@ -90,14 +115,25 @@ export function useLabelEditor(): LabelEditor {
     })
   }, [])
 
+  /**
+   * Apply a change, recording it in history unless it is transient.
+   *
+   * A mutation that returns the document it was given is treated as no change at
+   * all: no history entry, no new `updatedAt`, no autosave. Several operations can
+   * legitimately do nothing — raising the topmost element, duplicating when the
+   * selection has just been deleted — and each one used to leave an undo step that
+   * appeared to do nothing when the user reached it.
+   */
   const mutate = useCallback((fn: (draft: LabelDoc) => LabelDoc, transient = false) => {
     setDocState((current) => {
+      const next = fn(current)
+      if (next === current) return current
       if (!transient) {
         past.current = [...past.current, current].slice(-HISTORY_LIMIT)
         future.current = []
         setHistoryTick((t) => t + 1)
       }
-      return { ...fn(current), updatedAt: Date.now() }
+      return { ...next, updatedAt: Date.now() }
     })
   }, [])
 
@@ -154,6 +190,54 @@ export function useLabelEditor(): LabelEditor {
     })
     setSelectedId(id)
   }, [mutate, selectedId])
+
+  const copySelected = useCallback(() => {
+    const source = doc.elements.find((e) => e.id === selectedId)
+    if (!source) return
+    setClipboard(source)
+    pasteRun.current = 0
+  }, [doc.elements, selectedId])
+
+  const cutSelected = useCallback(() => {
+    const source = doc.elements.find((e) => e.id === selectedId)
+    if (!source) return
+    setClipboard(source)
+    pasteRun.current = 0
+    mutate((current) => ({
+      ...current,
+      elements: current.elements.filter((e) => e.id !== source.id),
+    }))
+    setSelectedId(null)
+  }, [doc.elements, mutate, selectedId])
+
+  const paste = useCallback(() => {
+    if (!clipboard) return
+    const id = newId()
+    // Offset by the run rather than from the last paste, so three pastes step
+    // evenly away from the original instead of compounding, and an undo in the
+    // middle does not shift where the next one lands.
+    const step = PASTE_OFFSET_MM * (pasteRun.current + 1)
+    pasteRun.current += 1
+    mutate((current) => ({
+      ...current,
+      elements: [
+        ...current.elements,
+        { ...clipboard, id, x: clipboard.x + step, y: clipboard.y + step, z: nextZ(current) },
+      ],
+    }))
+    setSelectedId(id)
+  }, [clipboard, mutate])
+
+  const shiftSelected = useCallback(
+    (direction: 1 | -1) => {
+      if (!selectedId) return
+      mutate((current) => withElementShifted(current, selectedId, direction))
+    },
+    [mutate, selectedId],
+  )
+
+  const raiseSelected = useCallback(() => shiftSelected(1), [shiftSelected])
+  const lowerSelected = useCallback(() => shiftSelected(-1), [shiftSelected])
 
   const setSize = useCallback(
     (widthMm: number, heightMm: number, presetId?: string) => {
@@ -212,6 +296,12 @@ export function useLabelEditor(): LabelEditor {
     updateElement,
     deleteSelected,
     duplicateSelected,
+    copySelected,
+    cutSelected,
+    paste,
+    canPaste: clipboard != null,
+    raiseSelected,
+    lowerSelected,
     setSize,
     setPaper,
     rename,

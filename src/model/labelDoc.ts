@@ -220,3 +220,33 @@ export function nextZ(doc: LabelDoc): number {
 export function elementsInDrawOrder(doc: LabelDoc): LabelElement[] {
   return [...doc.elements].filter((e) => !e.hidden).sort((a, b) => a.z - b.z)
 }
+
+/**
+ * Move one element a single place up or down the draw order.
+ *
+ * Reassigns `z` across the whole document from the reordered list rather than
+ * swapping two values. `z` is only ever read as an ordering, so renumbering costs
+ * nothing and means a document that arrived with ties — an old autosave, or a
+ * template written by hand — comes out with a definite order rather than one that
+ * depends on `sort` being stable.
+ *
+ * Hidden elements count. They are still in the stack, and stepping over one
+ * invisibly would make the next press of the button appear to do nothing.
+ *
+ * Returns *the same object* at either end of the stack, or for an unknown id. That
+ * identity is load-bearing: `useLabelEditor` treats a mutation that returns what it
+ * was given as no change, so raising the topmost element leaves no undo step behind
+ * rather than one that appears to do nothing when the user reaches it.
+ */
+export function withElementShifted(doc: LabelDoc, id: string, direction: 1 | -1): LabelDoc {
+  const order = [...doc.elements].sort((a, b) => a.z - b.z)
+  const from = order.findIndex((e) => e.id === id)
+  const to = from + direction
+  if (from < 0 || to < 0 || to >= order.length) return doc
+  ;[order[from], order[to]] = [order[to], order[from]]
+  const z = new Map(order.map((e, index) => [e.id, index + 1]))
+  return {
+    ...doc,
+    elements: doc.elements.map((e) => ({ ...e, z: z.get(e.id) ?? e.z })),
+  }
+}
