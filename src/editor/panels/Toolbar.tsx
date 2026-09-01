@@ -5,13 +5,18 @@ import { putAsset } from '../../storage/assets'
 import type { LabelEditor } from '../useLabelEditor'
 import {
   BackwardIcon,
+  BarcodeIcon,
   DeleteIcon,
   DuplicateIcon,
   EllipseIcon,
   ForwardIcon,
+  ImageIcon,
   LineIcon,
+  QrIcon,
   RectIcon,
   RedoIcon,
+  SymbolIcon,
+  TextIcon,
   UndoIcon,
 } from './ToolbarIcons'
 
@@ -82,10 +87,14 @@ export function Toolbar({
   return (
     <div className="toolbar">
       <div className="toolbar__group">
-        <button onClick={() => add({ ...NEW_TEXT })}>Text</button>
-        {/* Shapes as glyphs. A rectangle, an ellipse and a line are the three
-            icons in this toolbar that need no explaining, and dropping their words
-            buys back the width the named inserts beside them want. */}
+        <button
+          className="btn--icon"
+          aria-label="Text"
+          title="Text"
+          onClick={() => add({ ...NEW_TEXT })}
+        >
+          <TextIcon />
+        </button>
         <button
           className="btn--icon"
           aria-label="Rectangle"
@@ -150,6 +159,9 @@ export function Toolbar({
 
       <div className="toolbar__group toolbar__group--divided">
         <button
+          className="btn--icon"
+          aria-label="Barcode"
+          title="Barcode"
           onClick={() =>
             add({
               kind: 'barcode',
@@ -164,9 +176,12 @@ export function Toolbar({
             })
           }
         >
-          Barcode
+          <BarcodeIcon />
         </button>
         <button
+          className="btn--icon"
+          aria-label="QR code"
+          title="QR code"
           onClick={() =>
             add({
               kind: 'qr',
@@ -180,9 +195,16 @@ export function Toolbar({
             })
           }
         >
-          QR
+          <QrIcon />
         </button>
-        <button onClick={() => fileRef.current?.click()}>Image</button>
+        <button
+          className="btn--icon"
+          aria-label="Image"
+          title="Image"
+          onClick={() => fileRef.current?.click()}
+        >
+          <ImageIcon />
+        </button>
         <input
           ref={fileRef}
           type="file"
@@ -193,16 +215,18 @@ export function Toolbar({
             e.target.value = ''
           }}
         />
-        <button onClick={() => setSymbolsOpen((open) => !open)} aria-expanded={symbolsOpen}>
-          Symbol
+        <button
+          className="btn--icon"
+          aria-label="Symbol"
+          title="Symbol"
+          aria-expanded={symbolsOpen}
+          onClick={() => setSymbolsOpen((open) => !open)}
+        >
+          <SymbolIcon />
         </button>
       </div>
 
-      {/* Acting on the selection, and undoing it. Icons here and words above, which
-          is the whole shape of this toolbar: inserting is deliberate and read once,
-          so it is named; these are pressed constantly and are the icons every editor
-          already agrees on. Splitting them that way is also what stops the row
-          reading as one undifferentiated wall of buttons.
+      {/* Acting on the selection, and undoing it.
 
           Every title names its shortcut, because a key nobody can discover is a key
           nobody uses. Copy, cut and paste get no button at all — they are the set

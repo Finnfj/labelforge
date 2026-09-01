@@ -35,6 +35,7 @@ const GROUPS: Array<{ heading: string; keys: Array<[string, string]> }> = [
     keys: [
       ['Ctrl+plus', 'Zoom in'],
       ['Ctrl+minus', 'Zoom out'],
+      ['Ctrl+scroll', 'Zoom smoothly'],
       ['Ctrl+0', 'Fit to the panel'],
       ['Esc', 'Deselect'],
     ],
@@ -73,8 +74,9 @@ export function Shortcuts() {
           </div>
         ))}
         <p className="shortcuts__note">
-          Shortcuts pause while a text field or an element on the canvas is being typed into, so
-          Delete removes a character there rather than the whole element.
+          Pinching a trackpad over the editor zooms it too. Shortcuts pause while a text field or an
+          element on the canvas is being typed into, so Delete removes a character there rather than
+          the whole element.
         </p>
       </div>
     </details>

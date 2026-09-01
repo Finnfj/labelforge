@@ -12,7 +12,7 @@ import { usePrinter } from './usePrinter'
 import { TemplatesPanel } from './TemplatesPanel'
 import { useDiagnosticFlags } from './useDiagnosticFlags'
 import { useElementWidth } from './useElementWidth'
-import { fitScale } from './zoom'
+import { clampEditZoom, fitScale, wheelZoomFactor } from './zoom'
 import { REPO_URL } from './links'
 import { resolveAssetUrl } from '../storage/assets'
 import { registerStoredFonts } from '../storage/fonts'
@@ -25,21 +25,26 @@ import { Shortcuts } from '../editor/panels/Shortcuts'
  * difference between seeing the design and seeing a third of it.
  */
 const EDIT_ZOOMS = ['fit', 1, 1.5, 2, 3] as const
-type EditZoom = (typeof EDIT_ZOOMS)[number]
 
 /**
- * Next zoom along, for Ctrl+plus and Ctrl+minus.
+ * The zoom the editor is at: "fit", or any scale.
  *
- * Steps through the same list the select offers rather than multiplying, so the
- * keyboard and the menu can never disagree about what zooms exist. "Fit" is the
- * first entry and so the bottom of the range: zooming out from 1x lands on it,
- * which is where a user pressing Ctrl+minus repeatedly wants to end up.
+ * Deliberately wider than the list above. The list is what the select *offers*;
+ * Ctrl+scroll and Ctrl+plus can leave the zoom anywhere between the bounds in
+ * app/zoom.ts, and the select reports such a value back as a percentage.
  */
-function stepZoom(current: EditZoom, direction: 1 | -1): EditZoom {
-  const at = EDIT_ZOOMS.indexOf(current)
-  const next = Math.min(EDIT_ZOOMS.length - 1, Math.max(0, at + direction))
-  return EDIT_ZOOMS[next]
-}
+type EditZoom = 'fit' | number
+
+/**
+ * What one press of Ctrl+plus or Ctrl+minus is worth.
+ *
+ * Multiplying rather than stepping the list above, because Ctrl+scroll can leave
+ * the zoom anywhere: from 1.37x, stepping would have to find a place in a list that
+ * value is not in, and the obvious implementations either snap somewhere surprising
+ * or fall off the end to "Fit". A quarter each way is close enough to the gaps in
+ * the list that the two feel like the same control.
+ */
+const ZOOM_KEY_STEP = 1.25
 
 export default function App() {
   const editor = useLabelEditor()
@@ -60,12 +65,33 @@ export default function App() {
   const [turned, setTurned] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
   const stageWidth = useElementWidth(stageRef)
+  /**
+   * The zoom as a number, for the handlers that scale it rather than set it.
+   *
+   * A ref and not the state, for two reasons. "Fit" has no number until the stage
+   * has been measured, so a handler that wants to zoom *from* the current scale
+   * cannot read it out of `zoom`. And a pinch delivers a burst of wheel events
+   * inside one frame: each has to compound on the last, which a state value that
+   * has not re-rendered yet cannot do.
+   */
+  const zoomRef = useRef(1)
   // Resolved to a number here rather than inside EditorCanvas, which keeps the
   // canvas ignorant of where its scale came from. Fit measures whichever dimension
   // is across the screen, so turning the canvas re-fits it rather than letting a
   // tall label overflow the panel on its side.
   const editWidthDots = mmToDots(turned ? editor.doc.size.heightMm : editor.doc.size.widthMm)
   const effectiveZoom = zoom === 'fit' ? fitScale(stageWidth, editWidthDots) : zoom
+  zoomRef.current = effectiveZoom
+  const scaleZoom = (factor: number) => {
+    const next = clampEditZoom(zoomRef.current * factor)
+    // Written back before the state so a second event in the same frame compounds
+    // on this value rather than on the one React has not re-rendered with yet.
+    zoomRef.current = next
+    setZoom(next)
+  }
+  // "Fit" and the presets are named; anything Ctrl+scroll landed on is shown as a
+  // percentage so the select still reports where the zoom actually is.
+  const zoomIsPreset = zoom === 'fit' || (EDIT_ZOOMS as readonly EditZoom[]).includes(zoom)
   // Which way the label reads on screen, so the select can name what you get. The
   // turn is negated rather than the dimensions re-compared, which matters for a
   // square label: comparing would call it vertical either way, and the control would
@@ -125,10 +151,10 @@ export default function App() {
         editor.duplicateSelected()
       } else if (meta && (key === '=' || key === '+')) {
         handled()
-        setZoom((z) => stepZoom(z, 1))
+        scaleZoom(ZOOM_KEY_STEP)
       } else if (meta && (key === '-' || key === '_')) {
         handled()
-        setZoom((z) => stepZoom(z, -1))
+        scaleZoom(1 / ZOOM_KEY_STEP)
       } else if (meta && key === '0') {
         handled()
         setZoom('fit')
@@ -144,6 +170,39 @@ export default function App() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [editor])
+
+  /**
+   * Ctrl+scroll, and a trackpad pinch, zoom the editor instead of the page.
+   *
+   * A pinch on a trackpad arrives as a `wheel` event with `ctrlKey` set — the
+   * browser synthesises it, and there is no separate pinch event to listen for on
+   * the desktop. So one handler covers both, and holding Ctrl with a mouse wheel
+   * gets the same behaviour for free.
+   *
+   * Two things make it work. The listener is **not passive**, which is what earns
+   * the right to `preventDefault` and stop the browser zooming the whole page
+   * instead; React's `onWheel` cannot be relied on for that, since it attaches at
+   * the root and may be registered passively. And it is on the stage rather than
+   * the window, so scrolling over the rest of the page is untouched.
+   *
+   * Plain scrolling is deliberately left alone: the stage is a scroll container,
+   * and a label zoomed past the panel has to be pannable.
+   */
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return
+      event.preventDefault()
+      scaleZoom(wheelZoomFactor(event.deltaY, event.deltaMode))
+    }
+
+    stage.addEventListener('wheel', onWheel, { passive: false })
+    return () => stage.removeEventListener('wheel', onWheel)
+    // scaleZoom reads and writes a ref and setZoom, both stable across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <main className="app">
@@ -261,6 +320,9 @@ export default function App() {
                   setZoom(e.target.value === 'fit' ? 'fit' : (Number(e.target.value) as EditZoom))
                 }
               >
+                {!zoomIsPreset && (
+                  <option value={String(zoom)}>{Math.round(effectiveZoom * 100)}%</option>
+                )}
                 {EDIT_ZOOMS.map((z) => (
                   <option key={z} value={z}>
                     {z === 'fit' ? 'Fit' : `${z}×`}
