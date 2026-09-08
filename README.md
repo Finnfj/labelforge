@@ -1,5 +1,7 @@
 # LabelForge
 
+#### https://finnfj.github.io/labelforge/
+
 A browser-based label designer and printer driver for **MarkLife P50 / P50S** thermal
 label printers, built to replace the vendor's phone app.
 
