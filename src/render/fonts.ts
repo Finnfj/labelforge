@@ -13,7 +13,7 @@
  * with every face still unloaded. The load has to be asked for explicitly.
  */
 import type { LabelDoc } from '../model/labelDoc'
-import { ptToDots } from '../model/units'
+import { DOTS_PER_MM, ptToDotsAt } from '../model/units'
 
 export type FontKind = 'bundled' | 'system' | 'user'
 
@@ -142,7 +142,10 @@ export function forgetUserFont(family: string): void {
  * the same judgement `skipped` already encodes. The caller warns; the label
  * still prints, in a substitute face, and the user is told which.
  */
-export async function ensureDocumentFonts(doc: LabelDoc): Promise<string[]> {
+export async function ensureDocumentFonts(
+  doc: LabelDoc,
+  dotsPerMm: number = DOTS_PER_MM,
+): Promise<string[]> {
   if (typeof document === 'undefined' || !document.fonts) return []
 
   // One request per family and size. The text goes in too: for a family split
@@ -151,7 +154,10 @@ export async function ensureDocumentFonts(doc: LabelDoc): Promise<string[]> {
   for (const element of doc.elements) {
     if (element.kind !== 'text') continue
     if (isGenericFamily(element.fontFamily)) continue
-    const px = Math.max(1, Math.round(ptToDots(element.fontSizePt)))
+    // Must match the px Fabric will actually ask for in toFabric.ts — otherwise
+    // this loads (and reports ready) the wrong size and the real one still
+    // substitutes silently at render time.
+    const px = Math.max(1, Math.round(ptToDotsAt(element.fontSizePt, dotsPerMm)))
     // Weight and style belong in the shorthand. Ask for `16px "Fira Sans"` and
     // only the 400 face loads, so bold text rasterises against a face that is
     // still unloaded and comes out as the browser's synthetic bold — which is

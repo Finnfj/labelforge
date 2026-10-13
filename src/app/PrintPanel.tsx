@@ -15,6 +15,8 @@ import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/test
 import { MAX_DENSITY, MIN_DENSITY, SEEK_SAFE_JOB_BYTES } from '../printer/protocol/constants'
 import { needsSplitToSeek } from '../printer/protocol/commands'
 import { encodeImage } from '../printer/protocol/encodeImage'
+import { buildPrintJob } from '../printer/dymo/commands'
+import { DYMO_DOTS_PER_MM, PRINTABLE_HEIGHT_DOTS } from '../printer/dymo/constants'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../printer/types'
 import { resolveAssetUrl } from '../storage/assets'
 import { registerStoredFonts } from '../storage/fonts'
@@ -85,6 +87,16 @@ export function PrintPanel({
   updateElement(id: string, patch: Partial<ImageElement>): void
 }) {
   const printer = connection.driver
+  // Everything below that reads head width, padding, gap-seek splitting or the
+  // MarkLife raster encoder has to branch on this: none of those concepts exist
+  // for the DYMO driver, which has its own tiny fixed head and no compressed
+  // raster at all. See docs/DYMO_PROTOCOL.md.
+  //
+  // Keyed on the Output selection, not `capabilities`, so the whole panel reflects
+  // the choice immediately — capabilities stay null until a connection succeeds,
+  // and someone designing a label before plugging in the printer should not see
+  // MarkLife-only controls for a DYMO they have already chosen.
+  const isDymo = connection.kind === 'dymo'
 
   const [settings, setSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS)
   const [bitmap, setBitmap] = useState<PackedBitmap | null>(null)
@@ -149,13 +161,19 @@ export function PrintPanel({
             // Omitting the head width is what stops the raster being padded, which
             // is how the vendor app sends it. The head width is still needed as a
             // limit, so it goes in either way via maxWidthDots.
-            headWidthDots: padToHead ? headWidth : undefined,
-            maxWidthDots: headWidth,
-            align,
-            offsetDots,
+            //
+            // The DYMO head has no padding concept wired up at all — its only
+            // size limit is its fixed, tiny printable height — and its dot pitch
+            // is an estimate, not the P50's measured one; see
+            // docs/DYMO_PROTOCOL.md and dymo/constants.ts.
+            headWidthDots: isDymo ? undefined : padToHead ? headWidth : undefined,
+            maxWidthDots: isDymo ? PRINTABLE_HEIGHT_DOTS : headWidth,
+            align: isDymo ? 'left' : align,
+            offsetDots: isDymo ? 0 : offsetDots,
             resolveAsset: resolveAssetUrl,
             clipToHead: true,
-            feedAfterDots,
+            feedAfterDots: isDymo ? 0 : feedAfterDots,
+            dotsPerMm: isDymo ? DYMO_DOTS_PER_MM : undefined,
           })
           if (cancelled) return
           setBitmap(result.bitmap)
@@ -163,7 +181,16 @@ export function PrintPanel({
           // size, and there is no estimating that — a dithered photograph barely
           // compresses while flat artwork collapses to nothing. Encoding is a
           // millisecond here and the preview is already debounced.
-          setJobBytes(encodeImage(result.bitmap).length)
+          //
+          // The DYMO protocol has no compression and no gap-seek-sized-job concept
+          // at all, so its "bytes" figure is only ever the actual job size, shown
+          // for information — nothing downstream compares it to SEEK_SAFE_JOB_BYTES
+          // for a DYMO job (see the split-to-seek section below).
+          setJobBytes(
+            isDymo
+              ? buildPrintJob(result.bitmap).reduce((n, c) => n + c.length, 0)
+              : encodeImage(result.bitmap).length,
+          )
           setLabelWidthDots(result.labelWidthDots)
           setClipped(result.clipped)
           setSkipped(result.skipped)
@@ -181,7 +208,10 @@ export function PrintPanel({
           setFontFallbacks([])
           setError(
             e instanceof LabelTooWideError
-              ? `${e.message} Choose a narrower roll — a P50S head is 384 dots, or 48 mm.`
+              ? isDymo
+                ? `${e.message} Choose a narrower design — the LetraTag's printable head is ` +
+                  `${PRINTABLE_HEIGHT_DOTS} dots (about ${(PRINTABLE_HEIGHT_DOTS / DYMO_DOTS_PER_MM).toFixed(1)} mm, estimated — see docs/DYMO_PROTOCOL.md).`
+                : `${e.message} Choose a narrower roll — a P50S head is 384 dots, or 48 mm.`
               : e instanceof Error
                 ? e.message
                 : String(e),
@@ -193,7 +223,7 @@ export function PrintPanel({
       cancelled = true
       clearTimeout(id)
     }
-  }, [doc, headWidth, padToHead, align, offsetDots, feedAfterDots])
+  }, [doc, headWidth, padToHead, align, offsetDots, feedAfterDots, isDymo])
 
   // The mildest rung of the tone ladder that would take this label under the size
   // the printer reads in full. Asked only when the answer could matter — it is a
@@ -201,7 +231,9 @@ export function PrintPanel({
   // dither compresses depends entirely on the picture. Stops at the first that
   // fits, so it is usually one or two.
   const photoIds = photoElementIds(doc)
-  const wantsTrial = needsSplitToSeek(jobBytes) && photoIds.length > 0
+  // SEEK_SAFE_JOB_BYTES is a MarkLife buffer-size fact; the DYMO protocol has no
+  // equivalent "job too big to read whole" concern, so this trial never runs for it.
+  const wantsTrial = !isDymo && needsSplitToSeek(jobBytes) && photoIds.length > 0
   useEffect(() => {
     if (!wantsTrial) {
       setRemedy(null)
@@ -287,17 +319,19 @@ export function PrintPanel({
     <section className="panel">
       <h2>Print</h2>
       <div className="row">
-        <label className="field">
-          <span>Density</span>
-          <input
-            type="range"
-            min={MIN_DENSITY}
-            max={MAX_DENSITY}
-            value={settings.density}
-            onChange={(e) => setSettings((s) => ({ ...s, density: Number(e.target.value) }))}
-          />
-          <em>{settings.density}</em>
-        </label>
+        {!isDymo && (
+          <label className="field">
+            <span>Density</span>
+            <input
+              type="range"
+              min={MIN_DENSITY}
+              max={MAX_DENSITY}
+              value={settings.density}
+              onChange={(e) => setSettings((s) => ({ ...s, density: Number(e.target.value) }))}
+            />
+            <em>{settings.density}</em>
+          </label>
+        )}
         <label className="field">
           <span>Copies</span>
           <input
@@ -319,7 +353,7 @@ export function PrintPanel({
         both on by default. So the visible part is one sentence saying what is
         happening, and everything that was deliberation goes behind the disclosure.
       */}
-      {needsSplitToSeek(jobBytes) && (
+      {!isDymo && needsSplitToSeek(jobBytes) && (
         // A hint while it is being handled, a warning once the user has turned the
         // handling off — which is the only state now where an oversized label is
         // actually a problem.
@@ -506,7 +540,14 @@ export function PrintPanel({
           substitute &mdash; the spacing and line breaks are what you would actually get.
         </p>
       )}
-      {clipped && (
+      {clipped && isDymo && (
+        <p className="warn">
+          This label is wider than the LetraTag's {PRINTABLE_HEIGHT_DOTS}-dot printable head (about{' '}
+          {(PRINTABLE_HEIGHT_DOTS / DYMO_DOTS_PER_MM).toFixed(1)} mm, estimated — see
+          docs/DYMO_PROTOCOL.md), so anything past that edge is cut off.
+        </p>
+      )}
+      {clipped && !isDymo && (
         <p className="warn">
           This label is {dotsToMm(labelWidthDots)} mm wide but the print head is only{' '}
           {dotsToMm(headWidth)} mm, so anything past that edge is cut off. 384 dots was measured
@@ -561,7 +602,16 @@ export function PrintPanel({
         <span>Show full print head area</span>
       </label>
       <p className="hint">
-        {labelWidthDots} of {headWidth} dots used ({dotsToMm(headWidth)} mm head).
+        {isDymo ? (
+          <>
+            {labelWidthDots} of {PRINTABLE_HEIGHT_DOTS} dots used (
+            {(PRINTABLE_HEIGHT_DOTS / DYMO_DOTS_PER_MM).toFixed(1)} mm head, estimated).
+          </>
+        ) : (
+          <>
+            {labelWidthDots} of {headWidth} dots used ({dotsToMm(headWidth)} mm head).
+          </>
+        )}
         {showHeadArea && ' Tinted area is under the head but off the edge of the stock.'}
       </p>
       {/*
@@ -570,8 +620,10 @@ export function PrintPanel({
           be doing nothing — speed could be one of the six unidentified bytes in
           `setPrintParams`. The patterns existed to measure head width and placement
           by trial, which the capture answered outright.
+
+          All MarkLife-only: DYMO support has none of these concepts yet.
         */}
-      {flags.advancedPrint && (
+      {!isDymo && flags.advancedPrint && (
         <details className="advanced">
           <summary>
             Advanced

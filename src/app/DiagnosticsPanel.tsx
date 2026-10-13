@@ -272,7 +272,10 @@ export function DiagnosticsPanel({
                 run('Calibrate label gap', async () => {
                   const driver = connection.driver
                   if (!(driver instanceof BlePrinterDriver)) {
-                    throw new Error('Calibration needs a real printer, not the virtual one.')
+                    throw new Error(
+                      'This is a MarkLife-specific calibration — switch Output to a MarkLife ' +
+                        'printer first. It does not apply to the virtual printer or to DYMO.',
+                    )
                   }
                   const result = await driver.calibrateLabelGap({
                     passes: 3,
