@@ -27,6 +27,18 @@ export const STOCK_PRESETS: StockPreset[] = [
   { id: '50x80', label: '50 × 80 mm', widthMm: 50, heightMm: 80, paper: 'gap' },
   { id: 'cont-40', label: '40 mm continuous', widthMm: 40, heightMm: 25, paper: 'continuous' },
   { id: 'cont-50', label: '50 mm continuous', widthMm: 50, heightMm: 25, paper: 'continuous' },
+  // DYMO LetraTag: 12 mm cassette tape, but only 30 dots of it print — ~3.8 mm at
+  // 200 DPI (DYMO_DOTS_PER_MM in printer/dymo/constants.ts; not importable here,
+  // model/ is a leaf). Width is the printable band, not the tape, so a design that
+  // fits the canvas fits the head. Continuous, no gap sensor; heightMm is only a
+  // starting length.
+  {
+    id: 'dymo-12',
+    label: 'DYMO LetraTag (3.8 mm printable)',
+    widthMm: 3.8,
+    heightMm: 40,
+    paper: 'continuous',
+  },
 ]
 
 export const DEFAULT_PRESET_ID = '40x30'

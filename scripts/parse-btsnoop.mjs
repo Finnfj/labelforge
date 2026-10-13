@@ -47,7 +47,9 @@ const ATT_OPCODE = {
   0x12: 'Write Request',
   0x13: 'Write Response',
   0x16: 'Prepare Write Request',
+  0x17: 'Prepare Write Response',
   0x18: 'Execute Write Request',
+  0x19: 'Execute Write Response',
   0x1b: 'Handle Value Notification',
   0x1d: 'Handle Value Indication',
   0x1e: 'Handle Value Confirmation',
@@ -158,12 +160,18 @@ function* records(buf) {
 
   let off = 16
   while (off + 24 <= buf.length) {
+    const original = buf.readUInt32BE(off)
     const included = buf.readUInt32BE(off + 4)
     const packetFlags = buf.readUInt32BE(off + 8)
     const ts = buf.readBigUInt64BE(off + 16)
     const end = off + 24 + included
     if (end > buf.length) break // truncated tail; take what we have
-    yield { received: (packetFlags & 1) === 1, ts, data: buf.subarray(off + 24, end) }
+    yield {
+      received: (packetFlags & 1) === 1,
+      ts,
+      data: buf.subarray(off + 24, end),
+      snaplenCut: original - included,
+    }
     off = end
   }
 }
@@ -207,10 +215,26 @@ const addrName = new Map()
 const connAddr = new Map()
 /** ATT handle → UUID string, learned from discovery in the capture itself. */
 const attUuid = new Map()
+/** Service start handle → { endHandle, uuid }, learned from primary service discovery. */
+const attService = new Map()
 /** ACL handle → L2CAP reassembly state. */
 const asm = new Map()
 /** ACL handle → the type of the outstanding Read By Type Request. */
 const pendingType = new Map()
+/**
+ * ACL handle → Prepare Write Requests queued but not yet committed.
+ *
+ * A write too large for one ATT PDU is not just chunked — it goes through the GATT
+ * "queued write" procedure: each Prepare Write Request carries an explicit offset,
+ * and nothing is applied to the characteristic until Execute Write Request commits
+ * (or discards) the whole queue. Treating each Prepare Write as its own write, as a
+ * naive reading of the opcode table suggests, is exactly what hides a raster image:
+ * it shows up as a dozen small opaque fragments instead of the one large payload it
+ * actually is.
+ */
+const queuedWrites = new Map()
+/** ATT handle → ordered list of fully-written buffers, queued writes already merged. */
+const streams = new Map()
 
 const attPackets = []
 const otherTraffic = new Map()
@@ -259,6 +283,11 @@ function handleEvent(d) {
 
 // --- ATT -----------------------------------------------------------------
 
+function pushStream(conn, attHandle, value) {
+  if (!streams.has(attHandle)) streams.set(attHandle, [])
+  streams.get(attHandle).push({ conn, value })
+}
+
 function handleAtt(conn, received, ts, b) {
   if (b.length < 1) return
   const opcode = b[0]
@@ -270,10 +299,39 @@ function handleAtt(conn, received, ts, b) {
     case 0x52:
     case 0x1b:
     case 0x1d:
-    case 0x16:
       if (b.length >= 3) {
         attHandle = b.readUInt16LE(1)
-        value = b.subarray(opcode === 0x16 ? 5 : 3)
+        value = b.subarray(3)
+      }
+      if (value?.length) pushStream(conn, attHandle, value)
+      break
+    case 0x16:
+      if (b.length >= 5) {
+        attHandle = b.readUInt16LE(1)
+        const offset = b.readUInt16LE(3)
+        value = b.subarray(5)
+        if (!queuedWrites.has(conn)) queuedWrites.set(conn, [])
+        queuedWrites.get(conn).push({ attHandle, offset, value })
+      }
+      break
+    case 0x18:
+      // Flag byte: 0x01 commits the queue in offset order, 0x00 discards it. Either
+      // way the queue is consumed — a half-sent image is still worth seeing as what
+      // it is, rather than left to resurface mangled alongside the next job.
+      {
+        const pending = queuedWrites.get(conn) ?? []
+        queuedWrites.delete(conn)
+        if (b[1] === 0x01 && pending.length) {
+          const byHandle = new Map()
+          for (const part of pending) {
+            if (!byHandle.has(part.attHandle)) byHandle.set(part.attHandle, [])
+            byHandle.get(part.attHandle).push(part)
+          }
+          for (const [h, parts] of byHandle) {
+            parts.sort((a, c) => a.offset - c.offset)
+            pushStream(conn, h, Buffer.concat(parts.map((p) => p.value)))
+          }
+        }
       }
       break
     case 0x0a:
@@ -285,9 +343,28 @@ function handleAtt(conn, received, ts, b) {
       value = b.subarray(1)
       break
     case 0x08:
+    case 0x10:
       // Remember what was asked for, so the response can be interpreted.
       if (b.length >= 7) pendingType.set(conn, fmtUuid(b.subarray(5)))
       break
+    case 0x11: {
+      // Primary service discovery (Read By Group Type Response for 0x2800). Not
+      // needed to drive a known printer — the characteristics alone are enough
+      // once a handle range is open — but it is the only source for the service
+      // UUID itself, which a real `getPrimaryService()` call needs and which
+      // characteristic discovery never reveals.
+      const entryLen = b[1]
+      if (entryLen >= 6) {
+        for (let i = 2; i + entryLen <= b.length; i += entryLen) {
+          const entry = b.subarray(i, i + entryLen)
+          attService.set(entry.readUInt16LE(0), {
+            end: entry.readUInt16LE(2),
+            uuid: fmtUuid(entry.subarray(4)),
+          })
+        }
+      }
+      break
+    }
     case 0x09: {
       const entryLen = b[1]
       const type = pendingType.get(conn)
@@ -323,7 +400,13 @@ function handleAcl(received, ts, d) {
   const continuation = ((header >> 12) & 0x3) === 0x1
   const payload = d.subarray(4, 4 + d.readUInt16LE(2))
 
-  let state = asm.get(conn)
+  // One ACL handle carries two independent fragment streams — host→peer and
+  // peer→host — interleaved in the snoop log. Keying reassembly on the handle
+  // alone lets an unrelated packet from the other direction land mid-reassembly
+  // and clobber it, which silently destroys exactly the large multi-fragment
+  // writes (a raster image, say) this tool exists to see.
+  const asmKey = `${conn}:${received ? 'rx' : 'tx'}`
+  let state = asm.get(asmKey)
   if (continuation) {
     if (!state) return
     state.chunks.push(payload)
@@ -336,11 +419,11 @@ function handleAcl(received, ts, d) {
       chunks: [payload.subarray(4)],
       have: payload.length - 4,
     }
-    asm.set(conn, state)
+    asm.set(asmKey, state)
   }
 
   if (state.have < state.need) return
-  asm.delete(conn)
+  asm.delete(asmKey)
   const body = Buffer.concat(state.chunks).subarray(0, state.need)
   if (state.cid === 0x0004) handleAtt(conn, received, ts, body)
   else
@@ -355,6 +438,9 @@ function handleAcl(received, ts, d) {
 let first = null
 let total = 0
 let buf = Buffer.alloc(0)
+/** Count and worst case of ACL records cut short of their original length. */
+let truncatedAcl = 0
+let worstCut = 0
 
 try {
   buf = readFileSync(path)
@@ -364,7 +450,13 @@ try {
     if (rec.data.length < 1) continue
     const type = rec.data[0]
     if (type === H4.EVENT) handleEvent(rec.data.subarray(1))
-    else if (type === H4.ACL) handleAcl(rec.received, rec.ts, rec.data.subarray(1))
+    else if (type === H4.ACL) {
+      if (rec.snaplenCut > 0) {
+        truncatedAcl++
+        worstCut = Math.max(worstCut, rec.snaplenCut)
+      }
+      handleAcl(rec.received, rec.ts, rec.data.subarray(1))
+    }
   }
 } catch (e) {
   // A wrong path or the wrong file out of the bugreport is much likelier than a
@@ -404,6 +496,18 @@ if (first != null) {
   const last = attPackets.at(-1)?.ts ?? first
   out.push(`span          ${(Number(last - first) / 1e6).toFixed(1)} s`)
 }
+if (truncatedAcl > 0) {
+  out.push('')
+  out.push(
+    `!! ${truncatedAcl} ACL packets are cut short of their original length (worst: ` +
+      `${worstCut} bytes missing). Every long write in this capture will reassemble wrong ` +
+      `or incomplete — this is the signature of Android's "Filtered" Bluetooth HCI snoop ` +
+      'mode, which keeps only a short prefix of each packet for privacy. Re-enable ' +
+      'Developer options → "Enable Bluetooth HCI snoop log" and make sure it is set to ' +
+      '"Full" (not "Filtered"), then recapture — there is no way to recover the missing ' +
+      'bytes from this file.',
+  )
+}
 out.push('')
 out.push('Devices seen')
 if (connAddr.size === 0) out.push('  (no connections completed inside the capture window)')
@@ -416,6 +520,16 @@ for (const [conn, addr] of connAddr) {
 }
 out.push('')
 out.push(`Target selection: ${targetReason}`)
+
+if (attService.size) {
+  out.push('')
+  out.push('Primary services discovered in this capture')
+  for (const [start, { end, uuid }] of [...attService].sort((a, b) => a[0] - b[0])) {
+    out.push(
+      `  handle 0x${start.toString(16).padStart(4, '0')}–0x${end.toString(16).padStart(4, '0')} = ${uuid}`,
+    )
+  }
+}
 
 if (attUuid.size) {
   out.push('')
@@ -439,7 +553,6 @@ out.push('ATT timeline   → to printer, ← from printer')
 out.push('='.repeat(78))
 
 let shown = 0
-const streams = new Map()
 
 for (const p of attPackets) {
   if (!targets.has(p.conn)) continue
@@ -449,12 +562,6 @@ for (const p of attPackets) {
       ? `0x${p.attHandle.toString(16).padStart(4, '0')}${uuid ? ` ${uuid}` : ''}`
       : ''
   const name = p.value?.length ? identify(hex(p.value)) : null
-
-  if ((p.opcode === 0x12 || p.opcode === 0x52) && p.value?.length) {
-    const key = p.attHandle ?? -1
-    if (!streams.has(key)) streams.set(key, [])
-    streams.get(key).push(p.value)
-  }
 
   if (shown++ >= maxPackets) continue
   out.push(
@@ -477,10 +584,7 @@ out.push('='.repeat(78))
 out.push('Command stream — every write, in order, per handle')
 out.push('='.repeat(78))
 
-for (const [handle, chunks] of [...streams].sort((a, b) => {
-  const len = (c) => c.reduce((n, x) => n + x.length, 0)
-  return len(b[1]) - len(a[1])
-})) {
+function renderHandleStream(handle, chunks) {
   const joined = Buffer.concat(chunks)
   const uuid = attUuid.get(handle)
   out.push('')
@@ -517,6 +621,35 @@ for (const [handle, chunks] of [...streams].sort((a, b) => {
   }
 }
 
+// Several reconnects to the same device (a fresh connection per print, say) land
+// here as distinct target connections. Merging their writes by handle alone would
+// splice unrelated jobs into one bogus stream, so each gets its own section
+// whenever more than one target connection produced any writes.
+const byConn = new Map()
+for (const [handle, parts] of streams) {
+  for (const { conn, value } of parts) {
+    if (!targets.has(conn)) continue
+    if (!byConn.has(conn)) byConn.set(conn, new Map())
+    const byHandle = byConn.get(conn)
+    if (!byHandle.has(handle)) byHandle.set(handle, [])
+    byHandle.get(handle).push(value)
+  }
+}
+const targetStreams = [...byConn.values()].flatMap((byHandle) => [...byHandle])
+const multiJob = byConn.size > 1
+
+for (const [conn, byHandle] of byConn) {
+  if (multiJob) {
+    out.push('')
+    out.push(`--- connection 0x${conn.toString(16).padStart(4, '0')} ---`)
+  }
+  const sorted = [...byHandle].sort((a, b) => {
+    const len = (c) => c.reduce((n, x) => n + x.length, 0)
+    return len(b[1]) - len(a[1])
+  })
+  for (const [handle, chunks] of sorted) renderHandleStream(handle, chunks)
+}
+
 function matchLength(restHex) {
   for (const [prefix] of KNOWN)
     if (restHex.startsWith(prefix)) return prefix.length / 2 + argLength(prefix)
@@ -544,7 +677,7 @@ function argLength(prefix) {
   return 0
 }
 
-if (streams.size === 0) {
+if (targetStreams.length === 0) {
   out.push('')
   out.push('No writes were captured for the target connection. Either the snoop log was')
   out.push('collected outside the print, or the target guess above is wrong — try --all.')

@@ -1,6 +1,6 @@
 import { StaticCanvas, type FabricObject } from 'fabric'
 import { elementsInDrawOrder, isToneElement, type LabelDoc } from '../model/labelDoc'
-import { mmToDots } from '../model/units'
+import { DOTS_PER_MM } from '../model/units'
 import { appendBlankRows, type PackedBitmap } from '../model/bitmap'
 import { toFabricObject, type AssetResolver } from './toFabric'
 import { toAlphaMask, toLuminance } from './luminance'
@@ -12,6 +12,15 @@ import { pack1bpp } from './pack1bpp'
 import { padToHead, type HeadAlign } from './padToHead'
 
 export interface RasterizeOptions {
+  /**
+   * Dots per millimetre, for turning `doc.size` into dot dimensions.
+   *
+   * Omit for the P50 family's {@link DOTS_PER_MM}. A printer with a different
+   * physical resolution — the DYMO LetraTag, at roughly a third of that — needs
+   * its own value here; nothing below this line knows or cares which printer is
+   * connected; see `PrintPanel.tsx` for where that decision is made.
+   */
+  dotsPerMm?: number
   /**
    * Pad the result out to this width and position the label within it.
    *
@@ -106,8 +115,9 @@ export async function rasterize(
   doc: LabelDoc,
   options: RasterizeOptions = {},
 ): Promise<RasterizeResult> {
-  const widthDots = mmToDots(doc.size.widthMm)
-  const heightDots = mmToDots(doc.size.heightMm)
+  const dotsPerMm = options.dotsPerMm ?? DOTS_PER_MM
+  const widthDots = Math.round(doc.size.widthMm * dotsPerMm)
+  const heightDots = Math.round(doc.size.heightMm * dotsPerMm)
 
   // Fonts have to be pulled in before anything is drawn. Canvas does not start a
   // font load when you name a family, and does not redraw when one arrives, so a
@@ -115,7 +125,7 @@ export async function rasterize(
   // entirely fine. This used to await `document.fonts.ready`, which cannot do the
   // job: that settles fonts layout has used, and ours are only named from a
   // canvas, so it resolved instantly with every face still unloaded.
-  const fontFallbacks = await ensureDocumentFonts(doc)
+  const fontFallbacks = await ensureDocumentFonts(doc, dotsPerMm)
 
   const crispObjects: FabricObject[] = []
   const toneObjects: FabricObject[] = []
@@ -124,7 +134,7 @@ export async function rasterize(
   for (const element of elementsInDrawOrder(doc)) {
     let object: FabricObject | null = null
     try {
-      object = await toFabricObject(element, { resolveAsset: options.resolveAsset })
+      object = await toFabricObject(element, { resolveAsset: options.resolveAsset, dotsPerMm })
     } catch (error) {
       // One element that cannot render must not throw away the whole raster.
       //

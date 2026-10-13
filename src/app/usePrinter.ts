@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { VirtualPrinterDriver } from '../printer/drivers/VirtualPrinterDriver'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import { WebBluetoothTransport } from '../printer/transport/WebBluetoothTransport'
+import { DymoBlePrinterDriver } from '../printer/dymo/DymoBlePrinterDriver'
+import { DymoWebBluetoothTransport } from '../printer/dymo/transport'
 import { findProfile } from '../printer/profiles'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../model/units'
 import type {
@@ -10,8 +12,21 @@ import type {
   PrinterState,
   PrinterStatus,
 } from '../printer/types'
+import type { ConnectOptions } from '../printer/transport/Transport'
 
-export type PrinterKind = 'virtual' | 'ble'
+export type PrinterKind = 'virtual' | 'ble' | 'dymo'
+
+/**
+ * What `connect()` casts to, rather than the concrete `BlePrinterDriver`.
+ *
+ * `PrinterDriver.connect()` takes no arguments; both real BLE drivers need
+ * `ConnectOptions` (the "show all devices" escape hatch), and both satisfy this
+ * shape structurally — a `DymoBlePrinterDriver` is not a `BlePrinterDriver`, so a
+ * cast to that concrete class would be a lie for half of what `kind` can now be.
+ */
+interface BleCapableDriver extends PrinterDriver {
+  connect(options?: ConnectOptions): Promise<PrinterCapabilities>
+}
 
 /**
  * Where the print head sits relative to the paper.
@@ -211,7 +226,11 @@ export function usePrinter(): PrinterConnection {
       // nothing is listening to any more.
       void previous?.disconnect().catch(() => {})
       driverRef.current =
-        next === 'ble' ? makeBleDriver(profileOverride) : new VirtualPrinterDriver()
+        next === 'ble'
+          ? makeBleDriver(profileOverride)
+          : next === 'dymo'
+            ? makeDymoDriver()
+            : new VirtualPrinterDriver()
       setKindState(next)
       setCapabilities(null)
       setStatus(null)
@@ -230,7 +249,7 @@ export function usePrinter(): PrinterConnection {
       // the user activation still to be live, and any await before this point
       // would forfeit it.
       const current = driverRef.current!
-      const caps = await (current as BlePrinterDriver).connect(options)
+      const caps = await (current as BleCapableDriver).connect(options)
       setCapabilities(caps)
       try {
         setStatus(await current.getStatus())
@@ -313,6 +332,10 @@ function makeBleDriver(overrideId: string | null): BlePrinterDriver {
     new WebBluetoothTransport(),
     profile ? { profile, lockProfile: true } : {},
   )
+}
+
+function makeDymoDriver(): DymoBlePrinterDriver {
+  return new DymoBlePrinterDriver(new DymoWebBluetoothTransport())
 }
 
 function describe(error: unknown): string {

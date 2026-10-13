@@ -21,6 +21,20 @@ export function dotsToMm(dots: number): number {
 }
 
 /**
+ * Millimetres to dots at an arbitrary resolution.
+ *
+ * For a printer whose dot pitch differs from the P50's — the DYMO LetraTag's is
+ * roughly a third of it — every element's position and size has to scale by the
+ * same factor as the canvas itself, not just the canvas. `toFabric.ts` is where
+ * that otherwise goes wrong: a label rasterised at the right canvas size but with
+ * every element still placed at 8 dots/mm comes out looking like the right
+ * picture blown up several times past the edges of its own canvas.
+ */
+export function mmToDotsAt(mm: number, dotsPerMm: number): number {
+  return Math.round(mm * dotsPerMm)
+}
+
+/**
  * Typographic points to printer dots.
  *
  * Font sizes are specified in points because that is what people know, but the
@@ -34,6 +48,20 @@ export function ptToDots(pt: number): number {
 
 export function dotsToPt(dots: number): number {
   return (dots * 72) / DPI
+}
+
+/**
+ * Typographic points to dots at an arbitrary resolution.
+ *
+ * Delegates to {@link ptToDots} exactly at the P50's own dot pitch, rather than
+ * recomputing it from a derived DPI, so every existing call keeps its exact
+ * output — `DPI` is 203 by vendor convention, not the 203.2 that `DOTS_PER_MM *
+ * 25.4` would give, and this must not move that by even a rounding hair for the
+ * family it already prints on.
+ */
+export function ptToDotsAt(pt: number, dotsPerMm: number): number {
+  if (dotsPerMm === DOTS_PER_MM) return ptToDots(pt)
+  return (pt * (dotsPerMm * 25.4)) / 72
 }
 
 /**

@@ -84,6 +84,19 @@ Worth stating plainly because it cuts the other way too: their reconstruction of
 compressed dialect and ours agree byte for byte, reached by different routes. That is
 corroboration, and it is recorded as such.
 
+## Dymo protocol provenance
+
+`docs/DYMO_PROTOCOL.md` documents a second printer family, not yet driven by any code
+in this project. Its facts come from two sources: our own HCI captures of the vendor
+Android app, and **[ysfchn/dymo-bluetooth](https://github.com/ysfchn/dymo-bluetooth)**
+(MIT), an independent Python implementation for the same hardware (DYMO LetraTag
+LT-200B). **No code from it is used here** — `src/printer/dymo/constants.ts` contains
+only interface facts (GATT UUIDs, fixed header/footer bytes, the checksum formula)
+independently confirmed against our own captures, the same standard applied to the
+MarkLife protocol above. Where the two sources disagree — notably a `bits per pixel`
+byte our captures show as `0x81` against their documented `0x01` — both values are
+recorded rather than one being assumed correct; see that doc's "Open questions."
+
 ## Fonts
 
 Three typefaces ship with the app: **Fira Sans**, **Archivo Narrow** and **JetBrains

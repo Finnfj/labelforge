@@ -113,6 +113,20 @@ export const PROFILES: readonly PrinterProfile[] = [
       'These use an uncompressed print protocol that LabelForge does not implement. ' +
       'Connecting would achieve nothing — every command would be ignored.',
   },
+  {
+    id: 'dymo',
+    label: 'DYMO LetraTag LT-200B',
+    // Per github.com/ysfchn/dymo-bluetooth (MIT) — advertises as
+    // `Letratag<MAC-without-colons>`. Not yet observed in any capture of our own,
+    // since none happened to include an advertising report; see
+    // docs/DYMO_PROTOCOL.md, "Device identity".
+    namePrefixes: ['Letratag'],
+    support: 'incompatible',
+    note:
+      'An entirely different protocol from the MarkLife family this app drives — ESC-prefixed ' +
+      'commands over a different GATT service, no compressed raster, no flow-control channel. ' +
+      'See docs/DYMO_PROTOCOL.md. No driver exists yet.',
+  },
 ]
 
 /** The profile assumed when a printer's advertised name matches nothing. */

@@ -5,7 +5,7 @@ import {
   CHAR_WRITE,
   SERVICE_UUID,
 } from '../protocol/constants'
-import { ALL_NAME_PREFIXES } from '../profiles'
+import { ALL_NAME_PREFIXES, matchProfile } from '../profiles'
 import { GattQueue } from './GattQueue'
 import {
   BluetoothUnavailableError,
@@ -120,6 +120,14 @@ export class WebBluetoothTransport implements Transport {
       if (!device.gatt) throw new TransportError('This device exposes no GATT server.')
       return device.gatt.connect()
     })
+
+    // A device whose profile already says it speaks a different protocol entirely
+    // (e.g. a Dymo) does not have this service at all — trying anyway surfaces a
+    // confusing low-level GATT error instead of BlePrinterDriver's own clear
+    // refusal. Leaving the GATT link open but unconfigured here lets `connect()`
+    // return normally; the driver's #adoptProfile() runs right after and throws
+    // IncompatiblePrinterError, which is the message actually meant for this case.
+    if (matchProfile(device.name)?.support === 'incompatible') return
 
     const service = await this.#queue.run('getPrimaryService', () =>
       server.getPrimaryService(SERVICE_UUID),

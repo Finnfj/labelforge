@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { DOTS_PER_MM, dotsToMm } from '../model/units'
 import { REPO_URL } from './links'
 import type { DiagnosticFlags } from './useDiagnosticFlags'
-import type { PrinterConnection } from './usePrinter'
+import type { PrinterConnection, PrinterKind } from './usePrinter'
 
 /**
  * Below this, say something.
@@ -33,28 +33,28 @@ export function ConnectionPanel({
 }) {
   const [acceptAllDevices, setAcceptAllDevices] = useState(false)
   const connected = connection.state !== 'disconnected' && connection.capabilities !== null
+  const needsBluetooth = connection.kind === 'ble' || connection.kind === 'dymo'
 
   return (
     <section className="panel">
       <div className="row row--between">
         <h2>Printer</h2>
         <div className="row">
-          {/* One entry is not a choice. With the virtual printer hidden the select
-              would be a disabled-looking box saying "Bluetooth printer", which is
-              worse than the fact stated plainly next to the button. */}
-          {flags.virtualPrinter && (
-            <label className="field">
-              <span>Output</span>
-              <select
-                value={connection.kind}
-                disabled={connection.busy}
-                onChange={(e) => connection.setKind(e.target.value as 'virtual' | 'ble')}
-              >
-                <option value="virtual">Virtual printer</option>
-                <option value="ble">Bluetooth printer</option>
-              </select>
-            </label>
-          )}
+          {/* One entry used to not be a choice, but there are now two real printer
+              families regardless of the virtual one — so this always appears,
+              where it used to be a Diagnostics-only reveal. */}
+          <label className="field">
+            <span>Output</span>
+            <select
+              value={connection.kind}
+              disabled={connection.busy}
+              onChange={(e) => connection.setKind(e.target.value as PrinterKind)}
+            >
+              {flags.virtualPrinter && <option value="virtual">Virtual printer</option>}
+              <option value="ble">MarkLife (Bluetooth)</option>
+              <option value="dymo">DYMO LetraTag (Bluetooth)</option>
+            </select>
+          </label>
           {connected ? (
             <button disabled={connection.busy} onClick={() => void connection.disconnect()}>
               Disconnect
@@ -62,21 +62,39 @@ export function ConnectionPanel({
           ) : (
             <button
               className="primary"
-              disabled={
-                connection.busy || (connection.kind === 'ble' && !connection.bluetoothSupported)
-              }
+              disabled={connection.busy || (needsBluetooth && !connection.bluetoothSupported)}
               // Straight through to the driver: Web Bluetooth's chooser is only
               // allowed while the click's user activation is still live, so this
               // must not await anything first.
               onClick={() => void connection.connect({ acceptAllDevices })}
             >
-              {connection.kind === 'ble' ? 'Connect…' : 'Start virtual printer'}
+              {needsBluetooth ? 'Connect…' : 'Start virtual printer'}
             </button>
           )}
         </div>
       </div>
 
-      {connection.kind === 'ble' && !connection.bluetoothSupported && (
+      {connection.kind === 'dymo' && (
+        <p className="warn">
+          <strong>Not confirmed on real hardware by this project.</strong> Built from Bluetooth
+          captures of the vendor app, cross-checked against an independent third-party
+          implementation — see{' '}
+          <a
+            href={`${REPO_URL}/blob/main/docs/DYMO_PROTOCOL.md`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            docs/DYMO_PROTOCOL.md
+          </a>
+          . If it prints, or if it does not, please{' '}
+          <a href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">
+            say so
+          </a>
+          .
+        </p>
+      )}
+
+      {needsBluetooth && !connection.bluetoothSupported && (
         <p className="error">
           This browser has no Web Bluetooth. Use Chrome or Edge on desktop, or Chrome on Android —
           Safari and Firefox do not implement it and cannot be made to.
@@ -107,6 +125,17 @@ export function ConnectionPanel({
             specification, so an unexpected one is quite possible.
           </p>
         </>
+      )}
+
+      {connection.kind === 'dymo' && connection.bluetoothSupported && !connected && (
+        <label className="field field--check">
+          <input
+            type="checkbox"
+            checked={acceptAllDevices}
+            onChange={(e) => setAcceptAllDevices(e.target.checked)}
+          />
+          <span>Show all Bluetooth devices</span>
+        </label>
       )}
 
       {connection.error && <p className="error">{connection.error}</p>}
@@ -148,18 +177,21 @@ export function ConnectionPanel({
           </p>
         )}
 
-      {connected && connection.capabilities?.support === 'unverified' && (
-        <p className="warn">
-          <strong>This model has never been tested against real hardware.</strong> It is believed to
-          use the same print protocol as the P50, from a third party&rsquo;s reverse engineering of
-          the vendor app rather than from anything observed here — so the head width and the command
-          sequence are the P50&rsquo;s, not measured values. If it prints, or if it does not, please{' '}
-          <a href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">
-            say so
-          </a>
-          : that is the only way this stops being a guess.
-        </p>
-      )}
+      {connected &&
+        connection.kind === 'ble' &&
+        connection.capabilities?.support === 'unverified' && (
+          <p className="warn">
+            <strong>This model has never been tested against real hardware.</strong> It is believed
+            to use the same print protocol as the P50, from a third party&rsquo;s reverse
+            engineering of the vendor app rather than from anything observed here — so the head
+            width and the command sequence are the P50&rsquo;s, not measured values. If it prints,
+            or if it does not, please{' '}
+            <a href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">
+              say so
+            </a>
+            : that is the only way this stops being a guess.
+          </p>
+        )}
 
       {connected && connection.capabilities?.profileAssumed && (
         <p className="hint">
@@ -191,160 +223,171 @@ export function ConnectionPanel({
         choice, and registration comes from a sensor gap seek rather than a measured
         blank feed. What is left is for diagnosing placement on stock that
         misbehaves, which is a real but rare need.
+
+        MarkLife-only: head-width padding, gap-seek diagnostics and the manual feed
+        workaround are all concepts specific to that protocol. The DYMO driver has
+        none of them — see docs/DYMO_PROTOCOL.md — so this is hidden rather than
+        shown with controls that would do nothing.
       */}
-      <details className="advanced">
-        <summary>
-          Head geometry and manual feed
-          <span className="advanced__hint">
-            defaults now match the vendor app &mdash; you should not need these
-          </span>
-        </summary>
-        <div className="advanced__body">
-          <h3 className="subhead">Print head geometry</h3>
-          <div className="row">
-            <label className="field">
-              {/* Not just "Width": the label size panel has one of those too, in mm. */}
-              <span style={{ minWidth: '5rem' }}>Head width</span>
-              <input
-                type="number"
-                min={8}
-                step={8}
-                value={connection.geometry.headWidthDots}
-                onChange={(e) =>
-                  connection.setGeometry({
-                    headWidthDots: Math.max(8, Number(e.target.value) || 8),
-                  })
-                }
-              />
-              <em>dots</em>
-            </label>
-            <span className="hint">= {dotsToMm(connection.geometry.headWidthDots)} mm</span>
-            <label className="field field--check">
-              <input
-                type="checkbox"
-                checked={connection.geometry.padToHead}
-                onChange={(e) => connection.setGeometry({ padToHead: e.target.checked })}
-              />
-              <span>Pad to head width</span>
-            </label>
-            <label className="field">
-              <span>Align</span>
-              <select
-                value={connection.geometry.align}
+      {connection.kind === 'ble' && (
+        <details className="advanced">
+          <summary>
+            Head geometry and manual feed
+            <span className="advanced__hint">
+              defaults now match the vendor app &mdash; you should not need these
+            </span>
+          </summary>
+          <div className="advanced__body">
+            <h3 className="subhead">Print head geometry</h3>
+            <div className="row">
+              <label className="field">
+                {/* Not just "Width": the label size panel has one of those too, in mm. */}
+                <span style={{ minWidth: '5rem' }}>Head width</span>
+                <input
+                  type="number"
+                  min={8}
+                  step={8}
+                  value={connection.geometry.headWidthDots}
+                  onChange={(e) =>
+                    connection.setGeometry({
+                      headWidthDots: Math.max(8, Number(e.target.value) || 8),
+                    })
+                  }
+                />
+                <em>dots</em>
+              </label>
+              <span className="hint">= {dotsToMm(connection.geometry.headWidthDots)} mm</span>
+              <label className="field field--check">
+                <input
+                  type="checkbox"
+                  checked={connection.geometry.padToHead}
+                  onChange={(e) => connection.setGeometry({ padToHead: e.target.checked })}
+                />
+                <span>Pad to head width</span>
+              </label>
+              <label className="field">
+                <span>Align</span>
+                <select
+                  value={connection.geometry.align}
+                  disabled={!connection.geometry.padToHead}
+                  onChange={(e) =>
+                    connection.setGeometry({
+                      align: e.target.value as 'left' | 'center' | 'right',
+                    })
+                  }
+                >
+                  <option value="left">Left</option>
+                  <option value="center">Centre</option>
+                  <option value="right">Right</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Offset</span>
+                <input
+                  type="number"
+                  step={1}
+                  disabled={!connection.geometry.padToHead}
+                  value={connection.geometry.offsetDots}
+                  onChange={(e) =>
+                    connection.setGeometry({ offsetDots: Number(e.target.value) || 0 })
+                  }
+                />
+                <em>dots</em>
+              </label>
+              {/* Nudges in whole millimetres: measuring an error off a printed label
+            gives millimetres, and converting by hand each time invites slips. */}
+              <button
                 disabled={!connection.geometry.padToHead}
-                onChange={(e) =>
+                onClick={() =>
                   connection.setGeometry({
-                    align: e.target.value as 'left' | 'center' | 'right',
+                    offsetDots: connection.geometry.offsetDots - DOTS_PER_MM,
                   })
                 }
               >
-                <option value="left">Left</option>
-                <option value="center">Centre</option>
-                <option value="right">Right</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>Offset</span>
-              <input
-                type="number"
-                step={1}
+                &minus;1 mm
+              </button>
+              <button
                 disabled={!connection.geometry.padToHead}
-                value={connection.geometry.offsetDots}
-                onChange={(e) =>
-                  connection.setGeometry({ offsetDots: Number(e.target.value) || 0 })
-                }
-              />
-              <em>dots</em>
-            </label>
-            {/* Nudges in whole millimetres: measuring an error off a printed label
-            gives millimetres, and converting by hand each time invites slips. */}
-            <button
-              disabled={!connection.geometry.padToHead}
-              onClick={() =>
-                connection.setGeometry({ offsetDots: connection.geometry.offsetDots - DOTS_PER_MM })
-              }
-            >
-              &minus;1 mm
-            </button>
-            <button
-              disabled={!connection.geometry.padToHead}
-              onClick={() =>
-                connection.setGeometry({ offsetDots: connection.geometry.offsetDots + DOTS_PER_MM })
-              }
-            >
-              +1 mm
-            </button>
-            <span className="hint">
-              {connection.geometry.offsetDots === 0
-                ? '8 dots = 1 mm; positive moves right'
-                : `${(connection.geometry.offsetDots / DOTS_PER_MM).toFixed(2)} mm`}
-            </span>
-          </div>
-          <p className="hint">
-            Leave padding <strong>off</strong>. A capture of the vendor app&rsquo;s Bluetooth
-            traffic shows it sends a raster exactly as wide as the label &mdash; 320 dots for a
-            40&nbsp;mm one &mdash; and lets the printer position it. Padding out to the head and
-            choosing an alignment was our guess at what it did, and the guess was wrong.
-            <br />
-            Turn it on only to diagnose placement, since padding is the only way to aim at a
-            specific head column. Head width still matters as a limit: print{' '}
-            <strong>Edge frame</strong> from Diagnostics and if all four sides land on the paper it
-            is right.
-          </p>
-
-          <h3 className="subhead">Inter-label gap</h3>
-          <div className="row">
-            <label className="field">
-              <span style={{ minWidth: '5rem' }}>Feed after</span>
-              <input
-                type="number"
-                min={0}
-                step={1}
-                value={connection.geometry.feedAfterDots}
-                onChange={(e) =>
+                onClick={() =>
                   connection.setGeometry({
-                    feedAfterDots: Math.max(0, Number(e.target.value) || 0),
+                    offsetDots: connection.geometry.offsetDots + DOTS_PER_MM,
                   })
                 }
-              />
-              <em>dots</em>
-            </label>
-            <button
-              onClick={() =>
-                connection.setGeometry({
-                  feedAfterDots: Math.max(0, connection.geometry.feedAfterDots - DOTS_PER_MM),
-                })
-              }
-            >
-              &minus;1 mm
-            </button>
-            <button
-              onClick={() =>
-                connection.setGeometry({
-                  feedAfterDots: connection.geometry.feedAfterDots + DOTS_PER_MM,
-                })
-              }
-            >
-              +1 mm
-            </button>
-            <span className="hint">
-              {(connection.geometry.feedAfterDots / DOTS_PER_MM).toFixed(2)} mm of blank fed after
-              each label
-            </span>
+              >
+                +1 mm
+              </button>
+              <span className="hint">
+                {connection.geometry.offsetDots === 0
+                  ? '8 dots = 1 mm; positive moves right'
+                  : `${(connection.geometry.offsetDots / DOTS_PER_MM).toFixed(2)} mm`}
+              </span>
+            </div>
+            <p className="hint">
+              Leave padding <strong>off</strong>. A capture of the vendor app&rsquo;s Bluetooth
+              traffic shows it sends a raster exactly as wide as the label &mdash; 320 dots for a
+              40&nbsp;mm one &mdash; and lets the printer position it. Padding out to the head and
+              choosing an alignment was our guess at what it did, and the guess was wrong.
+              <br />
+              Turn it on only to diagnose placement, since padding is the only way to aim at a
+              specific head column. Head width still matters as a limit: print{' '}
+              <strong>Edge frame</strong> from Diagnostics and if all four sides land on the paper
+              it is right.
+            </p>
+
+            <h3 className="subhead">Inter-label gap</h3>
+            <div className="row">
+              <label className="field">
+                <span style={{ minWidth: '5rem' }}>Feed after</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={connection.geometry.feedAfterDots}
+                  onChange={(e) =>
+                    connection.setGeometry({
+                      feedAfterDots: Math.max(0, Number(e.target.value) || 0),
+                    })
+                  }
+                />
+                <em>dots</em>
+              </label>
+              <button
+                onClick={() =>
+                  connection.setGeometry({
+                    feedAfterDots: Math.max(0, connection.geometry.feedAfterDots - DOTS_PER_MM),
+                  })
+                }
+              >
+                &minus;1 mm
+              </button>
+              <button
+                onClick={() =>
+                  connection.setGeometry({
+                    feedAfterDots: connection.geometry.feedAfterDots + DOTS_PER_MM,
+                  })
+                }
+              >
+                +1 mm
+              </button>
+              <span className="hint">
+                {(connection.geometry.feedAfterDots / DOTS_PER_MM).toFixed(2)} mm of blank fed after
+                each label
+              </span>
+            </div>
+            <p className="hint">
+              <strong>Normally leave this at 0.</strong> Every print now ends with a sensor-driven
+              gap seek — the same command, in the same place, as the vendor app — so the printer
+              finds the next label itself and nothing accumulates. This setting appends blank rows
+              to the raster instead, which was the workaround for the seek we had not yet found.
+              <br />
+              Still useful in two cases: continuous tape, where there is no gap to seek and a few
+              millimetres of lead-out is convenient; and as a fallback if the seek misbehaves on
+              your stock. To tune it, print the same label three times — if each creeps{' '}
+              <em>backwards</em>, add that many millimetres.
+            </p>
           </div>
-          <p className="hint">
-            <strong>Normally leave this at 0.</strong> Every print now ends with a sensor-driven gap
-            seek — the same command, in the same place, as the vendor app — so the printer finds the
-            next label itself and nothing accumulates. This setting appends blank rows to the raster
-            instead, which was the workaround for the seek we had not yet found.
-            <br />
-            Still useful in two cases: continuous tape, where there is no gap to seek and a few
-            millimetres of lead-out is convenient; and as a fallback if the seek misbehaves on your
-            stock. To tune it, print the same label three times — if each creeps <em>backwards</em>,
-            add that many millimetres.
-          </p>
-        </div>
-      </details>
+        </details>
+      )}
     </section>
   )
 }

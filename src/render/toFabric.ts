@@ -1,5 +1,5 @@
 import { Ellipse, FabricImage, Line, Rect, Textbox, type FabricObject } from 'fabric'
-import { mmToDots, ptToDots } from '../model/units'
+import { DOTS_PER_MM, mmToDotsAt, ptToDotsAt } from '../model/units'
 import type {
   BarcodeElement,
   IconElement,
@@ -18,6 +18,12 @@ export type AssetResolver = (assetId: string) => Promise<string>
 
 export interface RenderContext {
   resolveAsset?: AssetResolver
+  /**
+   * Dots per millimetre to place and size elements at. Omit for the P50's
+   * {@link DOTS_PER_MM} — see `rasterize.ts`'s `dotsPerMm` option, which is the
+   * only thing that should ever set this to anything else.
+   */
+  dotsPerMm?: number
 }
 
 /**
@@ -45,18 +51,19 @@ export async function toFabricObject(
   element: LabelElement,
   context: RenderContext = {},
 ): Promise<FabricObject | null> {
+  const dotsPerMm = context.dotsPerMm ?? DOTS_PER_MM
   switch (element.kind) {
     case 'text':
-      return textToFabric(element)
+      return textToFabric(element, dotsPerMm)
     case 'shape':
-      return shapeToFabric(element)
+      return shapeToFabric(element, dotsPerMm)
     case 'barcode':
     case 'qr':
-      return codeToFabric(element)
+      return codeToFabric(element, dotsPerMm)
     case 'icon':
-      return iconToFabric(element)
+      return iconToFabric(element, dotsPerMm)
     case 'image':
-      return imageToFabric(element, context)
+      return imageToFabric(element, context, dotsPerMm)
   }
 }
 
@@ -70,15 +77,15 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
-async function iconToFabric(element: IconElement): Promise<FabricObject | null> {
+async function iconToFabric(element: IconElement, dotsPerMm: number): Promise<FabricObject | null> {
   const icon = findIcon(element.iconId)
   if (!icon) return null
-  const width = mmToDots(element.widthMm)
-  const height = mmToDots(element.heightMm)
+  const width = mmToDotsAt(element.widthMm, dotsPerMm)
+  const height = mmToDotsAt(element.heightMm, dotsPerMm)
   const size = Math.max(1, Math.min(width, height))
   const image = await loadImage(iconToDataUrl(icon, size))
   return new FabricImage(image, {
-    ...placement(element, width, height),
+    ...placement(element, width, height, dotsPerMm),
     scaleX: 1,
     scaleY: 1,
   })
@@ -96,12 +103,13 @@ async function iconToFabric(element: IconElement): Promise<FabricObject | null> 
 async function imageToFabric(
   element: ImageElement,
   context: RenderContext,
+  dotsPerMm: number,
 ): Promise<FabricObject | null> {
   if (!context.resolveAsset) return null
   const source = await loadImage(await context.resolveAsset(element.assetId))
 
-  const width = mmToDots(element.widthMm)
-  const height = mmToDots(element.heightMm)
+  const width = mmToDotsAt(element.widthMm, dotsPerMm)
+  const height = mmToDotsAt(element.heightMm, dotsPerMm)
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -117,7 +125,7 @@ async function imageToFabric(
   ctx.putImageData(pixels, 0, 0)
 
   return new FabricImage(canvas, {
-    ...placement(element, width, height),
+    ...placement(element, width, height, dotsPerMm),
     scaleX: 1,
     scaleY: 1,
     imageSmoothing: false,
@@ -220,14 +228,14 @@ function contrastFactor(contrast: number): number {
  * They are centred in the box instead, so resizing the element still feels like
  * it controls the code's size, in whole-module steps.
  */
-function codeToFabric(element: BarcodeElement | QrElement): FabricObject {
-  const boxWidth = mmToDots(element.widthMm)
-  const boxHeight = mmToDots(element.heightMm)
+function codeToFabric(element: BarcodeElement | QrElement, dotsPerMm: number): FabricObject {
+  const boxWidth = mmToDotsAt(element.widthMm, dotsPerMm)
+  const boxHeight = mmToDotsAt(element.heightMm, dotsPerMm)
   const { canvas } = renderCode(element, boxWidth, boxHeight)
 
   return new FabricImage(canvas, {
     // Centre placement handles the "code is smaller than its box" case for free.
-    ...placement(element, boxWidth, boxHeight),
+    ...placement(element, boxWidth, boxHeight, dotsPerMm),
     // Any scaling here would defeat the integer-module work done upstream.
     scaleX: 1,
     scaleY: 1,
@@ -248,10 +256,15 @@ function codeToFabric(element: BarcodeElement | QrElement): FabricObject {
  * The document keeps storing `x`/`y` as the unrotated top-left, which is what
  * people expect to type into a position field.
  */
-function placement(element: LabelElement, widthDots: number, heightDots: number) {
+function placement(
+  element: LabelElement,
+  widthDots: number,
+  heightDots: number,
+  dotsPerMm: number,
+) {
   return {
-    left: mmToDots(element.x) + widthDots / 2,
-    top: mmToDots(element.y) + heightDots / 2,
+    left: mmToDotsAt(element.x, dotsPerMm) + widthDots / 2,
+    top: mmToDotsAt(element.y, dotsPerMm) + heightDots / 2,
     angle: element.rotation,
     originX: 'center' as const,
     originY: 'center' as const,
@@ -304,12 +317,13 @@ class BoxedTextbox extends Textbox {
   }
 }
 
-function textToFabric(element: TextElement): Textbox {
-  const heightDots = mmToDots(element.heightMm)
+function textToFabric(element: TextElement, dotsPerMm: number): Textbox {
+  const widthDots = mmToDotsAt(element.widthMm, dotsPerMm)
+  const heightDots = mmToDotsAt(element.heightMm, dotsPerMm)
   const textbox = new BoxedTextbox(element.text, {
-    ...placement(element, mmToDots(element.widthMm), heightDots),
-    width: mmToDots(element.widthMm),
-    fontSize: ptToDots(element.fontSizePt),
+    ...placement(element, widthDots, heightDots, dotsPerMm),
+    width: widthDots,
+    fontSize: ptToDotsAt(element.fontSizePt, dotsPerMm),
     fontFamily: element.fontFamily,
     fontWeight: element.bold ? 'bold' : 'normal',
     fontStyle: element.italic ? 'italic' : 'normal',
@@ -327,13 +341,13 @@ function textToFabric(element: TextElement): Textbox {
   return textbox
 }
 
-function shapeToFabric(element: ShapeElement): FabricObject {
-  const width = mmToDots(element.widthMm)
-  const height = mmToDots(element.heightMm)
+function shapeToFabric(element: ShapeElement, dotsPerMm: number): FabricObject {
+  const width = mmToDotsAt(element.widthMm, dotsPerMm)
+  const height = mmToDotsAt(element.heightMm, dotsPerMm)
   // A stroke thinner than one dot would vanish entirely once thresholded.
-  const strokeWidth = Math.max(1, mmToDots(element.strokeMm))
+  const strokeWidth = Math.max(1, mmToDotsAt(element.strokeMm, dotsPerMm))
   const common = {
-    ...placement(element, width, height),
+    ...placement(element, width, height, dotsPerMm),
     fill: element.filled ? INK : 'transparent',
     stroke: element.filled ? undefined : INK,
     strokeWidth: element.filled ? 0 : strokeWidth,
@@ -346,14 +360,14 @@ function shapeToFabric(element: ShapeElement): FabricObject {
         ...common,
         width,
         height,
-        rx: element.radiusMm ? mmToDots(element.radiusMm) : 0,
-        ry: element.radiusMm ? mmToDots(element.radiusMm) : 0,
+        rx: element.radiusMm ? mmToDotsAt(element.radiusMm, dotsPerMm) : 0,
+        ry: element.radiusMm ? mmToDotsAt(element.radiusMm, dotsPerMm) : 0,
       })
     case 'ellipse':
       return new Ellipse({ ...common, rx: width / 2, ry: height / 2 })
     case 'line':
       return new Line([0, 0, width, height], {
-        ...placement(element, width, height),
+        ...placement(element, width, height, dotsPerMm),
         stroke: INK,
         strokeWidth,
         strokeUniform: true,
