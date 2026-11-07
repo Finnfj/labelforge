@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { DOTS_PER_MM, dotsToMm } from '../model/units'
-import * as cmd from '../printer/protocol/commands'
-import { probeJob } from '../printer/protocol/probeJob'
-import { PaperType } from '../printer/protocol/constants'
+import * as cmd from '../printer/dialects/x2/commands'
+import { probeJob } from '../printer/dialects/x2/probeJob'
+import { PaperType } from '../printer/dialects/x2/constants'
 import {
   blankLabel,
   densityPatch,
@@ -10,7 +10,7 @@ import {
   rulerStrip,
 } from '../printer/diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS } from '../printer/types'
-import { decodeText, toHex } from '../printer/protocol/responses'
+import { decodeText, toHex } from '../printer/dialects/x2/responses'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import type { DiagnosticFlagsHandle } from './useDiagnosticFlags'
 import { PROFILES } from '../printer/profiles'

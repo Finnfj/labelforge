@@ -1,4 +1,4 @@
-import { createPackedBitmap, type PackedBitmap } from '../../model/bitmap'
+import { createPackedBitmap, type PackedBitmap } from '../../../model/bitmap'
 import type { PaperTypeValue } from './constants'
 import { encodeImage } from './encodeImage'
 import { printJobFraming, printJobStream } from './commands'

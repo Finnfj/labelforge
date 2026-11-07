@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { encodeImage } from './encodeImage'
-import { pack1bpp } from '../../render/pack1bpp'
+import { pack1bpp } from '../../../render/pack1bpp'
 import goldens from './__fixtures__/vendor-goldens.json'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
-import { dither } from '../../render/dither'
+import { dither } from '../../../render/dither'
 
 /**
  * These fixtures were captured from the vendor SDK's own `processImageData()`.

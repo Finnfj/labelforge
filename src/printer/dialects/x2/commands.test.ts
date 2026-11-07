@@ -75,10 +75,10 @@ describe('printJobFraming', () => {
 })
 
 describe('band framing', () => {
-  it('retracts for the first band of a label and not the rest', () => {
-    // One label is one print, however many jobs it takes. Retracting again
-    // mid-label would pull the paper back to the tear-off position and tear the
-    // image; only the first band has an advance behind it to undo.
+  it('retracts unless told not to', () => {
+    // With the paper seam left open, only the first band of a label retracts: only
+    // it has a tear-off advance behind it to undo. With it closed, every band does.
+    // Which bands retract is the x2 print plan's decision; see dialects/x2/plan.ts.
     const first = hex(printJobStream(printJobFraming({ paperType: PaperType.Gap, density: 8 }), A))
     expect(first).toContain('1f 11 51')
 

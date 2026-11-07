@@ -1,4 +1,4 @@
-import { DELAY_WITHOUT_CREDITS_MS, DELAY_WITH_CREDITS_MS } from './constants'
+import { DELAY_WITHOUT_CREDITS_MS, DELAY_WITH_CREDITS_MS } from '../dialects/x2/constants'
 
 /**
  * Credit-based flow control over the `ff03` characteristic.

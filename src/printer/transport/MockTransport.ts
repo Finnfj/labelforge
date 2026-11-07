@@ -1,3 +1,4 @@
+import { concatBytes } from '../../lib/bytes'
 import { Emitter } from '../../lib/emitter'
 import type {
   NotifyChannel,
@@ -137,14 +138,7 @@ export class MockTransport implements Transport {
 
   /** Concatenation of every byte written, for comparing against an expected stream. */
   get written(): Uint8Array {
-    const total = this.writes.reduce((n, w) => n + w.length, 0)
-    const out = new Uint8Array(total)
-    let at = 0
-    for (const chunk of this.writes) {
-      out.set(chunk, at)
-      at += chunk.length
-    }
-    return out
+    return concatBytes(this.writes)
   }
 
   reset(): void {

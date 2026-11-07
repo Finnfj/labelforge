@@ -54,7 +54,7 @@ CMF/FLG header construction.
 
 The parameters are `level: -1, windowBits: 10, memLevel: 8, strategy: 0`. Calling
 `pako.deflate` with those options reproduces the SDK's output **byte for byte**; this
-is pinned by the golden-fixture test in `src/printer/protocol/`, whose expected values
+is pinned by the golden-fixture test in `src/printer/dialects/x2/`, whose expected values
 were captured from the original SDK. The `windowBits: 10` in particular is
 load-bearing — the default of 15 produces different bytes.
 
@@ -64,7 +64,7 @@ load-bearing — the default of 15 produces different bytes.
 browser app for MarkLife printers. **No code from it is used here.** What was taken is
 factual: which models exist, which advertised-name prefixes they use, and that the
 family splits into two protocol dialects — recorded in `docs/PROTOCOL.md` under a
-tier-4 heading and in `src/printer/profiles.ts`.
+heading marked [third-party] and in `src/printer/profiles.ts`.
 
 Two reasons no code, in descending order of how much they matter.
 
@@ -158,3 +158,42 @@ lettering that closes into a blob well before 10 mm on a thermal head.
 Note that drawing a licence mark says nothing about the right to _use_ it: Creative
 Commons asks that its marks identify actual licensing, and ® and ™ carry legal meaning
 in most jurisdictions. Putting one on a label is the user's call, not this project's.
+
+## Agent tooling docs
+
+The three files in [`docs/agents/`](agents/) (`issue-tracker.md`, `domain.md` and
+`triage-labels.md`) are copied, near verbatim, from the templates in
+[mattpocock/skills](https://github.com/mattpocock/skills), a set of coding-agent
+skills. They tell those skills where this repo tracks issues, which triage labels it
+uses and where domain docs live. They are documentation for development tooling and
+are not part of the app.
+
+The only changes are Prettier formatting. Copying them makes them "substantial
+portions" under the MIT licence, so its notice is reproduced here:
+
+```
+MIT License
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+`CLAUDE.md` at the repo root is original and refers to these files rather than
+copying them.

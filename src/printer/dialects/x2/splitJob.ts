@@ -1,4 +1,4 @@
-import { prependBlankRows, sliceRows, type PackedBitmap } from '../../model/bitmap'
+import { prependBlankRows, sliceRows, type PackedBitmap } from '../../../model/bitmap'
 import { encodeImage } from './encodeImage'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
 
@@ -17,7 +17,7 @@ import { SEEK_SAFE_JOB_BYTES } from './constants'
  * acknowledged. Back-to-back was tried and the printer accepted the first band,
  * printed it, answered `4F 4B` once and dropped the rest.
  *
- * ## The seam, and why it cannot be closed
+ * ## The paper seam, and how it is closed
  *
  * The printer takes up {@link SPLIT_SEAM_DOTS} — measured at exactly 1 mm — at the
  * start of a job, before it lays down a raster. That millimetre of paper passes the
@@ -33,8 +33,15 @@ import { SEEK_SAFE_JOB_BYTES } from './constants'
  *   printing; repeating rows does not undo it, it prints them again after the gap
  *   and pushes everything below down by another millimetre.
  *
- * So the millimetre is spent. What is left is to choose what it costs and where it
- * falls.
+ * What does move paper backwards is `alignPaperStart`, the retract, in the position
+ * a band's preamble puts it. With the paper seam closed — the default — every band
+ * retracts, the retract overshoots by {@link SEAM_RETRACT_OVERSHOOT_DOTS}, and each
+ * band after the first leads with that many blank rows, so the bands meet with no
+ * row lost. Confirmed on hardware; see `PrintSettings.closeSplitSeam`. The x2 print
+ * plan sends the retracts, and {@link planBands} adds the rows, so the two agree.
+ *
+ * With the paper seam left open, only the first band retracts and the millimetre is
+ * spent. What is left is to choose what it costs and where it falls.
  *
  * **What it costs:** the eight rows that land in it are skipped rather than printed
  * late. Printing them late shifts the whole remainder of the label down by a

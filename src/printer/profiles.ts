@@ -21,7 +21,7 @@
  * the P50 is confirmed on hardware.
  */
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../model/units'
-import { DEFAULT_CHUNK_SIZE } from './protocol/constants'
+import { DEFAULT_CHUNK_SIZE } from './dialects/x2/constants'
 
 export type ProfileSupport =
   /** Driven successfully against real hardware. */

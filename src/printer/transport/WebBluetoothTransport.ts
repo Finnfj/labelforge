@@ -4,7 +4,7 @@ import {
   CHAR_NOTIFY_STATUS,
   CHAR_WRITE,
   SERVICE_UUID,
-} from '../protocol/constants'
+} from '../dialects/x2/constants'
 import { ALL_NAME_PREFIXES } from '../profiles'
 import { GattQueue } from './GattQueue'
 import {

@@ -5,6 +5,7 @@
  * play and they are *not* two protocol generations: `1F` covers print control and
  * configuration, `10 FF` covers device-information queries.
  */
+import { concatBytes } from '../../../lib/bytes'
 import {
   MAX_DENSITY,
   MIN_DENSITY,
@@ -235,9 +236,10 @@ export function printJobFraming(settings: {
    * Retract from the tear-off position before printing.
    *
    * On for a label, which is what the capture shows and what undoes the advance
-   * the job before it made. Off for a continuation: when one label is split
-   * across several jobs, only the first has a tear-off advance behind it to
-   * undo, and retracting again mid-label would tear the image.
+   * the job before it made. When one label is split across several jobs, the x2
+   * print plan decides per band: with the paper seam closed every band retracts,
+   * to undo the take-up its own job start costs; left open, only the first does,
+   * since only it has a tear-off advance behind it to undo.
    */
   alignStart?: boolean
 }): PrintJobFraming {
@@ -301,18 +303,11 @@ export function locateModeFor(paperType: PaperTypeValue): LocateModeValue {
  * app doing, which is the better reason.
  */
 export function printJobStream(framing: PrintJobFraming, image: Uint8Array): Uint8Array {
-  const parts = [
+  return concatBytes([
     ...framing.preamble.map((c) => c.bytes),
     image,
     ...framing.trailer.map((c) => c.bytes),
-  ]
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
-  let at = 0
-  for (const part of parts) {
-    out.set(part, at)
-    at += part.length
-  }
-  return out
+  ])
 }
 
 /**

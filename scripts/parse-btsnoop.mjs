@@ -5,8 +5,8 @@
  *   node scripts/parse-btsnoop.mjs captures/btsnoop_hci.log
  *
  * The point of this is to settle, with facts rather than inference, what the vendor
- * app sends around a print — in particular whether it issues any gap-seek or motion
- * command we have not found in the SDK. See docs/PROTOCOL.md, "What is left".
+ * app sends around a print, including any command we have not found in the SDK. See
+ * docs/CAPTURING.md for how to take a capture.
  *
  * A snoop log is every Bluetooth packet the phone saw, so it contains other devices'
  * traffic too. This tool therefore reports other connections as counts only and
@@ -57,7 +57,7 @@ const ATT_OPCODE = {
 /**
  * Commands we already know, so anything unrecognised stands out.
  *
- * Deliberately a duplicate of src/printer/protocol/commands.ts rather than an import:
+ * Deliberately a duplicate of src/printer/dialects/x2/commands.ts rather than an import:
  * this script must run on a bare `node` with no build step, and a lookup table in a
  * diagnostic tool is cheap to keep honest. Longest prefix wins.
  */
