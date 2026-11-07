@@ -1,10 +1,9 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
-import { encodeImage } from '../protocol/encodeImage'
-import { planBands } from '../protocol/splitJob'
+import { jobsByCopy, jobStreamBytes, type Dialect } from '../dialect'
+import { x2 } from '../dialects/x2'
 import { DEFAULT_PROFILE } from '../profiles'
 import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
-import * as cmd from '../protocol/commands'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -24,8 +23,8 @@ export interface VirtualPrintout {
 /**
  * A printer that exists only in memory.
  *
- * It runs the *real* command sequence and the *real* encoder, then keeps the
- * resulting bitmap and byte stream instead of sending them anywhere. That makes
+ * It runs the *real* print plan from the dialect, then keeps the resulting
+ * bitmap and byte stream instead of sending them anywhere. That makes
  * the whole app — editor, rasteriser, print settings, progress UI — developable
  * and verifiable with no hardware attached, and it doubles as the reference for
  * what the BLE driver must emit.
@@ -40,12 +39,14 @@ export class VirtualPrinterDriver implements PrinterDriver {
   #capabilities: PrinterCapabilities | null = null
   #emitter = new Emitter<PrinterEvents>()
   #printouts: VirtualPrintout[] = []
+  #dialect: Dialect
 
   /** Bytes per simulated second. Set to Infinity in tests to remove the delay. */
   readonly throughputBytesPerSecond: number
 
-  constructor(throughputBytesPerSecond = 4000) {
+  constructor(throughputBytesPerSecond = 4000, options: { dialect?: Dialect } = {}) {
     this.throughputBytesPerSecond = throughputBytesPerSecond
+    this.#dialect = options.dialect ?? x2
   }
 
   get state(): PrinterState {
@@ -113,93 +114,53 @@ export class VirtualPrinterDriver implements PrinterDriver {
     }
 
     try {
-      const image = encodeImage(job.bitmap)
-      const framing = cmd.printJobFraming(job.settings)
-      // One band unless the label needs splitting, so the ordinary path is the same
-      // code with a single-element array. Same planner and same seam decision as the
-      // real driver — a test concatenates both and compares.
-      const closeSeam = job.settings.closeSplitSeam !== false
-      const bands =
-        job.settings.splitForSeek === false ? [job.bitmap] : planBands(job.bitmap, { closeSeam })
-      const encoded = bands.length === 1 ? [image] : bands.map(encodeImage)
-      const total = encoded.reduce((n, e) => n + e.length, 0) * job.settings.copies
-
-      this.#emitter.emit('progress', {
-        phase: 'prepare',
-        sent: 0,
-        total,
-        copy: 0,
-        copies: job.settings.copies,
-      })
-
+      // The same plan the BLE driver sends, so what is recorded here is what a real
+      // printer would have received. Waits are ignored: there is nothing to wait for.
+      const plan = this.#dialect.planPrint(job.bitmap, job.settings)
+      const total = plan.jobs.reduce((n, j) => n + jobStreamBytes(j), 0)
+      const copies = job.settings.copies
+      // Chunk the raster at the size the BLE driver uses. Not the same
+      // *boundaries*, though, and deliberately: the real driver chunks the whole job
+      // stream, so its commands arrive glued to raster chunks. That is unreadable in
+      // a log and means nothing to a printer that is not there, so this one keeps
+      // each command on its own line.
+      const chunkSize = this.#capabilities?.chunkSize ?? DEFAULT_CHUNK_SIZE
       let sent = 0
-      for (let copy = 1; copy <= job.settings.copies; copy++) {
+
+      this.#emitter.emit('progress', { phase: 'prepare', sent: 0, total, copy: 0, copies })
+
+      for (const jobs of jobsByCopy(plan)) {
+        const copy = jobs[0].copy
         opts?.signal?.throwIfAborted()
+        this.#emitter.emit('progress', { phase: 'handshake', sent, total, copy, copies })
 
-        this.#emitter.emit('progress', {
-          phase: 'handshake',
-          sent,
-          total,
-          copy,
-          copies: job.settings.copies,
-        })
-        for (let band = 0; band < encoded.length; band++) {
-          const last = band === encoded.length - 1
-          // Only the first band retracts, only the last seeks, and the tear-off
-          // advance happens once at the very end. The real driver builds the same
-          // framing for the same reasons; a test concatenates both and compares.
-          const bandFraming = cmd.printJobFraming({
-            ...job.settings,
-            alignStart: band === 0 || closeSeam,
-            seekGap: last,
-          })
-          for (const { bytes, note } of bandFraming.preamble) send(bytes, note)
-
-          // Chunk the raster at the size the BLE driver uses. Not the same
-          // *boundaries*, though, and deliberately: the real driver chunks the
-          // whole job stream, so its commands arrive glued to raster chunks. That
-          // is unreadable in a log and means nothing to a printer that is not
-          // there, so this one keeps each command on its own line.
-          const chunkSize = this.#capabilities?.chunkSize ?? DEFAULT_CHUNK_SIZE
-          const raster = encoded[band]
-          for (let offset = 0; offset < raster.length; offset += chunkSize) {
-            opts?.signal?.throwIfAborted()
-            const chunk = raster.subarray(offset, Math.min(offset + chunkSize, raster.length))
-            send(chunk)
-            sent += chunk.length
-            await this.#pace(chunk.length)
-            this.#emitter.emit('progress', {
-              phase: 'transfer',
-              sent,
-              total,
-              copy,
-              copies: job.settings.copies,
-            })
+        for (const planned of jobs) {
+          for (const part of planned.parts) {
+            if (part.kind === 'command') {
+              send(part.bytes, part.note)
+              sent += part.bytes.length
+              continue
+            }
+            for (let offset = 0; offset < part.bytes.length; offset += chunkSize) {
+              opts?.signal?.throwIfAborted()
+              const chunk = part.bytes.subarray(
+                offset,
+                Math.min(offset + chunkSize, part.bytes.length),
+              )
+              send(chunk)
+              sent += chunk.length
+              await this.#pace(chunk.length)
+              this.#emitter.emit('progress', { phase: 'transfer', sent, total, copy, copies })
+            }
           }
-
-          for (const { bytes, note } of bandFraming.trailer) send(bytes, note)
-          if (last) {
-            for (const { bytes, note } of framing.epilogue) send(bytes, note)
-          }
+          for (const { bytes, note } of planned.epilogue) send(bytes, note)
         }
 
-        this.#emitter.emit('progress', {
-          phase: 'feed',
-          sent,
-          total,
-          copy,
-          copies: job.settings.copies,
-        })
+        this.#emitter.emit('progress', { phase: 'feed', sent, total, copy, copies })
       }
 
       this.#printouts.push({ job, wire, at: Date.now() })
-      this.#emitter.emit('progress', {
-        phase: 'done',
-        sent: total,
-        total,
-        copy: job.settings.copies,
-        copies: job.settings.copies,
-      })
+      this.#emitter.emit('progress', { phase: 'done', sent: total, total, copy: copies, copies })
       this.#setState('connected')
     } catch (error) {
       this.#setState('connected')

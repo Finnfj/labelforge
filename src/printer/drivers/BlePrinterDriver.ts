@@ -1,7 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import * as cmd from '../protocol/commands'
-import { DEFAULT_CHUNK_SIZE, printDurationMs } from '../protocol/constants'
+import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
 import { DEFAULT_PROFILE, matchProfile, type PrinterProfile } from '../profiles'
 import { CreditWindow } from '../protocol/CreditWindow'
 import {
@@ -11,8 +11,15 @@ import {
   decodeText,
   faultFromFlags,
 } from '../protocol/responses'
-import { encodeImage } from '../protocol/encodeImage'
-import { planBands } from '../protocol/splitJob'
+import {
+  jobsByCopy,
+  jobStreamBytes,
+  type Dialect,
+  type JobWait,
+  type NamedCommand,
+  type PlannedJob,
+} from '../dialect'
+import { x2 } from '../dialects/x2'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -68,16 +75,23 @@ export interface BlePrinterOptions {
   headWidthDots?: number
   /** Reply timeout. Shortened in tests so a silent printer is cheap to assert. */
   queryTimeoutMs?: number
-  /** How long to wait for the end-of-job "OK" between copies. */
+  /**
+   * The shortest wait for an end-of-job "OK". A job's own wait is longer when
+   * the print plan says so. Shortened in tests so a silent printer is cheap.
+   */
   doneTimeoutMs?: number
+  /** What the bytes are. x2 until the printer registry chooses. */
+  dialect?: Dialect
 }
 
 /**
  * Drives a P50 over a {@link Transport}.
  *
- * The command sequence and the raster encoding are shared with the virtual
- * printer, so what this class adds is only the parts that need a real link:
- * chunking, flow control, replies and disconnection.
+ * What a print puts on the wire comes from the dialect's print plan, the same
+ * one the virtual printer records. This class adds how it gets there: chunking,
+ * flow control, waiting for the printer, and disconnection. The connect handshake,
+ * status queries and replies are still x2's, and live here until a second
+ * dialect needs them to move.
  */
 export class BlePrinterDriver implements PrinterDriver {
   readonly kind = 'ble' as const
@@ -94,6 +108,7 @@ export class BlePrinterDriver implements PrinterDriver {
   #headWidthDots: number
   #queryTimeoutMs: number
   #doneTimeoutMs: number
+  #dialect: Dialect
   #unsubscribe: Array<() => void> = []
   /** Replies arrive as unsolicited notifications, so queries take the next one. */
   #pendingReply: ((bytes: Uint8Array) => void) | null = null
@@ -120,6 +135,7 @@ export class BlePrinterDriver implements PrinterDriver {
       options.headWidthDots ?? this.#profile.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
     this.#queryTimeoutMs = options.queryTimeoutMs ?? QUERY_TIMEOUT_MS
     this.#doneTimeoutMs = options.doneTimeoutMs ?? DONE_TIMEOUT_MS
+    this.#dialect = options.dialect ?? x2
 
     transport.on('wire', (event) =>
       this.#emitter.emit('wire', {
@@ -314,34 +330,10 @@ export class BlePrinterDriver implements PrinterDriver {
     this.#donePending = false
 
     try {
-      // One band unless splitting is asked for and the label needs it, so the
-      // ordinary path is the same code with a single-element array.
-      // A retract at each boundary is expected to undo the printer's take-up, so the
-      // rows it would have cost are kept. The two decisions have to agree; they are
-      // made here, once, and handed to the planner and the framing together.
-      const closeSeam = job.settings.closeSplitSeam !== false
-      const bands =
-        job.settings.splitForSeek === false ? [job.bitmap] : planBands(job.bitmap, { closeSeam })
-      const image = encodeImage(job.bitmap)
-      const framing = cmd.printJobFraming(job.settings)
-      // Commands and raster are one stream per band, chunked without regard for
-      // where a command begins — the vendor app does exactly this, and it is the
-      // only way every byte goes out under flow control. See cmd.printJobStream.
-      const streams = bands.map((band, i) =>
-        cmd.printJobStream(
-          cmd.printJobFraming({
-            ...job.settings,
-            // Every band retracts when the seam is being closed: `alignPaperStart`
-            // acts in exactly this position, and undoing the take-up is the whole
-            // idea. Otherwise only the first, which has a tear-off advance behind it
-            // to undo.
-            alignStart: i === 0 || closeSeam,
-            seekGap: i === bands.length - 1,
-          }),
-          bands.length === 1 ? image : encodeImage(band),
-        ),
-      )
-      const total = streams.reduce((n, s) => n + s.length, 0) * job.settings.copies
+      // What goes on the wire is the dialect's to decide. This driver decides how:
+      // each job as one credited stream, waits where the plan asks for them.
+      const plan = this.#dialect.planPrint(job.bitmap, job.settings)
+      const total = plan.jobs.reduce((n, j) => n + jobStreamBytes(j), 0)
       let sent = 0
 
       const progress = (phase: PrintProgressPhase, copy: number) =>
@@ -353,78 +345,39 @@ export class BlePrinterDriver implements PrinterDriver {
           copies: job.settings.copies,
         })
 
-      // How long the printer will still be working after the last byte lands.
-      // The fixed 5 s this used to wait was shorter than an 80 mm label takes, so
-      // the follow-up went out mid-print — queued behind the very raster it
-      // exists to get past.
-      const printMs = printDurationMs(job.bitmap.heightDots)
-
       progress('prepare', 0)
 
-      for (let copy = 1; copy <= job.settings.copies; copy++) {
+      for (const jobs of jobsByCopy(plan)) {
+        const copy = jobs[0].copy
         opts.signal?.throwIfAborted()
         progress('handshake', copy)
 
-        // Configuration is re-sent per copy, inside the job, exactly as the vendor
-        // app does it. The sequence itself lives in cmd.printJobFraming, shared
-        // with the virtual printer so the two cannot drift.
-        // One label is one print, however many jobs it takes. Only the first band
-        // retracts, only the last seeks, and the tear-off advance happens once at
-        // the very end — sending it between bands would walk the paper out to the
-        // tear position in the middle of the image.
-        //
-        // Each band waits for the one before it to be acknowledged. Sending them
-        // back-to-back was tried first, on the theory that the last band's seek
-        // would then be in the buffer before the head reached it; the printer
-        // accepted the first band, printed it, answered once, and dropped the rest,
-        // so a tall label came out a third of its height. It will not take a new
-        // job while it is working on one, and there is no way to put a second job
-        // in its buffer.
-        for (let band = 0; band < streams.length; band++) {
+        // The last job's wait is what makes `done` mean done: the printer is still
+        // printing — a full-height label for ten seconds after its last byte — and a
+        // job it never finished becomes visible only by not being acknowledged. A
+        // copy cut short still waits it out, so the printer has stopped moving paper
+        // before anything else is sent.
+        let closed = false
+        for (const [i, planned] of jobs.entries()) {
           opts.signal?.throwIfAborted()
-          const last = band === streams.length - 1
-          await this.#sendJob(
-            streams[band],
-            last ? framing.epilogue : [],
-            opts.signal,
-            (written) => {
-              sent += written
-              progress('transfer', copy)
-            },
-          )
-          if (!last) {
-            progress('feed', copy)
-            if (!(await this.#waitForDone(opts.signal, printDurationMs(bands[band].heightDots)))) {
-              // Carrying on regardless would send the next band into a printer
-              // still moving paper, which is what lost the label last time.
-              this.#emitter.emit('log', {
-                level: 'warn',
-                message:
-                  'The printer did not acknowledge part of this label, so the rest of it was not ' +
-                  'sent. The label is incomplete — check the battery, and try it without ' +
-                  'splitting.',
-              })
-              break
-            }
-          }
+          await this.#sendJob(joinParts(planned), planned.epilogue, opts.signal, (written) => {
+            sent += written
+            progress('transfer', copy)
+          })
+          if (!planned.wait) continue
+          if (i === jobs.length - 1) closed = true
+          progress('feed', copy)
+          if (await this.#waitForDone(opts.signal, planned.wait.timeoutMs)) continue
+          this.#warnSilent(planned.wait.onSilence)
+          if (planned.wait.onSilence === 'stop-copy') break
         }
 
-        // The printer is still printing — a full-height label for ten seconds
-        // after its last byte. Waiting here is what makes `done` mean done, and
-        // it is the only way a job the printer never finished becomes visible:
-        // a healthy one always answers `4F 4B`, and a truncated one has been seen
-        // to answer nothing at all. Reported rather than thrown, because the
-        // label may well be fine and refusing would be worse than saying so.
-        progress('feed', copy)
-        const acknowledged = await this.#waitForDone(opts.signal, printMs)
-        if (!acknowledged) {
-          this.#emitter.emit('log', {
-            level: 'warn',
-            message:
-              'The printer never confirmed it finished this label. It may have stopped part-way ' +
-              'through — check the label, and check the battery, since a flat one prints slowly ' +
-              'and can give up mid-raster.',
-          })
+        const closing = jobs.at(-1)!.wait
+        if (!closed && closing) {
+          progress('feed', copy)
+          if (!(await this.#waitForDone(opts.signal, closing.timeoutMs))) {
+            this.#warnSilent(closing.onSilence)
+          }
         }
       }
 
@@ -437,16 +390,35 @@ export class BlePrinterDriver implements PrinterDriver {
     }
   }
 
+  /** Say what a printer's silence means, in words that hold for any dialect. */
+  #warnSilent(meaning: JobWait['onSilence']): void {
+    this.#emitter.emit('log', {
+      level: 'warn',
+      message:
+        meaning === 'stop-copy'
+          ? // Carrying on regardless would send the next job into a printer still
+            // moving paper, which is what lost the label last time.
+            'The printer did not acknowledge part of this label, so the rest of it was not ' +
+            'sent. The label is incomplete — check the battery, and try it without ' +
+            'splitting.'
+          : // Reported rather than thrown, because the label may well be fine and
+            // refusing would be worse than saying so.
+            'The printer never confirmed it finished this label. It may have stopped part-way ' +
+            'through — check the label, and check the battery, since a flat one prints slowly ' +
+            'and can give up mid-raster.',
+    })
+  }
+
   /**
    * Write one whole job: the stream in credited chunks, then the epilogue.
    *
-   * Both the label and the follow-up seek go through here, so there is exactly
-   * one place where bytes reach the transport during a print and exactly one
-   * definition of what "under flow control" means.
+   * Every job of a print goes through here, so there is exactly one place where
+   * bytes reach the transport during a print and exactly one definition of what
+   * "under flow control" means.
    */
   async #sendJob(
     stream: Uint8Array,
-    epilogue: readonly cmd.FramedCommand[],
+    epilogue: readonly NamedCommand[],
     signal?: AbortSignal,
     onWritten?: (bytes: number) => void,
   ): Promise<void> {
@@ -555,6 +527,24 @@ export class BlePrinterDriver implements PrinterDriver {
 }
 
 type PrintProgressPhase = PrinterEvents['progress']['phase']
+
+/**
+ * A job's parts as the one byte stream the printer parses.
+ *
+ * The printer reads a byte stream off a UART; transfer boundaries mean nothing to
+ * it, and everything written outside the credited chunk loop is written blind. So
+ * the whole job is chunked as one stream, commands and raster together, and every
+ * byte waits for a credit (ADR 0002). It is also what the vendor app does.
+ */
+function joinParts(job: PlannedJob): Uint8Array {
+  const out = new Uint8Array(jobStreamBytes(job))
+  let at = 0
+  for (const part of job.parts) {
+    out.set(part.bytes, at)
+    at += part.bytes.length
+  }
+  return out
+}
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return Promise.resolve()

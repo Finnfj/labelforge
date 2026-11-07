@@ -22,6 +22,11 @@ _Avoid_: token, ack
 A horizontal slice of one label's raster, sent as a job of its own.
 _Avoid_: part, chunk, split
 
+**Print plan**:
+The ordered jobs a dialect produces to put one label on paper, every band of every
+copy.
+_Avoid_: job list, schedule
+
 ## Paper motion
 
 **Gap seek**:
