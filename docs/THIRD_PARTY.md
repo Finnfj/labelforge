@@ -64,7 +64,7 @@ load-bearing — the default of 15 produces different bytes.
 browser app for MarkLife printers. **No code from it is used here.** What was taken is
 factual: which models exist, which advertised-name prefixes they use, and that the
 family splits into two protocol dialects — recorded in `docs/PROTOCOL.md` under a
-tier-4 heading and in `src/printer/profiles.ts`.
+heading marked [third-party] and in `src/printer/profiles.ts`.
 
 Two reasons no code, in descending order of how much they matter.
 

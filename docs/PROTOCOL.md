@@ -1,42 +1,31 @@
 # MarkLife P50 / P50S wire protocol
 
-How this document was arrived at, and how much to trust each part of it. See
-`docs/THIRD_PARTY.md` for provenance.
+The reference for anyone changing the printer driver or the encoder: what goes over
+the wire, in what order, and what the printer does with it. Words such as _job_,
+_band_, _gap seek_ and _retract_ are used as [`GLOSSARY.md`](../GLOSSARY.md) defines
+them. The decisions this protocol forced are in [`docs/adr/`](adr/), and how to
+capture and test new findings is in [`CAPTURING.md`](CAPTURING.md).
 
-There are four tiers of evidence here, and the difference between them turned out to
-matter enormously:
+## Scope and trust
 
-1. **Read from the vendor SDK.** A starting point, no more. The published SDK is a
-   tidied-up facade over an archived original, and where they disagree the facade is
-   frequently wrong — it invents commands that appear nowhere in the vendor's own code
-   and that no real printer answers. Marked **[unconfirmed]** where untested.
-2. **Tested against a real P50S** (firmware V2.0.00). Reliable about what was tested,
-   but read the _exact_ claim: "does nothing" always means "does nothing in the
-   position it was sent in", which is not the same as unimplemented. That distinction
-   is what hid the gap-seek command for four rounds of investigation.
-3. **Captured from the vendor Android app** over Bluetooth HCI snoop, then replayed
-   and confirmed on hardware. This is ground truth and it overrides both of the above.
-   `scripts/parse-btsnoop.mjs` decodes such a capture; the procedure is at the end of
-   this document.
-4. **Third-party reverse engineering, unconfirmed here.** Facts published by someone
-   else that have never been seen on our own wire. Weaker than tier 1, not stronger:
-   an SDK at least ships with the product, whereas this is a stranger's reading of a
-   decompile we have not repeated. Useful for knowing what to look for and for
-   corroborating something already confirmed; never sufficient on its own. Marked
-   **[tier 4]** at the point of use, and where it contradicts tiers 2 or 3 the
-   confirmed evidence wins and the disagreement is recorded rather than resolved.
+Everything here is confirmed on a **P50S, firmware V2.0.00**, unless it carries one
+of these markers:
 
-**Where a section carries a tier-3 finding it says so.** Several tier-1 and tier-2
-conclusions in here were flatly wrong, and rather than quietly deleting them the
-reasoning that failed is kept alongside the correction — the failure modes repeat, and
-a plausible inference that fit the evidence is exactly the thing to be wary of next
-time.
+- **[SDK only]**: read from the vendor SDK and never confirmed on hardware. The
+  published SDK is a tidied-up facade over an archived original
+  (`lib/archive/original_interface_chinese.js`), and where they disagree the facade
+  is often wrong.
+- **[inferred]**: fits every observation, never isolated.
+- **[third-party]**: from someone else's reverse engineering, never seen on our own
+  wire. See [`THIRD_PARTY.md`](THIRD_PARTY.md) for provenance.
+
+The print sequence itself comes from a Bluetooth capture of the vendor Android app,
+replayed and confirmed here. Where a capture and the SDK disagree, the capture wins.
 
 ## Transport
 
-Bluetooth **Low Energy** (GATT). Not Bluetooth Classic / SPP — the device never
-appears as a pairable device in the OS Bluetooth settings, which is why the vendor
-manual tells users not to pair from system settings.
+Bluetooth **Low Energy** (GATT), not Classic or SPP. The printer never appears in the
+OS Bluetooth settings, which is why the vendor manual says not to pair from there.
 
 | Role                          | UUID                                   |
 | ----------------------------- | -------------------------------------- |
@@ -45,133 +34,107 @@ manual tells users not to pair from system settings.
 | Write — host to printer       | `0000ff02-0000-1000-8000-00805f9b34fb` |
 | Notify — flow-control credits | `0000ff03-0000-1000-8000-00805f9b34fb` |
 
-Discovery: filter on the advertised **name prefix** (`P50`), _not_ on the service
-UUID. These printers do not advertise the 128-bit service UUID, so a service filter
-returns an empty device chooser. Advertised names look like `P50_2950_BLE`.
+**Discovery** filters on the advertised name prefix (`P50`), not the service UUID.
+These printers do not advertise the service, so a service filter returns an empty
+device chooser. Observed names are `P50S-F871-BLE` and `P50_2950_BLE`.
 
-Writes go to `ff02` in chunks of ~90 bytes.
+**Subscribe to both `ff01` and `ff03` before printing**, or the job stalls.
 
-**Flow control — confirmed on a P50S (firmware V2.0.00).** `ff03` frames are
-`[type, ...]` and **only type `0x01` carries credits**. The opening frame is
-`01 04`, which sets the window to 4; subsequent `01 01` frames each add one, and
-one arrives per write. A frame of `02 dc 00` was also observed on this channel
-and is _not_ a credit grant — its meaning is unknown. Reading byte 1 regardless
-of the type, as the vendor SDK does, turns that into a phantom grant of 220 and
-silently disables flow control for the rest of the session.
-
-Use ~5 ms between chunks while credits are flowing, falling back to ~30 ms if
+**Credits.** `ff03` frames are `[type, ...]`, and only type `0x01` carries credits.
+The opening frame `01 04` sets the window to 4; each later `01 01` adds one, and one
+arrives per chunk written. Pace chunks ~5 ms apart while credits flow, ~30 ms if
 `ff03` never fires.
 
-Subscribe to **both** `ff01` and `ff03` before starting a print, or the job stalls.
+The `02 DC 00` frame on the same channel is _not_ a credit grant: `DC 00` is 220
+little-endian, the negotiated ATT MTU. Reading byte 1 regardless of type, as the
+vendor SDK does, turns it into a phantom grant of 220 and silently disables flow
+control for the rest of the session.
+
+**Chunks are 90 bytes** (`DEFAULT_CHUNK_SIZE`). The vendor app writes 217-byte chunks
+(MTU 220 − 3), but Web Bluetooth neither exposes nor requests the MTU, so 217 is a
+guess that fails mid-raster if Chrome negotiated less. 90 is proven on this hardware
+and throughput has not been a problem.
+
+**A job is one byte stream** ([ADR 0002](adr/0002-one-flow-controlled-stream-per-job.md)).
+Preamble, raster and trailer are concatenated and chunked as a whole, so chunk
+boundaries fall wherever they fall and every byte waits for a credit.
+`printJobStream()` in `src/printer/protocol/commands.ts` builds it. The only write
+boundary is before the tear-off advance, which goes out on its own after the job.
 
 ## Commands
 
-All multi-byte values are big-endian.
+All multi-byte values are big-endian. Two prefixes are in use: `1F` for print control
+and configuration, `10 FF` for device queries. They are not two protocol generations,
+and nothing negotiates a version.
 
 ### Print control
 
-| Purpose                             | Bytes                            |
-| ----------------------------------- | -------------------------------- |
-| Start print job                     | `1F C0 01 00`                    |
-| Stop print job                      | `1F C0 01 01`                    |
-| Set BT type (send after connecting) | `1F B2 00`                       |
-| Align paper to start                | `1F 11 51`                       |
-| Align paper to end (feed out)       | `1F 11 50`                       |
-| Adjust position                     | `1F 11 <mode> <distHi> <distLo>` |
-| Locate                              | `1F 12 <mode> 00`                |
-| Locate (auto)                       | `0C`                             |
+| Purpose           | Bytes                            | On a P50S                                               |
+| ----------------- | -------------------------------- | ------------------------------------------------------- |
+| Start print job   | `1F C0 01 00`                    | works                                                   |
+| Stop print job    | `1F C0 01 01`                    | works                                                   |
+| Set BT type       | `1F B2 00`                       | sent after connecting, as the SDK does; effect unknown  |
+| Align paper start | `1F 11 51`                       | the **retract**: acts only before a raster in a job     |
+| Align paper end   | `1F 11 50`                       | the **tear-off advance**, sent after the job [inferred] |
+| Adjust position   | `1F 11 <mode> <distHi> <distLo>` | inert in every mode, on either side of a raster         |
+| Locate            | `1F 12 <mode> 00`                | the **gap seek**: acts only after a raster in a job     |
+| Locate (auto)     | `0C`                             | [SDK only]                                              |
 
-`adjustPosition` mode: `0x00` forward in dots, `0x01` forward in mm, `0x10` backward
-in dots, `0x11` backward in mm.
-`locate` mode: `0x10` none, `0x20` gap (die-cut labels), `0x30` black mark.
+`adjustPosition` mode: `0x00` forward dots, `0x01` forward mm, `0x10` backward dots,
+`0x11` backward mm. `locate` mode: `0x10` none, `0x20` gap, `0x30` black mark; it
+follows the paper type.
 
 ### Configuration
 
-| Purpose                | Bytes                                                          |
-| ---------------------- | -------------------------------------------------------------- |
-| Set paper type         | `1F 80 01 <type>` — `10` continuous, `20` gap, `30` black mark |
-| Get paper type         | `1F 80 00`                                                     |
-| Set density (darkness) | `1F 70 01 <1..15>`                                             |
-| Get density            | `1F 70 00`                                                     |
-| Set speed              | `1F 60 01 <0 low \| 1 med \| 2 high>`                          |
-| Get speed              | `1F 60 00`                                                     |
+| Purpose          | Bytes                             | On a P50S                                              |
+| ---------------- | --------------------------------- | ------------------------------------------------------ |
+| Set paper type   | `1F 80 <reply> <type>`            | works; type `10` continuous, `20` gap, `30` black mark |
+| Set print params | `1F 70 02 <density> 00×6`         | works; what the vendor app sends; six unknown bytes    |
+| Set density      | `1F 70 01 <1..15>`                | [SDK only]; the vendor app never sends it              |
+| Set speed        | `1F 60 01 <0 low, 1 med, 2 high>` | [SDK only]; the vendor app never sends it              |
 
-### Commands from the SDK's archived original — prefer these
+`<reply>` `0x01` makes the printer answer `OK`/`ER`; `0x02` is silent and is what the
+vendor app uses. Every `1F` getter in the SDK facade (`1F 80 00`, `1F 70 00`,
+`1F 60 00`, `1F 20 00`) is silent.
 
-The published SDK ships a tidied-up facade **and** the original it was derived
-from, in `lib/archive/original_interface_chinese.js`. Where they disagree, trust
-the original: several of the facade's commands appear nowhere in the vendor's own
-code and are silent on real hardware.
+### Queries and maintenance
 
-| Purpose            | Original                      | Tidied facade           | Notes                                                           |
-| ------------------ | ----------------------------- | ----------------------- | --------------------------------------------------------------- |
-| Locate next label  | `1D 0C`                       | `0C` / `1F 12 <m> 00`   | ESC/POS `GS FF`. The gap-alignment primitive.                   |
-| Feed n dot lines   | `1B 4A <n>`                   | _absent_                | ESC/POS `ESC J`. 8 lines = 1 mm.                                |
-| Learn label gap    | `10 FF 03`                    | `1F 30 60`              |                                                                 |
-| Label height       | `10 FF 50 F2`                 | _absent_                | Same family as battery, which answers.                          |
-| Status (bit field) | `10 FF 40`                    | `1F 20 00`              | See below.                                                      |
-| Printer info       | `10 FF 70`                    | _absent_                |                                                                 |
-| Bluetooth name     | `10 FF 30 11`                 | used as _MAC_           |                                                                 |
-| Bluetooth MAC      | `10 FF 30 12`                 | _absent_                |                                                                 |
-| BT module version  | `10 FF 30 10`                 | _absent_                |                                                                 |
-| Density            | `10 FF 10 00 <n>`             | `1F 70 01 <n>`          | Which the P50S honours is unknown.                              |
-| Set BT type        | `1F B2 11`                    | `1F B2 00`              | The facade's value works in practice.                           |
-| Job start / stop   | `10 FF FE 01` / `10 FF FE 45` | `1F C0 01 00` / `01 01` | **The facade's is correct here** — printing works with `1F C0`. |
+| Purpose                             | Bytes                                  | On a P50S                           |
+| ----------------------------------- | -------------------------------------- | ----------------------------------- |
+| Firmware version                    | `10 FF 20 F1`                          | ASCII, e.g. `V2.0.00`               |
+| Serial number                       | `10 FF 20 F2`                          | ASCII digits, NUL-terminated        |
+| Battery                             | `10 FF 50 F1`                          | `00 <percent>`                      |
+| Get auto-shutdown                   | `10 FF 13`                             | minutes, e.g. `0f` = 15             |
+| Set auto-shutdown                   | `10 FF 12 <hi> <lo>`                   | [SDK only]                          |
+| Model                               | `10 FF 20 F0`                          | silent; taken from the name instead |
+| Bluetooth name (the facade's "MAC") | `10 FF 30 11`                          | silent                              |
+| Self test                           | `1F 40`                                | inert                               |
+| Learn paper (gap)                   | `1F 30 60`                             | inert                               |
+| Read sensor                         | `1F 30 <00 temp, 01 voltage, 02 opto>` | [SDK only]                          |
 
-**Status is a bit field, not an enum.** Zero means healthy; bit 0 printing,
-bit 1 cover open, bit 2 out of paper, bit 3 low battery, bit 4 head overheating.
+The model comes from the advertised name: split on `-` or `_` and take the first
+part.
 
-**Gap alignment procedure**, from the original's own comment on `getLabelHeight`:
-issue `1D 0C` about three times, waiting for an `OK` after each, and only then
-read `10 FF 50 F2`. Asking earlier returns an inaccurate height.
+### From the SDK's archived original
 
-**`setPaperType` takes two arguments** in the original — `1F 80 <model> <type>`,
-where model `0x01` makes the printer reply `OK`/`ER` and `0x02` is silent. The
-facade hardcodes `0x01`, which is why an `OK` shows up during a print.
+These appear only in the original, not in the facade. All are **silent or inert** on
+this firmware, so nothing depends on them:
 
-### Maintenance and status
+| Purpose           | Bytes              | On a P50S |
+| ----------------- | ------------------ | --------- |
+| Locate next label | `1D 0C`            | inert     |
+| Feed n dot lines  | `1B 4A <n>`        | inert     |
+| Learn label gap   | `10 FF 03`         | silent    |
+| Label height      | `10 FF 50 F2`      | silent    |
+| Status bit field  | `10 FF 40`         | silent    |
+| Printer info      | `10 FF 70`         | silent    |
+| BT version / MAC  | `10 FF 30 10`/`12` | silent    |
+| Density           | `10 FF 10 00 <n>`  | untested  |
 
-**Several of these are inert on a P50S (firmware V2.0.00) when sent on their own.**
-`1f 40` (self test), `1f 30 60` (learn paper) and `1f 11 50` (feed) produced no
-observable effect — the printer accepts the write, grants a credit, and does
-nothing. Wrapping them in an _empty_ `1f c0 01 00` … `1f c0 01 01` makes no
-difference; that was tried and refuted.
-
-**`1f 12 20 00` (locate gap) was on this list and does not belong here.** It is
-inert in isolation and it is also the working sensor gap seek, once it follows a
-raster payload inside a job. That is now the basis of label registration — see
-"Keeping successive labels aligned". The lesson generalises: this list records
-where a command was tested, not what the firmware implements.
-
-They are kept in the command table because they come from the vendor SDK and may
-be implemented on other models in the family, but nothing should depend on them.
-**Printing does not need any of them.**
-
-A caution about how this was nearly mis-concluded: `1f 11 50` seemed to "work
-inside a print", but printing a raster advances the paper by itself, so the feed
-could not be attributed to the command. Only commands whose effect is
-distinguishable from the raster print should be treated as confirmed.
-
-Confirmed working, by contrast: `1f c0` (job control), `1f 10` (raster) and the
-`10 ff` information queries.
-
-| Purpose                            | Bytes                                      |
-| ---------------------------------- | ------------------------------------------ |
-| Self test print                    | `1F 40`                                    |
-| Learn paper (calibrate gap sensor) | `1F 30 60`                                 |
-| Read sensor                        | `1F 30 <00 temp \| 01 voltage \| 02 opto>` |
-| Printer status                     | `1F 20 00`                                 |
-| Model                              | `10 FF 20 F0`                              |
-| Firmware version                   | `10 FF 20 F1`                              |
-| Serial number                      | `10 FF 20 F2`                              |
-| Battery                            | `10 FF 50 F1`                              |
-| Bluetooth MAC                      | `10 FF 30 11`                              |
-| Set auto-shutdown minutes          | `10 FF 12 <hi> <lo>`                       |
-| Get auto-shutdown                  | `10 FF 13`                                 |
-
-Note the two prefixes are not two protocol generations: `1F` is used for print
-control and configuration, `10 FF` for device-information queries. There is no
-version negotiation anywhere in the command set.
+The SDK's calibration procedure (locate three times, then read the label height)
+cannot run here: the locates are inert and the height query is unimplemented. Its
+status bit field is [SDK only]: zero is healthy, bit 0 printing, 1 cover open, 2 out
+of paper, 3 low battery, 4 head overheating.
 
 ### Dangerous — never expose in normal UI
 
@@ -188,139 +151,41 @@ Reachable only through the diagnostics raw-hex box.
 1F 10 <rowBytesHi> <rowBytesLo> <heightHi> <heightLo> <payloadLen BE32> <payload>
 ```
 
-- `rowBytes = (widthDots + 7) >> 3`.
-  **The width field carries bytes per row, not dots.** Community documentation
-  describes this field as "width", which is misleading and will cost you a debugging
-  session.
-- `height` is in dots (rows).
-- `payloadLen` is the length of the compressed payload, 32-bit big-endian.
+- `rowBytes = (widthDots + 7) >> 3`. **The width field carries bytes per row, not
+  dots**, whatever community notes call it.
+- `height` is in dots (rows), 16-bit.
+- `payloadLen` is the compressed length, 32-bit.
 - `payload` is `zlib.deflate(packed, { level: -1, windowBits: 10, memLevel: 8,
-strategy: 0 })` — a standard zlib stream, _not_ raw deflate.
+strategy: 0 })`: a standard zlib stream, not raw deflate. `windowBits: 10` is
+  load-bearing; the golden fixtures in `src/printer/protocol/` pin the SDK's output
+  byte for byte.
 
-Bit packing: row-major, rows padded to a whole byte, **MSB first**, a set bit means a
+Bit packing: row-major, rows padded to a whole byte, **MSB first**, a set bit is a
 **black** dot.
 
-Source pixels (RGBA) are binarised as:
+The SDK binarises RGBA as `black ⟺ (r + g + b) / 3 <= 200 AND alpha != 0`, a naive
+mean in which transparent pixels are always white. The render pipeline binarises
+upstream with proper luminance weighting and dithering, and hands this stage pure
+black or white, so its threshold is a pass-through.
 
-```
-black  ⟺  (r + g + b) / 3 <= 200  AND  alpha != 0
-```
+## Replies
 
-Note this is a naive mean, not a luminance-weighted grayscale, and fully transparent
-pixels are always white regardless of colour. We binarise upstream in the render
-pipeline (with proper luminance weighting and, for photos, Floyd–Steinberg dithering)
-and hand this stage pure black-or-white pixels, so its own threshold is a pass-through.
+Replies arrive on `ff01` as unsolicited notifications, about 330 ms after the
+request. There is no request id, so a query takes the next frame; send queries one at
+a time.
 
-## Replies — confirmed on a P50S (firmware V2.0.00)
+`4F 4B` (ASCII `OK`) means a job has been consumed. It comes when the printer has
+worked through the stream, not when the bytes landed: a fraction of a second for a
+short label, around ten seconds for a full-height one. `printDurationMs()` sizes the
+wait from the row count: twice the time the rows take at the printer's drain-limited
+speed of about 43 rows per second (`PRINT_ROWS_PER_SECOND`).
 
-Replies arrive on `ff01` as unsolicited notifications; there is no request id, so
-a query takes the next frame.
+## Print sequence
 
-| Query                  | Reply                  | Decoded                      |
-| ---------------------- | ---------------------- | ---------------------------- |
-| firmware `10 FF 20 F1` | `56 32 2e 30 2e 30 30` | ASCII `V2.0.00`              |
-| serial `10 FF 20 F2`   | `35 30 …  00`          | ASCII digits, NUL-terminated |
-| battery `10 FF 50 F1`  | `00 64`                | `0x64` = 100 (percent)       |
-| print complete         | `4f 4b`                | ASCII `OK`                   |
-
-### What a P50S (V2.0.00) actually implements
-
-Tested one at a time, each waiting out a 1.2 s timeout. Replies land ~330 ms
-after the request.
-
-| Query                                       | Result                                          |
-| ------------------------------------------- | ----------------------------------------------- |
-| `10 FF 20 F1` firmware                      | ✅ `V2.0.00`                                    |
-| `10 FF 20 F2` serial                        | ✅ ASCII digits, NUL-terminated                 |
-| `10 FF 50 F1` battery                       | ✅ `00 53` → 83 %                               |
-| `10 FF 13` shutdown time                    | ✅ `0f` → 15 minutes                            |
-| `10 FF 20 F0` model                         | ❌ silent                                       |
-| `10 FF 40` status flags                     | ❌ silent                                       |
-| `10 FF 50 F2` label height                  | ❌ silent                                       |
-| `10 FF 70` printer info                     | ❌ silent                                       |
-| `10 FF 30 10/11/12` BT version / name / MAC | ❌ silent                                       |
-| `10 FF 03` learn label gap                  | ❌ silent                                       |
-| every `1F` getter from the tidied facade    | ❌ silent — they do not exist in the vendor SDK |
-
-So the archived original's byte sequences are transcribed correctly, but this
-firmware implements only a subset. The model is taken from the advertised BLE
-name instead; observed forms are `P50S-F871-BLE` and `P50_2950_BLE`, so split on
-either separator.
-
-### Paper motion: only printing moves paper
-
-**Every dedicated motion command is inert when sent on its own.** `1D 0C` (locate
-label), `1B 4A n` (ESC/POS feed dot lines), `1F 30 60` (learn paper), `1F 40`
-(self test) and `1F 11 5x` bare are all acknowledged with a credit and then
-ignored. The documented three-locates-then-read-height calibration cannot run: the
-locates do nothing and the height query is unimplemented.
-
-**Caveat, added later and important:** "on its own" is doing real work in that
-sentence. `1F 12 20 00` behaves exactly like the commands above in isolation, and
-it is nevertheless the working gap seek when it follows a raster inside a job.
-`1F 11 51` likewise retracts the paper when it comes before a raster inside a job.
-Do not read the list as proof that these opcodes are unimplemented — only that they
-are inert in the position they were tested in. See "Keeping successive labels
-aligned" and "Rewinding" below.
-
-What does move paper is a **print job**. So to feed a known distance, print an
-all-white raster of that height: the head advances the rows and fires no dots.
-Confirmed working on hardware; every alternative was confirmed not to.
-
-### Keeping successive labels aligned — solved and confirmed
-
-**A sensor gap seek does exist, it is `1F 12 20 00` — `locate` in gap mode — and with
-it in the right place labels now register correctly print after print.**
-
-This was reverse-engineered wrongly twice before an HCI capture of the vendor
-Android app settled it, so the reasoning is worth recording:
-
-- Sent standalone, `1F 12 20 00` does nothing. That is real, repeatable, and it is
-  why the command was written off as inert.
-- Sent inside an _empty_ print job it also does nothing. That refuted the
-  "commands only work inside a job" theory.
-- The capture shows the vendor app issuing it **after the raster payload and before
-  `stopPrintjob`**. The theory was not wrong, it was too weak: what the command
-  needs is a job with something in it.
-
-So the earlier conclusion that "no closed-loop option exists" was wrong. It was
-also wrongly _argued_ — the reasoning ran that because the vendor app misprints the
-first label after a roll change and gets every later one right, it must be doing
-open-loop post-print feeding, since a seek would have fixed the first too. That
-sounded tidy and was false: the seek runs at the _end_ of each job, so it registers
-the _next_ label. The first print after loading is misaligned precisely because no
-job has ended yet.
-
-The workaround built on that mistaken conclusion — appending blank rows to advance
-a full label pitch — still works and is still available for continuous stock, but
-it is no longer the mechanism.
-
-### What the vendor app never sends
-
-Worth knowing, because several of these were assumed:
-
-- **No `setSpeed` (`1F 60`) at all.** Speed may be one of the six unidentified
-  bytes in `1F 70 02`.
-- **No feed command of any kind** — no `1B 4A`, no `1D 0C`.
-- **No `learnLabelGap` (`10 FF 03`)** and no `getLabelHeight`.
-- **No `setPaperType` mode `01`.** It uses mode `02` exclusively.
-- **No padding of the raster to head width.** See Geometry.
-
-## Print sequence — captured, then confirmed working
-
-**Tier 3, and confirmed on hardware.** Transcribed from an HCI capture of the vendor
-app printing the same label three times, then implemented here and verified: labels
-now register correctly print after print, which is what four earlier attempts built on
-inference failed to achieve.
-
-Repeated verbatim per copy, configuration included. Byte-identical across all three
-captured prints.
-
-The shape of it, from connect to a registered label. The bytes below the diagram are
-the authority — this is a reading aid. `printJobFraming()` in
-`src/printer/protocol/commands.ts` is where the code keeps to it: both the Bluetooth
-driver and the virtual printer build their job from that one function, so neither can
-drift from the other without the tests noticing.
+Captured from the vendor app printing the same label three times, byte-identical each
+time, and repeated verbatim per copy, configuration included. `printJobFraming()` in
+`src/printer/protocol/commands.ts` is the one place both the Bluetooth driver and the
+virtual printer build a job from, so they cannot drift apart.
 
 ```mermaid
 sequenceDiagram
@@ -343,7 +208,7 @@ sequenceDiagram
     rect rgb(245, 243, 236)
     Note over A,P: Print job — repeated verbatim per copy
     rect rgb(236, 240, 233)
-    Note over A,P: One stream, chunked at 90 bytes over ff02 — see below
+    Note over A,P: One stream, chunked at 90 bytes over ff02
     A->>P: 1F 80 02 20 setPaperTypeSilent(gap)
     A->>P: 1F 70 02 0A 00×6 setPrintParams(density)
     A->>P: 1F C0 01 00 startPrintJob
@@ -356,297 +221,113 @@ sequenceDiagram
     Note right of A: Chunk boundaries fall wherever they fall.<br/>~5 ms between them while credits flow, ~30 ms if not.
 
     A->>P: 1F 11 50 alignPaperEnd
-    P-->>A: ff01: 4F 4B ("OK"), ~300 ms later
-    Note right of A: Waiting for this before the next copy<br/>is what stops multi-copy runs stacking.
+    P-->>A: ff01: 4F 4B ("OK") once the job is consumed
+    Note right of A: Every copy waits for this<br/>before the next one starts.
     end
 ```
 
 ```
-10 FF 50 F1                        battery — the app's own UI polling, not required
-1F 80 02 20                        setPaperTypeSilent(gap)      mode 02, not 01
+1F 80 02 20                        setPaperTypeSilent(gap)      reply mode 02
 1F 70 02 0A 00 00 00 00 00 00      setPrintParams(density 10)   six unknown bytes
-1F C0 01 00                        startPrintjob
-1F 11 51                           alignPaperStart
+1F C0 01 00                        startPrintJob
+1F 11 51                           alignPaperStart              the retract
 1F 10 00 28 00 F0 00 00 04 EF …    raster: 40 bytes/row, 240 rows, 1263 bytes zlib
-1F 12 20 00                        locate(gap)  <-- the alignment fix
-                                   ^ mode follows the paper type: 10 continuous,
-                                     20 gap, 30 black mark — the same values
-                                     setPaperTypeSilent takes
-1F C0 01 01                        stopPrintjob
-1F 11 50                           alignPaperEnd
+1F 12 20 00                        locate(gap)                  the gap seek
+1F C0 01 01                        stopPrintJob
+1F 11 50                           alignPaperEnd                the tear-off advance
 ```
 
-The printer then answers `4F 4B` — ASCII `OK` — on `ff01`, about 300 ms later.
-Waiting for it before starting the next copy stops multi-copy runs stacking jobs.
+The vendor app also polls the battery (`10 FF 50 F1`) from its own UI; that is not
+part of a print. Every copy waits for `4F 4B` before the next starts, which stops
+multi-copy runs stacking. A missing reply is reported, not shrugged off.
 
-### Chunking and MTU, from the same capture
+**What the vendor app never sends**, though the SDK suggests it might: `setSpeed`
+(`1F 60`), any feed command (`1B 4A`, `1D 0C`), `learnLabelGap`, `getLabelHeight`,
+`setPaperType` reply mode `01`, or a raster padded to head width.
 
-The app negotiates an ATT MTU and writes the whole stream — commands and raster
-alike, undifferentiated — in **217-byte** chunks. 217 = 220 − 3, and **220 is what
-the `02 DC 00` frame on `ff03` is telling us**: `DC 00` little-endian is 220. That
-frame was already known not to be a credit grant; now it has a meaning.
+## What moves paper
 
-We still chunk at 90 bytes, which is proven on this hardware, because Web Bluetooth
-neither exposes nor lets you request the MTU — so a 217-byte write is a guess that
-fails mid-raster if Chrome negotiated less. Throughput has not been a problem.
+Three things, and only three:
 
-**"Undifferentiated" is the load-bearing word, and it cost a bug to learn it.** The
-capture's six 217-byte writes total 1302 bytes, which is 21 + 1273 + 8 — preamble,
-raster command, then `1F 12 20 00` and `1F C0 01 01` arriving glued to the tail of
-the last raster chunk. There is no transfer boundary anywhere in a job except
-before `1F 11 50`. This is not cosmetic:
+1. **Printing rows.** Blank rows advance the paper by exactly their count and fire no
+   dots, so feeding a known distance means printing an all-white raster.
+2. **The gap seek**, only when it follows a raster inside a job. Sent alone, or in an
+   empty job, it is inert.
+3. **The retract**, only when it comes before a raster inside a job.
 
-- The printer reads a byte stream off a UART. Transfer boundaries mean nothing to
-  it.
-- They are not free, either. Only the chunk loop waits for credits, so a command
-  written outside it is written blind, and `writeValueWithoutResponse` reports
-  nothing when the far side has no room.
+The tear-off advance after a job makes a fourth if the [inferred] reading of
+`1F 11 50` is right. Every other motion command is acknowledged with a credit and
+then ignored, in any position tried.
 
-This app used to write the framing as its own transfers. On short labels the window
-had slack and it worked. On an 80 mm label it does not: a wire log of one shows the
-window pinned at zero for the whole tail of the raster — 47 consecutive
-credit-then-chunk pairs, the driver blocking on each — and then three uncredited
-transfers in 3 ms, 60 ms before the printer granted anything again. The first of the
-three was the gap seek. The label printed and did not register.
+**Position decides what a command does.** The same opcode can be inert before a
+raster and act after it, or the reverse.
 
-So `printJobStream()` in `src/printer/protocol/commands.ts` concatenates the job the
-way the capture shows it, and the driver chunks _that_. Every byte of a print now
-goes out under flow control.
+**Take-up.** A job advances 8 dots (1 mm) before it prints its first row, with
+nothing fired at it.
 
-### The gap seek has a job-size limit — confirmed
+**Retract.** One per job: repeats within a job are ignored, and retracts sent as
+separate jobs still move the paper one retract's worth in total. It is an align to a
+position the printer tracks, not a relative move, so its distance depends on where
+the paper starts: about 20 mm from the tear-off position, where it undoes the tear-off
+advance, and 64 dots (8 mm) mid-label.
 
-**Tier 2, confirmed on a P50S (V2.0.00) by controlled experiment.** The captured
-sequence registers a label reliably right up until the job stops fitting in the
-printer's input buffer, and then stops working entirely. Two wire logs of the same
-design at two heights, everything else held constant:
+**Gap seek.** It travels as far as it needs to: a 30 mm label on an 80 mm roll seeks
+the whole remaining ~50 mm and lands correctly. It registers the _next_ label, since
+it runs at the end of a job. Two limits:
 
-|                          | 30 mm     | 80 mm          |
-| ------------------------ | --------- | -------------- |
-| raster                   | 48 x 240  | 48 x 640       |
-| payload                  | 8,672 B   | 23,273 B       |
-| whole job                | 8,714 B   | 23,315 B       |
-| transfer                 | 932 ms    | 6,316 ms       |
-| credits throttled        | never     | after 18,360 B |
-| `4F 4B` after last write | 424 ms    | 8,492 ms       |
-| **gap seek**             | **works** | **does not**   |
+- **The printer must have read the whole job.** A job too large to be read before
+  printing starts is not registered. See "Tall labels".
+- **A seek in a job of its own needs about 24 mm of approach distance.** Below that it
+  misses its own gap and runs a full pitch to the next one. A seek in the same job as
+  a real raster needs no approach at all. One retract buys back under 20 mm, so a
+  standalone seek cannot register a full-height label, which ends at its gap. This
+  ruled out the follow-up seek ([ADR 0001](adr/0001-split-tall-labels-into-bands.md)).
 
-Both jobs are byte-for-byte the captured vendor sequence — same preamble, same
-`1F 12 20 00` between raster and `1F C0 01 01`, same `1F 11 50` as its own transfer,
-every byte sent under flow control. The only difference is the row count.
+## Tall labels
 
-The credit trace is what explains it. On the short job credits come back faster than
-we can spend them and the window never empties: the printer takes the whole thing,
-_then_ prints. On the long one they arrive every ~10 ms for the first 18 KB and then
-drop to ~75 ms — the buffer is full and the printer is granting only as fast as it
-prints. It has started the motor before reading the end of the job, so
-`1F 12 20 00` is still sitting in the unread remainder when the label comes out.
-The 8.5 s to `4F 4B` is the rest of the label printing at 43 rows/s.
+**The printer starts printing before it has read a large job.** Its input buffer
+fills at about 18 KB; past that, credits slow to the rate it prints at, and the gap
+seek at the end of the job is still unread when the label comes out. Measured on the
+same design at two heights: a 30 mm job of 8.7 KB registers; an 80 mm job of 23.3 KB,
+throttled after 18,360 bytes, does not. The vendor app has the same limit and does
+nothing about it.
 
-So the gap seek is not an action the printer performs when it reaches the command.
-It is closer to a property of a job the printer has read in full, and a job it has
-to stream is not one of those.
+`SEEK_SAFE_JOB_BYTES` is **16 KB**, below the observed throttle point because nothing
+says it holds at every battery level. Erring low costs a band; erring high costs a
+label.
 
-Things this rules out, all of which looked plausible first:
+The size that counts is the _compressed_ raster, so a job over the line has three
+remedies, in the order the print panel offers them.
 
-- **The header.** `1F 10 00 30 02 80` is 48 bytes/row and 640 rows. A one-byte
-  height field would have explained a correct print with broken end-of-label logic;
-  golden `checker-384x1200` from the vendor SDK encodes 1200 rows as `04 B0`, so the
-  field really is 16-bit big-endian and ours is right.
-- **Anything in the byte stream.** There is nothing left to correct in it.
-- **Flow control.** Both jobs are fully credited, trailer included.
+### 1. Splitting into bands — the default
 
-`SEEK_SAFE_JOB_BYTES` in `src/printer/protocol/constants.ts` carries the limit, set
-to 16 KB rather than the observed 18,360 B because the throttle point is where the
-buffer was already full and nothing says the figure holds at a different battery
-level. Erring low costs an unnecessary 52-byte follow-up; erring high costs a label.
+[ADR 0001](adr/0001-split-tall-labels-into-bands.md) records why. `planSeekableBands()`
+in `src/printer/protocol/splitJob.ts` cuts the raster into the fewest horizontal bands
+that each encode under the limit. The bands go out one at a time, each waiting for
+`4F 4B`, because the printer accepts no job while it is working on one; only the last
+band carries the gap seek, and the tear-off advance happens once at the end. A raster
+under the limit is one band, so small labels are unaffected. `splitForSeek`, on by
+default.
 
-It is a threshold, not a ceiling — nothing about a large label is refused, because
-splitting it into bands is the remedy and it is on by default. See "Splitting one
-label across several jobs".
+**The seam is closed** (`closeSplitSeam`, on by default). Each band after the first
+retracts in its preamble and leads with blank rows. Per boundary, the take-up adds 8
+dots and the mid-label retract takes back 64, a net 56 dots (7 mm) early, so the band
+leads with 56 blank rows (`SEAM_RETRACT_OVERSHOOT_DOTS`). They pass over ground the
+previous band already printed, and the band's first real row lands exactly where the
+previous one stopped. `planBands()` makes both halves of that decision, so the two
+drivers cannot disagree.
 
-### What `1F 11 51` and `1F 11 50` appear to be — [unconfirmed]
+**Fallback, with the seam fix off:** the 8 rows that fall in each band's take-up are
+skipped (`SPLIT_SEAM_DOTS`), which keeps every other row where it was designed. The cut
+is nudged up to 5 mm earlier, to the row that loses the least ink, so on most designs
+the seam falls into white space. Worth keeping: 7 mm is one measurement on one stock,
+and if it reads differently elsewhere it shows as a seam or an overlap.
 
-Named alignPaperStart and alignPaperEnd here since the SDK, and never isolated.
-Three observations that made no sense separately fit one reading: **`1F 11 50`
-advances the paper to a tear-off position and `1F 11 51` retracts it again before
-printing.** Standard behaviour for a label printer with a tear bar downstream of
-the head, and about 20 mm of travel on a P50S.
+### 2. A dither that compresses
 
-- A follow-up seek that ended "through the gap and about 20 mm into the next
-  label" was not overshooting. It found the gap, and then `1F 11 50` advanced to
-  the tear bar. That is where the paper is supposed to end up.
-- A follow-up seek on a registered roll took a whole blank label. Retract 20 mm
-  from the tear position lands at the gap; the 1 mm of blank raster then puts the
-  paper just past it; the seek has nowhere to stop before the next gap, a full
-  pitch away.
-- A second consecutive print "fed some of the label back into the printer before
-  printing", from paper that _was_ at the tear position and had not been pulled.
-  That is the retract doing exactly what it should. The print that followed was
-  cut off at 80%, which is a separate fault — see `4F 4B` below — and not a
-  positioning one: the label started in the right place and stopped early.
-
-**Where the paper starts is not the variable.** Three attempts moved it and none
-changed the outcome:
-
-| attempt                                      | paper moved  | result            |
-| -------------------------------------------- | ------------ | ----------------- |
-| as captured                                  | —            | whole blank label |
-| 5 mm rewind, `1F 11 10 00 28`                | yes, visibly | whole blank label |
-| tear-off round trip removed, ~20 mm each way | yes          | whole blank label |
-
-That is a sweep of roughly 25 mm of starting position with an identical result each
-time, so the seek is not deciding where to stop from where it began. Nor is there
-another rewind to try: `adjustPosition` (`1F 11 10` dots, `1F 11 11` mm) and
-`alignPaperStart` are the only backwards motions in the protocol, `1B 4A` and
-`1D 0C` are forward-only and inert, and both backwards commands have now been used.
-
-The round trip stays removed regardless — one label is one print, and advancing to
-the tear position and retracting again in the middle of it was wrong on its own
-terms. The label job is sent with an empty epilogue when a follow-up is coming, and
-the follow-up drops `alignPaperStart`.
-
-**What does correlate is the height of the raster in the job that carries the
-seek.** 640 rows and it registers; 8 rows and it advances a label, from every
-starting position tried. The reading that fits is that the printer tracks how far
-it has printed within the current label and the seek advances the remainder — so a
-job that prints a millimetre is a job that thinks it has a whole label left to go.
-If that is right, no separate job can ever seek correctly, because the only raster
-that would work is a full label of blank. Untested, and it would cost a label to
-test.
-
-Which leaves the size of the label _job_ as the thing to attack. The dither section
-above does that by making the raster compress; splitting does it without touching
-the picture at all.
-
-### Splitting one label across several jobs — works, one at a time
-
-`planSeekableBands()` cuts the raster into the fewest horizontal bands that each
-encode under `SEEK_SAFE_JOB_BYTES`, and the driver sends them as consecutive jobs:
-only the first retracts, only the last seeks, and the tear-off advance happens once
-at the very end. A 50 x 80 photograph at full-strength diffusion comes out as three
-bands.
-
-**Back-to-back does not work, and this is now measured.** The appeal was that the
-final band's seek would be in the buffer before the head reached it, which a single
-oversized job can never manage. The bytes went out correctly — three jobs of 223,
-223 and 194 rows, one `1F 11 51` in the first, one `1F 12 20 00` in the last, one
-`1F 11 50` closing the stream — and the printer answered `4F 4B` **once** and
-printed the first band only. A 640-row label came out 223 rows tall.
-
-One acknowledgement for three jobs is the tell: every other log here shows one per
-job. **The printer will not accept a job while it is working on one**, so there is
-no way to get a second job into its buffer, and that whole line of reasoning is
-closed.
-
-So the bands go one at a time, each waiting for the last to be acknowledged, and the
-driver stops and says so if an acknowledgement does not arrive rather than firing the
-next band at a printer still moving paper.
-
-**And that works.** A 50 x 80 photograph at full-strength diffusion prints whole,
-registers, and wastes no label — which is the original goal reached with the picture
-exactly as designed. It is the only route to that; every other answer trades image
-quality for compressed size.
-
-It also answers the open question about the printer's sense of position, in the
-affirmative: whatever it uses to decide where the gap is survives a job boundary, so
-the last band's seek lands correctly even though that band printed only a third of
-the label.
-
-**The seam is exactly 1 mm, and winding back a few dots does not close it.** It is
-closed now by a different route — a retract at the boundary plus blank rows, under
-"What a retract does mid-label" below — and what follows here is the fallback used
-when `closeSplitSeam` is off. The printer takes up eight dots at the start of a job
-before it lays down a raster. That millimetre passes the head with nothing fired at
-it, and none of these takes it back:
-
-- **Winding back eight dots** — sent, acknowledged, ignored.
-- **Winding back forty** — sent, acknowledged, ignored. Forty had looked as though
-  it worked, from an earlier experiment where the paper visibly pulled back. It did
-  not: that job also carried `alignPaperStart`, which retracts about twenty
-  millimetres and is a known paper-mover. The movement was that. **`adjustPosition`
-  is inert like every other dedicated motion command on this firmware, and the note
-  in this document claiming otherwise was wrong** — two attempts were built on it
-  before a band with no other motion in it showed the truth.
-- **Overlapping the rasters** — wrong sign. The advance happens without printing;
-  repeating rows does not undo it, it prints them again after the gap and pushes
-  everything below down by another millimetre.
-
-Printing rows, the gap seek and the `alignPaperStart` retract remain the only three
-things that move paper on a P50S.
-
-With the seam fix off, the millimetre is spent, and what is left is choosing what it
-costs and where it falls.
-
-**What it costs:** the eight rows that land in it are skipped, not printed late.
-Late shifts the whole remainder of the label down a millimetre per boundary, which
-accumulates and walks the bottom of the design off the label. Skipping keeps every
-other row exactly where it was designed and gives up a millimetre of image.
-
-**Where it falls:** `planSeekableBands()` nudges the cut earlier, up to five
-millimetres, to whichever row loses the least ink — scoring candidates by the dots
-set in the rows that would be skipped, ties going to the latest so bands stay large.
-A millimetre of white across a photograph shows; a millimetre across the space
-between two lines of text does not. On a design with any white space near the cut
-the seam disappears into it; on a full-bleed photograph it will still show, at the
-quietest row available.
-
-The cost is that the head now stops at each boundary while the driver waits, and a
-stopped head is where a seam would show. The planner minimises the band count for
-that reason. Splitting (`splitForSeek`) and the seam fix (`closeSplitSeam`) are both
-on by default.
-
-### The diagnostics feed used to seek
-
-`Feed by printing blank` builds a real print job, and the job trailer carries the
-gap seek — so asking for 2 mm fed 2 mm and then went to the boundary. The tool
-exists to step the paper a measured distance and read the millimetres off, which
-that makes impossible. `PrintSettings.seekGap` leaves the seek out for jobs whose
-purpose is moving paper rather than printing a label.
-
-Worth noting what the same log confirms in passing: that 44-byte job's seek was
-honoured, first time. Every small job's seek has been.
-
-### `4F 4B` is the only sign a label finished
-
-A healthy job answers `4F 4B` on `ff01` once the printer works through it — a
-fraction of a second for a short label, ten seconds for a full-height one, since
-the reply comes when the stream has been consumed rather than when the bytes
-landed. `printDurationMs()` sizes the wait from the row count.
-
-**A job that does not answer may not have finished — but the two are not the same
-thing.** One run printed a 50 x 80 label at a third of the usual rate, cut the
-image off about 80% of the way down, and sent nothing. A later run printed the
-whole motif and also sent nothing, so silence is a reason to look at the label
-rather than proof that it is wrong; the warning is worded that way. Flow control was clean throughout — 280 credits for 281 writes, no gap
-over a second — so every byte was accepted; the printer simply stopped putting
-them on paper.
-
-Two things followed from that being invisible:
-
-- The driver only waited for the acknowledgement _between_ copies, so a single
-  print reported `done` while the printer still had ten seconds of label to go,
-  and a job it never finished looked exactly like one it did. Every copy now
-  waits, and a missing reply is reported rather than shrugged off.
-- Nothing in the app consumed the driver's `log` events, so the one channel it
-  had for saying "that label may be incomplete" went nowhere. The print panel
-  shows them.
-
-### Battery
-
-`10 FF 50 F1` answers `00 <percent>`. The truncated run above reported `00 00`,
-and nothing in the UI drew attention to it. A thermal head takes its heat from the
-battery, so a flat one is the first thing to rule out when a print is slow or
-cut short — the connection panel now says so below 20%. `00 00` seems to mean
-charging as well as empty; nothing distinguishes them.
-
-### The dither decides whether a tall label can register itself
-
-The threshold is on _compressed_ bytes and the compressor's input is a dithered
-bitmap, so the choice of dither decides which side of it a photograph lands on.
-Error diffusion scatters a picture into nearly random dots that deflate cannot
-touch; ordered dithering lays them on a grid, which compresses. Measured on a
-384 x 640 raster — the failing 50 x 80 label exactly — at the app's own zlib
-settings:
+Error diffusion scatters a photograph into nearly random dots that deflate cannot
+compress; ordered dithering lays them on a grid. Compressed bytes for a 384 × 640
+raster at the app's zlib settings:
 
 | source         | Floyd–Steinberg | Atkinson | Bayer 8x8  |
 | -------------- | --------------- | -------- | ---------- |
@@ -654,463 +335,86 @@ settings:
 | textured photo | 25,519          | 27,397   | **13,780** |
 | heavy grain    | 28,861          | 29,344   | 21,396     |
 
-Diffusion strength is a gentler lever on the same axis, and worth having because it
-keeps error diffusion rather than switching to a grid. Same raster, Floyd–Steinberg:
-23,140 bytes at full strength, 21,239 at 80%, 18,950 at 60%, **15,284 at 40%**,
-8,639 at 20%. Contrast is not a lever — lifting it to +80 saves 14%.
+Diffusion strength is a gentler lever that keeps error diffusion. On the same raster:
+23,140 bytes at full strength, 18,950 at 60%, **15,284 at 40%**, 8,639 at 20%.
+Contrast is not a lever (+80 saves 14%), and nor is `windowBits` (10 → 15 saves 1.3%).
+The print panel rasterises the alternatives and offers the mildest one that fits,
+with the real numbers. `encodeImage.test.ts` pins the ratio and the threshold
+crossing.
 
-`SEEK_SAFE_JOB_BYTES` is 16,384, and the real payloads from the wire logs were
-23,051–25,095. So for most photographs one of these takes a tall label under the
-line, and **then none of the rest of this section applies** — the job is
-ordinary, the printer reads it whole, and its own `1F 12 20 00` registers the label
-exactly as it does at 30 mm. Not for all of them, which is why the print panel
-rasterises the alternative and reports the real number rather than promising one.
+### 3. Blank rows after the label
 
-`src/printer/protocol/encodeImage.test.ts` pins the ratio and the threshold
-crossing, since the advice is worthless if either stops holding.
-
-**`windowBits` is not a lever here, and this is where that gets settled.** The note
-under "Three places we disagree" called a wider window "untested and uninteresting
-until something needs it". Something needed it, and the answer is no: 10 → 15 moves
-Floyd–Steinberg from 23,140 to 22,829 bytes, 1.3%. The parameter the goldens pin can
-stay pinned.
-
-### The follow-up seek job — removed
-
-**Superseded.** This route is gone from the code — `followUpSeekJob()`, its setting
-and its panel controls were removed — and "Why the follow-up seek route is closed"
-below explains why: a seek in a job of its own needs about 24 mm of approach that no
-retract can buy back. Splitting is what registers a tall label. The section is kept
-for its measurements; its claims of a working route, and its description of the
-print panel, no longer hold.
-
-The seek is honoured by any job the printer reads in full, so the fix is to send one
-of those. After an oversized label is out the driver sends a second, ordinary job
-whose raster is 1 mm of blank:
-
-```
-1F 80 02 20  1F 70 02 08 00×6  1F C0 01 00  1F 11 51
-1F 10 00 30 00 08 00 00 00 0D …13 bytes of zlib…
-1F 12 20 00  1F C0 01 01                        then  1F 11 50
-```
-
-52 bytes. The blank raster is there because a seek with nothing in front of it is
-inert; blank rows deflate to almost nothing, so this costs one millimetre of paper
-and a single BLE write, and even that millimetre is absorbed into the travel to the
-gap. `followUpSeekJob()` builds it from the same `printJobFraming()` as the label,
-so it is the confirmed-working shape by construction rather than by resemblance.
-
-**Timing is the whole of it.** The first trial sent the follow-up on a flat 5 s
-timer against a label that needed 8.5 s, so it queued behind the raster it exists to
-get past and the paper stopped short. The wire log names the cause exactly: the main
-job's last byte at 11,588 ms, the follow-up at 16,597 ms — 5,009 ms later, which is
-a timeout expiring rather than an acknowledgement arriving, and no `4F 4B` anywhere
-in the log.
-
-That looks like a distance-limited seek and is not one: a 30 mm label on the same
-80 mm roll seeks the whole remaining ~50 mm and lands correctly. The seek travels as
-far as it needs to. It simply has to be issued to a printer that has finished.
-
-So the wait now comes from the row count and `printDurationMs()` rather than a
-constant, and the follow-up goes out on `4F 4B`. **Confirmed on hardware: an 80 mm
-label registers.**
-
-One pass, not several. Repeating was the obvious hedge while the travel looked
-bounded, and it is the wrong instinct now that the seek is known to reach: a pass
-that finds the gap would send the next one on to the label after it, and there is
-nothing to stop on — no status query on this firmware answers, and `4F 4B` says a
-job was processed, not where the paper stopped.
-
-**And that is not hypothetical, which is why the follow-up is off by default and a
-repair rather than a routine.** It registers a roll that has lost its place. On a
-roll that has not, it costs paper and does not settle — a full-height label ends at
-the gap, and seeking from there has been seen to run a whole pitch onto the label
-after next. Where it stops is not something the wire predicts, and nothing on this
-firmware reports where the paper is.
-
-**It is also never sent without `4F 4B` first.** A trial where the acknowledgement
-never arrived ran the full `printDurationMs()` budget — 29,770 ms for 640 rows, the
-log shows the follow-up going out at exactly that offset — and then sent it anyway,
-into a printer that had not said it was finished. The paper went through the gap and
-20 mm into the next label. Leaving a roll unregistered is recoverable; seeking from a
-position nobody knows is not, so a timed-out wait now skips the follow-up and says
-so.
-
-**`feedAfterDots` is the fallback, not the answer.** Blank rows move paper by exactly
-as many as you send, which is predictable in a way the seek has not been — but it
-means measuring the stock, and the printer has a sensor that works. It comes last in
-the print panel for that reason, behind the dither and behind the follow-up.
-
-**Answered: a registered roll does need something, and `1F 11 51` is not it.**
-Consecutive full-height prints with the follow-up off and `feedAfterDots` at zero
-drift — each one starts a gap-width earlier than the last and ends short of the
-label, motif intact. The retract undoes the tear-off advance and nothing more, so
-with the in-job seek unread there is nothing left to cross the gap.
-
-That leaves `feedAfterDots` as the mechanism for tall stock, and it is the better
-one anyway: blank rows advance the paper by exactly as many as you send, every
-time. The print panel now offers it directly whenever a job is over the threshold,
-rather than leaving it under Diagnostics for someone to find.
-
-**The vendor app does not do this.** Printing the same stock from it leaves the
-paper mid-label with no seek at all, so this is a firmware limit rather than a trick
-the vendor knows, and the behaviour here is better than the reference implementation
-rather than catching up to it.
+`feedAfterDots` appends blank rows to advance to the next label. Predictable, but it
+means measuring the stock when the printer has a working gap sensor, so it comes last.
 
 ## Geometry
 
 203 dpi = **8 dots/mm** exactly.
 
-**Head width on a P50S is 384 dots = 48.0 mm**, agreeing with the vendor SDK.
-Established with the `edgeFrame` pattern, which inks the outermost dots of the
-raster: at 384 all four sides print; at 400 the edge is lost.
+**Head width on a P50S is 384 dots = 48 mm.** The `edgeFrame` test pattern inks the
+outermost dots: at 384 all four sides print, at 400 an edge is lost.
 
-This was briefly recorded here as 400 on weaker evidence — a label right-aligned
-against 384 landed 16 dots too far left, and 400 − 384 = 16 looked conclusive.
-It was not. That inference assumed the printable label was exactly 320 dots wide,
-and a horizontal _placement_ error cannot distinguish a wider head from paper
-sitting further right. Prefer the test that measures the thing directly.
+**The raster is not padded to head width.** The vendor app prints a 40 mm label as
+`rowBytes = 40`, 320 dots, and lets the printer position it. So head width is a limit,
+not a canvas. `padToHead` survives as a diagnostic for addressing a specific head
+column, off by default. Head width cannot be queried, so it is per-printer
+configuration.
 
-**The raster is not padded to head width.** The capture shows the vendor app
-printing a 40 mm label as `rowBytes = 40`, i.e. 320 dots — exactly the label — and
-letting the printer position it. So head width is a _limit_, not a canvas.
+## Other models — [third-party]
 
-That also explains the misplacement recorded here as unresolved: a rectangle on the
-label bounds landed left of them because we were padding to 384 and right-aligning
-inside it. Both halves of that were invented. Sending an unpadded label-width raster
-is what the working implementation does, so it is what we do; `padToHead` survives
-as a diagnostic for addressing a specific head column, off by default.
+From [tomLadder/thermoprint](https://github.com/tomLadder/thermoprint), whose notes
+derive from a decompile of the vendor Android app. We have no hardware but a P50S.
 
-Head width still is not queryable, so it stays per-printer configuration.
+MarkLife printers speak at least two dialects:
 
-## The rest of the family — [tier 4]
-
-**Everything in this section is tier 4** unless it says otherwise: it comes from reading
-[tomLadder/thermoprint](https://github.com/tomLadder/thermoprint), another browser app
-for these printers, whose own protocol notes derive from a JADX decompile of the vendor
-Android app (`com.feioou.deliprint.yxq` v3.6.0). None of it has been seen on our wire,
-and we have no hardware but a P50S to check it against.
-
-MarkLife printers do not all speak one protocol. There are at least two dialects:
-
-| Dialect | Models                   | Raster                                           | Us              |
+| Dialect | Models                   | Raster                                           | Here            |
 | ------- | ------------------------ | ------------------------------------------------ | --------------- |
 | **x2**  | P50, P50S, M60, X2       | `1F 10`, zlib-compressed, big-endian dims        | implemented     |
 | **L11** | P15, P12, P7 and aliases | `1D 76 30`, **uncompressed**, little-endian dims | not implemented |
 
-L11's command vocabulary differs throughout, not just in the raster: `10 FF F1 02` to
-enable, `1B 4A n` to feed, `1D 0C` to seek the gap, `10 FF 10 00 t` for thickness. A
-P15 sent our commands would ignore all of them. `src/printer/profiles.ts` recognises the
-L11 name prefixes and refuses to connect, which is the only responsible thing to do with
-a printer we cannot drive.
-
-### The x2 correspondence, which is worth more than it looks
-
-thermoprint's x2 dialect and our captured P50 sequence agree byte for byte on the
-service and characteristics (`ff00`/`ff01`/`ff02`/`ff03`), the credit-based flow
-control, the `1F 10 <rowBytesHi> <rowBytesLo> <heightHi> <heightLo> <payloadLen BE32>`
-raster header, and the job bracketing — `1F 80 02 20`, `1F C0 01 00`, `1F 11 51`,
-`1F 12 20 00`, `1F C0 01 01`, `1F 11 50`.
-
-That is two independent routes to the same bytes: theirs from decompiling the Android
-app, ours from an HCI capture of it. It does not upgrade anything to tier 3, but it is
-the strongest corroboration this reconstruction has had, and it arrived after the fact
-rather than being what the reconstruction was built from.
-
-### Three places we disagree, and keep our own
-
-Recorded rather than reconciled, because in each case a tier-4 claim contradicts
-something we confirmed ourselves.
-
-- **A wakeup frame.** thermoprint sends six zero bytes before `startPrintJob` on the x2
-  path. Our capture of the vendor app printing the same label three times shows no such
-  frame, and printing works without it. We do not send it.
-- **A shorter `setPrintParams`.** thermoprint uses a 4-byte `1F 70 02 <d>` with the
-  density remapped through `{1: 3, 2: 8, 3: 14}`. Our capture shows the 10-byte
-  `1F 70 02 <d> 00×6` with the density passed straight through. We send what we
-  captured.
-- **zlib parameters.** thermoprint compresses with fflate at `level: 6`; its notes
-  claim `windowBits 14`. Our golden fixtures, taken from the vendor SDK's own encoder,
-  pin `windowBits: 10` — a different CMF byte, so the streams are not interchangeable.
-  Ours is evidenced for this printer and theirs is not, so ours stands. Whether a P50S
-  would also accept a wider window is untested and uninteresting until something needs
-  it.
-
-### What this buys, and what it does not
-
-An `m60` profile ships, marked **unverified** in the UI and in
-`src/printer/profiles.ts`. It claims only that the M60 uses the dialect we already
-implement; its head width and chunk size are the P50's numbers because nobody has
-measured an M60. It exists to be disproved by someone with the hardware. The L11
-refusal, by contrast, is certainly correct: we know we cannot drive those printers.
-
-## What is left, and how to find it
-
-### The SDK is exhausted (and that was not the end of it)
-
-All forty functions in `lib/archive/original_interface_chinese.js` have been
-enumerated and every byte sequence transcribed. **It contains no motion or gap
-command beyond the ones already shown to be inert.** The `feed()` call inside its
-`printP80` path references a function that does not exist in the file.
-
-The P80 model in the same SDK speaks CPCL — `PAGE-WIDTH`, `FORM`, `PRINT` as ASCII
-text — which is a different protocol entirely and not what the P50 raster path
-uses. Mentioned only so nobody re-reads it hoping for a P50 command.
-
-So anything further is not in this SDK. It did not need to be: the gap seek turned
-out to be a command already in the table, issued in a position nobody had tried.
-Exhausting the _command space_ was not the same as exhausting the _state space_, and
-conflating the two is what stalled this for so long.
-
-### Does a gap-seek command exist at all? — yes
-
-**Answered by capture: `1F 12 20 00`, after the raster, inside the job.** See
-"Keeping successive labels aligned".
-
-This section previously argued the opposite, and the argument is preserved here as a
-worked example of a plausible-sounding inference that was simply wrong:
-
-> With the vendor app the _first_ print after loading a roll is misaligned and every
-> one after it is correct. A sensor-driven seek would fix the first print too,
-> because it would locate before printing. What fits is open-loop feeding.
-
-The observation was accurate; the conclusion did not follow. The seek runs at the
-_end_ of a job, registering the _next_ label — so a misaligned first print and
-correct later ones is exactly what a seek predicts too. Both hypotheses explained the
-evidence equally well, and nothing in the reasoning acknowledged that. The capture
-cost twenty minutes and settled in one pass what four rounds of inference had not.
-
-### Asking whether a command does anything
-
-Most of the difficulty in this document comes from one property of the firmware: a
-command sent on its own is acknowledged and ignored, and the ones that do anything
-only act inside a job, after a raster. The gap seek took four rounds of inference
-and an HCI capture to find for exactly that reason — `1F 12 20 00` had been in the
-command table the whole time and every test of it had been in the wrong position.
-
-Diagnostics has an instrument for that position now: **feed _N_ mm, then send
-«hex»**. It builds one real job — preamble, a blank raster of the requested height,
-the bytes under test, `stopPrintJob` — and sends it. `probeJob()` in
-`src/printer/protocol/probeJob.ts`.
-
-What it leaves out is the point. Three things move paper on a P50S: printing rows,
-the gap seek, and `alignPaperStart`. Two of those are part of an ordinary job's
-framing, and `alignPaperStart` alone is a twenty-millimetre retract that would
-drown out anything being measured. So the probe job carries none of them, and no
-`alignPaperEnd` either — the paper is left exactly where the probe left it. Feed a
-few millimetres for a reference, send the bytes, read off what happened.
-
-An empty probe is a legitimate control: it shows what the job alone does, which is
-the baseline every other reading is against.
-
-**Which side of the raster the bytes go on is part of the question, not a detail.**
-The gap seek acts only _after_ a raster and is inert anywhere else — that is why it
-took four rounds and a capture to find. `alignPaperStart` looks like the opposite:
-it retracts when it comes before a raster, as it does in an ordinary job, and four
-of them sent after one moved nothing at all. So the probe offers both sides, and a
-command that does nothing on one side has not been ruled out — only ruled out
-there.
-
-### Rewinding: what has been tried, and where — [answered]
-
-`adjustPosition` is dead in every mode and every position. `alignPaperStart` is the
-one command that winds paper back, it only does so before a raster, and only once
-per job.
-
-|                            | before the raster                   | after the raster                     |
-| -------------------------- | ----------------------------------- | ------------------------------------ |
-| `1F 11 51` alignPaperStart | **retracts, once; repeats ignored** | **inert** — four in one job, nothing |
-| `1F 11 10` BackwardDots    | **inert** — 8 dots, 40 dots         | **inert** — 640 dots                 |
-| `1F 11 11` BackwardMm      | **inert** — 80 mm                   | **inert** — 80 mm                    |
-| `1F 11 00` ForwardDots     | **inert** — 40 dots                 | **inert** — 40 dots                  |
-
-So `AdjustMode` is not implemented on this firmware in any of its four values. All
-four combinations of mode and position were probed with `probeJob()`, each in a job
-carrying nothing else that moves paper, and each was acknowledged with `4F 4B` and
-moved nothing. The command exists in the SDK facade and the printer accepts it; it
-does not act. Printing rows, the gap seek and `alignPaperStart` remain the only three
-things that move paper.
-
-**The retract was isolated properly.** A probe job of `startPrintJob` · `1F 11 51` ·
-2 mm blank raster · `stopPrintJob` — no gap seek, no `alignPaperEnd`, nothing else
-that moves paper — retracted the paper. That matters because the previous evidence
-for `1F 11 51` was a full print, and reading a full print's movement as belonging to
-one command in it is the mistake that cost three labels earlier in this file.
-
-**It does not stack.** This section first recorded two `1F 11 51` in one job both
-moving paper, and read the command as a relative move with about forty millimetres
-of usable rewind. Controlled runs later showed otherwise — see "Why the follow-up
-seek route is closed" below:
-
-- A repeat within one job is ignored, and retracts sent as separate jobs still move
-  the paper one retract's worth in total.
-- So `alignPaperStart` is an **align** to a position the printer already tracks,
-  not a relative move. How far it travels depends on where the paper starts: about
-  20 mm from the tear-off position, 8 mm mid-label.
-
-### The seek has a minimum approach distance — [measured]
-
-**This is the fact the whole registration problem reduces to.** Calibration: set the
-paper with varying amounts of an 80 mm label still to run, then send a 1 mm blank feed
-carrying a gap seek, and see where it lands.
-
-| label still to run                  | seek lands on           |
-| ----------------------------------- | ----------------------- |
-| 100 % down to ~30 % (80 mm → 24 mm) | its own gap — correct   |
-| below ~25 % (under 20 mm)           | the gap after — a label |
-
-The seek is not choosing wrongly and it is not unreliable. **It cannot see a boundary
-that is nearly under it.** Below roughly twenty-four millimetres of approach it misses
-and runs a full pitch to the next one. The figure is recorded here only: the
-constant that once carried it was removed with the follow-up route.
-
-Every wasted label in this file follows from that. A full-height label ends _at_ its
-gap — approach zero — so a seek sent afterwards, in a job of its own, can only find
-the next one. Nothing about job size, the tear-off round trip or the retract was ever
-the deciding factor; those were all attempts to explain a threshold nobody had
-measured.
-
-**An in-job seek does not have this problem.** The split path's last band ends at the
-gap too, and it registers. So the same opcode behaves differently depending on whether
-a real raster preceded it in the same job — of a piece with `1F 12` being inert when
-sent standalone, and with `1F 11 51` acting only before a raster. Position and company
-decide what a command on this printer does, and that has now caught us four times.
-
-The practical consequence: **`splitForSeek` is the route that works for a tall label at
-full quality.** Its seek needs no approach at all. The follow-up needs 24 mm bought
-back by retracting, and the retract cannot buy that much.
-
-### Why the follow-up seek route is closed — [settled]
-
-A follow-up seek — a second, tiny job carrying nothing but a millimetre of blank raster
-and the gap seek, sent after a label too tall to seek for itself — always took a blank
-label. Five rounds of hardware, and the answer is the threshold above plus one hard
-limit on the rewind.
-
-Everything tried, in order:
-
-| follow-up job                                   | start position                                   | result            |
-| ----------------------------------------------- | ------------------------------------------------ | ----------------- |
-| `1F 11 51` · raster · seek · `1F 11 50`         | end of tall label                                | whole blank label |
-| raster · seek, tear advance suppressed          | end of tall label                                | whole blank label |
-| `1F 11 51` ×2 in one job · raster · seek        | end of tall label                                | whole blank label |
-| `1F 11 51` ×2 in one job · raster · seek        | mid-label (print had been misaligned across two) | **correct**       |
-| `1F 11 51` in a job of its own, then a seek job | end of tall label                                | whole blank label |
-
-The fourth row is the same bytes as the third from a different position, which is the
-threshold demonstrated from both sides. The rest all start with approach zero.
-
-**One retract per job, and repeats within a job are ignored.** Two `1F 11 51` in one job
-moved the paper the same distance a single one did — same distance for double the
-commands is what an ignored second command looks like. Sending them as separate jobs
-instead gets them all acknowledged, and still moves the paper exactly one retract's
-worth. **One retract is all this mechanism physically has**, and it is well short of the
-24 mm the seek needs.
-
-That also settles what `alignPaperStart` is. Not a relative move that happens to cap
-out — an _align_, to a position the printer already knows, which is exactly why the
-second one does nothing. The name was right all along.
-
-So there is no way to buy the approach a standalone seek needs, and the route is closed.
-The constants that drove it are gone from the code; the numbers are here because they
-rule out a family of ideas rather than because anything computes with them:
-
-- one retract reaches under 20 mm, from a job starting at the tear-off position, where
-  it undoes the tear advance
-- a standalone seek needs about 24 mm of approach
-- nothing else on the firmware moves paper backwards — `adjustPosition` is inert in all
-  four modes on both sides of the raster
-
-**Splitting is what registers a tall label**, and it is the default. Its seek rides in
-the same job as a real raster, and an in-job seek needs no approach at all.
-
-### What a retract does mid-label — [measured, and it closes the seam]
-
-`alignPaperStart` in a band's preamble **works**, and the split seam is gone.
-
-A two-band 80 mm label went out with a retract at the boundary and no rows skipped.
-It printed whole, retracted between the parts, and landed on a boundary — and the two
-parts overlapped by **exactly 7 mm**. That number is the whole finding:
-
-|                                    | dots                 |
-| ---------------------------------- | -------------------- |
-| job take-up at the start of a band | +8                   |
-| the retract                        | −64                  |
-| net, per boundary                  | **−56 = 7 mm early** |
-
-So mid-label the retract winds back a fixed **8 mm** — not the ~20 mm it moves from
-the tear-off position, and not the 1 mm that would have closed the seam by itself. Two
-different distances from two different starting positions, which is worth stating
-plainly because it rules out both of the tidy stories: it is not a fixed offset, and it
-is not an align to the label start. The 20 mm reading came from a job that also had the
-tear-off advance to undo.
-
-**The correction is exact, and it costs nothing.** Each band after the first leads with
-56 blank rows. Blank rows advance the paper by precisely their count and fire no dots,
-so they carry the head forward over ground the previous band already printed — leaving
-its image untouched — and the band's own first row lands exactly where that band
-stopped. Every row of the design prints once, at the offset it was designed for.
-
-`SEAM_RETRACT_OVERSHOOT_DOTS` and `planBands()` in
-`src/printer/protocol/splitJob.ts`; `PrintSettings.closeSplitSeam` turns it on. The
-boundary is two decisions that have to agree — rows the cut gives up, blank rows the
-next band leads with — so both are made in `planBands()` and both drivers call it.
-
-**Confirmed on hardware and on by default**, along with splitting itself: a boundary
-now costs nothing, so there is nothing left to weigh up and the print panel says so in
-one sentence with the controls behind a disclosure.
-
-Turning it off falls back to giving up `SPLIT_SEAM_DOTS` at each boundary and hiding
-the cut in the quietest row nearby. Worth keeping, because 7 mm is one measurement: if
-it ever reads differently on other stock the error shows as a seam or an overlap of the
-difference, and the fallback's millimetre is at least predictable.
-
-### Capturing the ground truth
-
-If the question needs settling, capture what the vendor app really sends.
-
-**On the phone**
-
-1. Enable **Developer options → Enable Bluetooth HCI snoop log**.
-2. Reboot, so the log starts clean and is as short as possible.
-3. Turn off other Bluetooth devices first — earbuds, watch, car. The log records
-   _all_ Bluetooth traffic, so this is both less noise and less private data.
-4. Open the MarkLife app, connect, print **the same label three times**, and let it
-   feed after each. Three prints is what distinguishes a one-off from a per-print
-   feed, which is the whole question.
-5. Note the label size you told the app, and that it was three prints.
-
-**Getting the log off the phone**
-
-The log lives at `/data/misc/bluetooth/logs/btsnoop_hci.log`, which needs root, so
-the practical route is a bug report:
-
-```
-adb bugreport snoop.zip
-```
-
-Inside that zip, the capture is at
-`FS/data/misc/bluetooth/logs/btsnoop_hci.log`. Extract just that one file — the zip
-itself is large and full of unrelated diagnostics. Without `adb`, **Developer
-options → Bug report** produces the same zip and can be shared off the phone.
-
-**Decoding it**
-
-```
-node scripts/parse-btsnoop.mjs captures/btsnoop_hci.log
-```
-
-`scripts/parse-btsnoop.mjs` parses the btsnoop container, reassembles L2CAP,
-decodes ATT, resolves handles to characteristic UUIDs from whatever GATT discovery
-the capture contains, and prints two things: a timeline, and the concatenated
-command stream with every byte matched against the table above. Unrecognised bytes
-are marked `?` — those are the interesting ones. It reports other devices as packet
-counts only and decodes the printer's connection alone, so a capture can be shared
-without handing over unrelated Bluetooth traffic.
-
-Compare that sequence against `1F C0 01 00` / `1F 10 …` / `1F C0 01 01`. Anything
-present there and absent here is the answer, and it is a fact rather than an
-inference — which everything in this section otherwise is not.
-
-Wireshark remains a fine alternative (filter `btatt`); the script exists so that
-settling this needs no extra tooling installed.
+L11's vocabulary differs throughout, not just in the raster. `src/printer/profiles.ts`
+recognises L11 names and refuses them with a reason
+([ADR 0003](adr/0003-more-dialects-x2-first.md)). An **M60** profile ships marked
+unverified: it claims only that the M60 speaks x2, and its head width and chunk size
+are the P50's because nobody has measured one.
+
+thermoprint's x2 notes agree with our capture byte for byte on the GATT profile, the
+credits, the raster header and the job framing: two independent routes to the same
+bytes. Where it differs, our capture wins, and we keep our own:
+
+- **No wakeup frame.** It sends six zero bytes before `startPrintJob`; the vendor app
+  does not, and printing works without them.
+- **The 10-byte `setPrintParams`** with density passed straight through, not its
+  4-byte form with density remapped.
+- **`windowBits: 10`**, pinned by the SDK goldens, not its 14. Whether a P50S accepts
+  a wider window is untested.
+
+## When a print goes wrong
+
+- **Slow, faint or cut short:** check the battery first. The head takes its heat from
+  it, and the connection panel warns below 20%. `00 00` may mean empty or charging.
+- **No `4F 4B`:** the printer may have stopped putting rows on paper while flow
+  control stayed clean. Look at the label before trusting or distrusting it.
+- **First label after loading a roll is misaligned:** expected. The seek at the end of
+  each job registers the _next_ label, and no job has ended yet.
+- **A tall label stops mid-label, or consecutive tall prints drift a gap-width each
+  time:** the job is over 16 KB and its seek went unread. Check that splitting is on.
+- **A line or an overlap at a band boundary:** the 7 mm seam correction does not fit
+  this stock. Turn the seam fix off to fall back to skipping rows.
+- **Empty device chooser:** the filter must be the name prefix, not the service UUID.
+- **A job stalls before printing:** one of `ff01` and `ff03` is not subscribed.
+- **A printer is refused at connect:** it speaks a dialect this app does not drive.
+
+## Method
+
+Four lessons this protocol taught more than once:
+
+- **A command inert in one position may act in another**: before or after the raster,
+  inside or outside a job. Test both before calling it unimplemented.
+- **Credit a movement to a command only when the job contains nothing else that moves
+  paper.** A full print moves paper by itself.
+- **A capture of the vendor app beats any amount of inference from the SDK.**
+- **Third-party findings are leads, not facts**, until they are seen on our own wire.
+
+[`CAPTURING.md`](CAPTURING.md) covers both tools for that: capturing what the vendor
+app sends, and probing a single command in a controlled job.

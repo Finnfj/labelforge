@@ -24,33 +24,8 @@ over **Web Bluetooth**.
 design in the browser and print over Bluetooth, and successive labels stay registered
 on gap stock without manual calibration.
 
-That last part took some getting to. The vendor SDK contains no gap-seek command, and
-four rounds of reasoning from the SDK plus hardware testing concluded — wrongly — that
-none existed. Capturing the vendor Android app's own Bluetooth traffic settled it in
-one pass: the seek is `1F 12 20 00`, a command that had been in our table the whole
-time, issued _after_ the raster payload and before the job ends. Sent anywhere else it
-does nothing at all, which is why it had been written off.
-
-The same capture corrected three other guesses: the raster is sent at label width with
-no padding to the head, paper type uses a different mode byte, and print parameters go
-out in a longer form than the SDK documents. `scripts/parse-btsnoop.mjs` decodes such a
-capture against the known command set, and `docs/PROTOCOL.md` records both the findings
-and the reasoning that failed.
-
-Tall labels needed one more thing. The printer honours that seek only in a job it has
-read in full, and it starts printing once its ~18 KB buffer fills — so on an 80 mm
-photo label the seek is still unread when the label comes out, and the roll stops
-mid-label. The vendor app has the same problem and does nothing about it.
-
-The size is the whole constraint, and the dither is what decides it: error diffusion
-scatters a photograph into nearly random dots that will not compress. Softening the
-diffusion or switching to an ordered grid takes the same 384 × 640 raster from about
-23 KB to 15 or to 6. So when a label is too big, the print panel rasterises the
-alternatives, offers the mildest one that actually fits with the real figures, and
-applies it on a click — and under the line the label is simply an ordinary job that
-registers itself. For pictures too detailed for any of that, an oversized job can be
-followed by a small one carrying nothing but the seek, though on this firmware that
-behaves as a form feed and costs a blank label.
+How the protocol works is in `docs/PROTOCOL.md`, and the decisions it forced are in
+`docs/adr/`.
 
 Working today:
 
@@ -123,8 +98,12 @@ npx playwright install chromium   # once, for the browser tier
 ## Documentation
 
 - `docs/PROTOCOL.md` — the wire protocol: GATT profile, command set, raster format,
-  the captured print sequence — with a sequence diagram — and how to capture one
-  yourself
+  the print sequence with a diagram, what moves paper, and how tall labels register
+- `docs/CAPTURING.md` — capturing the vendor app's Bluetooth traffic, and probing a
+  single command
+- `docs/adr/` — the decisions the protocol forced, one short record each
+- `GLOSSARY.md` — the words for jobs, bands, seeks and the rest, used the same way
+  everywhere
 - `docs/RENDERING.md` — how a document becomes dots: the two-plane rasteriser, the
   dithering controls with guidance on choosing between them, and how text is loaded
   and rendered
@@ -158,7 +137,8 @@ npm run snoop captures/btsnoop_hci.log
 ```
 
 Decodes an Android Bluetooth HCI snoop log down to the printer's command stream, with
-every byte matched against the known command table. Needs no Wireshark.
+every byte matched against the known command table. Needs no Wireshark; see
+`docs/CAPTURING.md`.
 
 ## Licence
 
