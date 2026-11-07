@@ -120,7 +120,7 @@ flowchart TD
     app["<b>app/</b><br/>page shell, panels, usePrinter<br/><i>may import anything</i>"]
     editor["<b>editor/</b><br/>Fabric canvas, toolbar, inspector<br/><i>not printer/</i>"]
     render["<b>render/</b><br/>rasterise, dither, barcode, icons<br/><i>not printer/, not react</i>"]
-    printer["<b>printer/</b><br/>drivers, transport, protocol<br/><i>not fabric, react or editor/</i>"]
+    printer["<b>printer/</b><br/>drivers, transport, dialects<br/><i>not fabric, react or editor/</i>"]
     model["<b>model/</b><br/>LabelDoc, units, bitmap<br/><i>leaf — imports no layer</i>"]
 
     app --> editor

@@ -58,7 +58,7 @@ describe('planX2Print', () => {
       SEEK_GAP, //                           locate(gap)
       '1f c0 01 01', //                      stopPrintJob
     ])
-    // The tear-off advance is its own transfer, after the job stream.
+    // The tear-off advance is a write of its own, after the job stream.
     expect(job.epilogue.map((c) => hex(c.bytes))).toEqual([TEAR_OFF])
   })
 

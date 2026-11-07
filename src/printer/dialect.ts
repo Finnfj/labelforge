@@ -48,7 +48,7 @@ export interface PlannedJob {
   /** Which copy this job belongs to, counting from 1. */
   copy: number
   parts: JobPart[]
-  /** Sent after the job's stream has gone, as transfers of their own. */
+  /** Sent after the job's stream has gone, each as a write of its own. */
   epilogue: NamedCommand[]
   /**
    * Whether to wait for the printer to report the job done before going on.
@@ -60,7 +60,11 @@ export interface PlannedJob {
 }
 
 export interface JobWait {
-  /** How long the printer may take, at least, before its silence means something. */
+  /**
+   * How long to wait for the printer to report the job done before its silence
+   * counts. A driver may wait longer, never shorter: the BLE driver also has a
+   * minimum of its own, and waits whichever is longer.
+   */
   timeoutMs: number
   /**
    * What silence means.

@@ -11,7 +11,7 @@ import type { MockTransport } from '../../transport/MockTransport'
  * Never imported by app code.
  *
  * A job is `AA <length, big-endian u16> <rows, uncompressed> BB`. The last band of
- * each copy is followed by `EE` as a transfer of its own.
+ * each copy is followed by `EE` as a write of its own.
  */
 
 export const START = 0xaa

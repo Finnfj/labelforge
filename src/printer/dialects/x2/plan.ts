@@ -21,7 +21,7 @@ import { planBands } from './splitJob'
  *   rows skipped, blank rows led with, retract sent — are made here together, so
  *   they cannot disagree.
  * - **Gap seek** only in the last band; two would cost a blank label.
- * - **Tear-off advance** once, after the last band, as a transfer of its own.
+ * - **Tear-off advance** once, after the last band, as a write of its own.
  * - **Wait.** The printer takes no job while it is working on one, so each band
  *   waits for the one before it; silence there stops the rest of the copy. The
  *   last band waits for the whole label to print, and silence only warns.

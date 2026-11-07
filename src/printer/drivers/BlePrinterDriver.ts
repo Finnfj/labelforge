@@ -531,7 +531,7 @@ type PrintProgressPhase = PrinterEvents['progress']['phase']
 /**
  * A job's parts as the one byte stream the printer parses.
  *
- * The printer reads a byte stream off a UART; transfer boundaries mean nothing to
+ * The printer reads a byte stream off a UART; write boundaries mean nothing to
  * it, and everything written outside the credited chunk loop is written blind. So
  * the whole job is chunked as one stream, commands and raster together, and every
  * byte waits for a credit (ADR 0002). It is also what the vendor app does.
