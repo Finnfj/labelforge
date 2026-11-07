@@ -1,0 +1,202 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`wire snapshots: BLE driver > a small label 1`] = `
+[
+  "1f 80 02 20 1f 70 02 08 00 00 00 00 00 00 1f c0 01 00 1f 11 51 1f 10 00 30 00 20 00 00 00 1e 28 91 fb cf f0 7f 14 0e 20 1c 70 07 8c 70 38 e0 0e 18 e1 70 c0 1d 30 c2 21 00 0b 17 fd 1f 1f 12 20 00 1f c0 01 01",
+  "1f 11 50",
+]
+`;
+
+exports[`wire snapshots: BLE driver > a split label, paper seam closed 1`] = `
+{
+  "bytes": 17472,
+  "lengths": "90×154, 40, 90×39, 59, 3",
+  "notes": undefined,
+  "sha256": "036c3344f9bda2d09d52cc88fc6e3b4d67bab579d4ce677d51da29f3aadac9ae",
+  "writes": 196,
+}
+`;
+
+exports[`wire snapshots: BLE driver > a split label, paper seam left open 1`] = `
+{
+  "bytes": 17063,
+  "lengths": "90×144, 76, 90×44, 64, 3",
+  "notes": undefined,
+  "sha256": "83ca8cff2242c12bec0497af74202ac82f0a1b39304b44fa4f3889e65987b4c5",
+  "writes": 191,
+}
+`;
+
+exports[`wire snapshots: BLE driver > a tall label with splitting turned off 1`] = `
+{
+  "bytes": 17413,
+  "lengths": "90×193, 40, 3",
+  "notes": undefined,
+  "sha256": "2984dd3208ad35307c1138ad9dc24e89882dd0a9c8b1251d9ca50e23f3f4f2a9",
+  "writes": 195,
+}
+`;
+
+exports[`wire snapshots: BLE driver > connect sequence 1`] = `
+[
+  "1f b2 00",
+  "10 ff 20 f0",
+  "10 ff 20 f1",
+  "10 ff 20 f2",
+  "10 ff 30 11",
+]
+`;
+
+exports[`wire snapshots: BLE driver > continuous paper 1`] = `
+[
+  "1f 80 02 10 1f 70 02 08 00 00 00 00 00 00 1f c0 01 00 1f 11 51 1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1 1f 12 10 00 1f c0 01 01",
+  "1f 11 50",
+]
+`;
+
+exports[`wire snapshots: BLE driver > no gap seek 1`] = `
+[
+  "1f 80 02 20 1f 70 02 08 00 00 00 00 00 00 1f c0 01 00 1f 11 51 1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1 1f 12 20 00 1f c0 01 01",
+  "1f 11 50",
+]
+`;
+
+exports[`wire snapshots: BLE driver > speed set 1`] = `
+[
+  "1f 80 02 20 1f 70 02 08 00 00 00 00 00 00 1f 60 01 01 1f c0 01 00 1f 11 51 1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1 1f 12 20 00 1f c0 01 01",
+  "1f 11 50",
+]
+`;
+
+exports[`wire snapshots: BLE driver > two copies 1`] = `
+[
+  "1f 80 02 20 1f 70 02 08 00 00 00 00 00 00 1f c0 01 00 1f 11 51 1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1 1f 12 20 00 1f c0 01 01",
+  "1f 11 50",
+  "1f 80 02 20 1f 70 02 08 00 00 00 00 00 00 1f c0 01 00 1f 11 51 1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1 1f 12 20 00 1f c0 01 01",
+  "1f 11 50",
+]
+`;
+
+exports[`wire snapshots: BLE driver > two copies of a split label 1`] = `
+{
+  "bytes": 34944,
+  "lengths": "90×154, 40, 90×39, 59, 3, 90×154, 40, 90×39, 59, 3",
+  "notes": undefined,
+  "sha256": "872c4a4354a866174b4c8d8b3022a8688cd7627d2918e93a88e1ce9845694910",
+  "writes": 392,
+}
+`;
+
+exports[`wire snapshots: virtual driver > a small label 1`] = `
+[
+  "1f 80 02 20  # setPaperTypeSilent",
+  "1f 70 02 08 00 00 00 00 00 00  # setPrintParams",
+  "1f c0 01 00  # startPrintJob",
+  "1f 11 51  # alignPaperStart",
+  "1f 10 00 30 00 20 00 00 00 1e 28 91 fb cf f0 7f 14 0e 20 1c 70 07 8c 70 38 e0 0e 18 e1 70 c0 1d 30 c2 21 00 0b 17 fd 1f",
+  "1f 12 20 00  # locate",
+  "1f c0 01 01  # stopPrintJob",
+  "1f 11 50  # alignPaperEnd",
+]
+`;
+
+exports[`wire snapshots: virtual driver > a split label, paper seam closed 1`] = `
+{
+  "bytes": 17472,
+  "lengths": "4, 10, 4, 3, 90×154, 15, 4×2, 10, 4, 3, 90×39, 30, 4×2, 3",
+  "notes": "setPaperTypeSilent, setPrintParams, startPrintJob, alignPaperStart, stopPrintJob, setPaperTypeSilent, setPrintParams, startPrintJob, alignPaperStart, locate, stopPrintJob, alignPaperEnd",
+  "sha256": "036c3344f9bda2d09d52cc88fc6e3b4d67bab579d4ce677d51da29f3aadac9ae",
+  "writes": 207,
+}
+`;
+
+exports[`wire snapshots: virtual driver > a split label, paper seam left open 1`] = `
+{
+  "bytes": 17063,
+  "lengths": "4, 10, 4, 3, 90×144, 51, 4×2, 10, 4, 90×44, 38, 4×2, 3",
+  "notes": "setPaperTypeSilent, setPrintParams, startPrintJob, alignPaperStart, stopPrintJob, setPaperTypeSilent, setPrintParams, startPrintJob, locate, stopPrintJob, alignPaperEnd",
+  "sha256": "83ca8cff2242c12bec0497af74202ac82f0a1b39304b44fa4f3889e65987b4c5",
+  "writes": 201,
+}
+`;
+
+exports[`wire snapshots: virtual driver > a tall label with splitting turned off 1`] = `
+{
+  "bytes": 17413,
+  "lengths": "4, 10, 4, 3, 90×193, 11, 4×2, 3",
+  "notes": "setPaperTypeSilent, setPrintParams, startPrintJob, alignPaperStart, locate, stopPrintJob, alignPaperEnd",
+  "sha256": "2984dd3208ad35307c1138ad9dc24e89882dd0a9c8b1251d9ca50e23f3f4f2a9",
+  "writes": 201,
+}
+`;
+
+exports[`wire snapshots: virtual driver > continuous paper 1`] = `
+[
+  "1f 80 02 10  # setPaperTypeSilent",
+  "1f 70 02 08 00 00 00 00 00 00  # setPrintParams",
+  "1f c0 01 00  # startPrintJob",
+  "1f 11 51  # alignPaperStart",
+  "1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1",
+  "1f 12 10 00  # locate",
+  "1f c0 01 01  # stopPrintJob",
+  "1f 11 50  # alignPaperEnd",
+]
+`;
+
+exports[`wire snapshots: virtual driver > no gap seek 1`] = `
+[
+  "1f 80 02 20  # setPaperTypeSilent",
+  "1f 70 02 08 00 00 00 00 00 00  # setPrintParams",
+  "1f c0 01 00  # startPrintJob",
+  "1f 11 51  # alignPaperStart",
+  "1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1",
+  "1f 12 20 00  # locate",
+  "1f c0 01 01  # stopPrintJob",
+  "1f 11 50  # alignPaperEnd",
+]
+`;
+
+exports[`wire snapshots: virtual driver > speed set 1`] = `
+[
+  "1f 80 02 20  # setPaperTypeSilent",
+  "1f 70 02 08 00 00 00 00 00 00  # setPrintParams",
+  "1f 60 01 01  # setSpeed",
+  "1f c0 01 00  # startPrintJob",
+  "1f 11 51  # alignPaperStart",
+  "1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1",
+  "1f 12 20 00  # locate",
+  "1f c0 01 01  # stopPrintJob",
+  "1f 11 50  # alignPaperEnd",
+]
+`;
+
+exports[`wire snapshots: virtual driver > two copies 1`] = `
+[
+  "1f 80 02 20  # setPaperTypeSilent",
+  "1f 70 02 08 00 00 00 00 00 00  # setPrintParams",
+  "1f c0 01 00  # startPrintJob",
+  "1f 11 51  # alignPaperStart",
+  "1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1",
+  "1f 12 20 00  # locate",
+  "1f c0 01 01  # stopPrintJob",
+  "1f 11 50  # alignPaperEnd",
+  "1f 80 02 20  # setPaperTypeSilent",
+  "1f 70 02 08 00 00 00 00 00 00  # setPrintParams",
+  "1f c0 01 00  # startPrintJob",
+  "1f 11 51  # alignPaperStart",
+  "1f 10 00 08 00 10 00 00 00 10 28 91 fb cf f0 9f 22 48 a1 f6 ff 00 11 50 3f c1",
+  "1f 12 20 00  # locate",
+  "1f c0 01 01  # stopPrintJob",
+  "1f 11 50  # alignPaperEnd",
+]
+`;
+
+exports[`wire snapshots: virtual driver > two copies of a split label 1`] = `
+{
+  "bytes": 34944,
+  "lengths": "4, 10, 4, 3, 90×154, 15, 4×2, 10, 4, 3, 90×39, 30, 4×2, 3, 4, 10, 4, 3, 90×154, 15, 4×2, 10, 4, 3, 90×39, 30, 4×2, 3",
+  "notes": "setPaperTypeSilent, setPrintParams, startPrintJob, alignPaperStart, stopPrintJob, setPaperTypeSilent, setPrintParams, startPrintJob, alignPaperStart, locate, stopPrintJob, alignPaperEnd, setPaperTypeSilent, setPrintParams, startPrintJob, alignPaperStart, stopPrintJob, setPaperTypeSilent, setPrintParams, startPrintJob, alignPaperStart, locate, stopPrintJob, alignPaperEnd",
+  "sha256": "872c4a4354a866174b4c8d8b3022a8688cd7627d2918e93a88e1ce9845694910",
+  "writes": 414,
+}
+`;
