@@ -412,10 +412,10 @@ export function PrintPanel({
                   A smaller raster avoids the split altogether:{' '}
                   <strong>{remedy!.rung.label.toLowerCase()}</strong> brings the same label to{' '}
                   {kb(remedy!.assessment.bytes)} KB, under the{' '}
-                  {(remedy!.assessment.readAheadBytes ?? 0) / 1024} KB the printer reads in full, so
-                  it registers itself in a single job. The cost is {remedy!.rung.describe}. This is
-                  the mildest change that fits: the picture is the only thing on a label whose size
-                  is a choice, since text and codes compress to almost nothing however large it is.{' '}
+                  {kb(remedy!.assessment.readAheadBytes ?? 0)} KB the printer reads in full, so it
+                  registers itself in a single job. The cost is {remedy!.rung.describe}. This is the
+                  mildest change that fits: the picture is the only thing on a label whose size is a
+                  choice, since text and codes compress to almost nothing however large it is.{' '}
                   <button
                     className="linklike"
                     onClick={() => photoIds.forEach((id) => updateElement(id, remedy!.rung.tone))}
@@ -428,8 +428,8 @@ export function PrintPanel({
                 <p>
                   Nothing on the tone list would get it under the line &mdash; even ordered
                   dithering leaves {kb(remedy.assessment.bytes)} KB against the{' '}
-                  {(remedy.assessment.readAheadBytes ?? 0) / 1024} KB the printer reads in full.
-                  This picture has too much fine detail to compress, so splitting is the only route.
+                  {kb(remedy.assessment.readAheadBytes ?? 0)} KB the printer reads in full. This
+                  picture has too much fine detail to compress, so splitting is the only route.
                 </p>
               )}
 

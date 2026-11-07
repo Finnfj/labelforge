@@ -7,6 +7,7 @@ import { printDurationMs, SEEK_SAFE_JOB_BYTES } from './constants'
 import { encodeImage } from './encodeImage'
 import { DEFAULT_PRINT_SETTINGS, type PrintSettings } from '../../types'
 import { planX2Print } from './plan'
+import { splitBudgetBytes } from './splitJob'
 import { x2 } from '.'
 
 /*
@@ -205,7 +206,7 @@ describe('x2.assessJob', () => {
     const assessment = x2.assessJob(bitmap)
     expect(assessment).toEqual({
       bytes: encodeImage(bitmap).length,
-      readAheadBytes: SEEK_SAFE_JOB_BYTES,
+      readAheadBytes: splitBudgetBytes(),
       fits: true,
       compressed: true,
     })
@@ -218,6 +219,20 @@ describe('x2.assessJob', () => {
     expect(assessment.bytes).toBeGreaterThan(SEEK_SAFE_JOB_BYTES)
     expect(assessment.fits).toBe(false)
     expect(planOf(bitmap).copies[0].jobs.length).toBeGreaterThan(1)
+  })
+
+  it('says a label does not fit exactly when the plan splits it', () => {
+    // The planner keeps 15% headroom under the 16 KB limit. The panel's note once
+    // used the limit itself, so a label in between was split without a word.
+    const between = noisyBitmap(384, 300)
+    const bytes = encodeImage(between).length
+    expect(bytes).toBeGreaterThan(splitBudgetBytes())
+    expect(bytes).toBeLessThanOrEqual(SEEK_SAFE_JOB_BYTES)
+    for (let rows = 240; rows <= 320; rows += 8) {
+      const bitmap = noisyBitmap(384, rows)
+      const split = planOf(bitmap).copies[0].jobs.length > 1
+      expect(x2.assessJob(bitmap).fits, `${rows} rows`).toBe(!split)
+    }
   })
 
   it('reports the raster as compressed, so a simpler picture can make it smaller', () => {

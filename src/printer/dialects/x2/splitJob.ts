@@ -126,6 +126,17 @@ const SEAM_SEARCH_DOTS = 40
 /** Fraction of the limit a band is allowed to reach, so a re-encode has room. */
 const HEADROOM = 0.85
 
+/**
+ * The largest raster sent as one job: the seek limit less the headroom.
+ *
+ * A raster at or under this goes out whole, and one over it is split into bands.
+ * Exported so the print panel's note and the plan cannot disagree about which
+ * labels are split: they once did, by the 15% between this and the limit.
+ */
+export function splitBudgetBytes(limitBytes = SEEK_SAFE_JOB_BYTES): number {
+  return Math.max(1, Math.floor(limitBytes * HEADROOM))
+}
+
 /** Shortest band worth sending, so the plan always reaches the end of the label. */
 const MIN_BAND_ROWS = SPLIT_SEAM_DOTS * 4
 
@@ -147,7 +158,7 @@ export function planSeekableBands(
    */
   seamDots = SPLIT_SEAM_DOTS,
 ): PackedBitmap[] {
-  const budget = Math.max(1, Math.floor(limitBytes * HEADROOM))
+  const budget = splitBudgetBytes(limitBytes)
   if (encodeImage(bitmap).length <= budget) return [bitmap]
 
   const bytesPerRow = encodeImage(bitmap).length / Math.max(1, bitmap.heightDots)
