@@ -257,10 +257,11 @@ locates do nothing and the height query is unimplemented.
 
 **Caveat, added later and important:** "on its own" is doing real work in that
 sentence. `1F 12 20 00` behaves exactly like the commands above in isolation, and
-it is nevertheless the working gap seek when it follows a raster inside a job. Do
-not read the list as proof that these opcodes are unimplemented — only that they
+it is nevertheless the working gap seek when it follows a raster inside a job.
+`1F 11 51` likewise retracts the paper when it comes before a raster inside a job.
+Do not read the list as proof that these opcodes are unimplemented — only that they
 are inert in the position they were tested in. See "Keeping successive labels
-aligned" below.
+aligned" and "Rewinding" below.
 
 What does move paper is a **print job**. So to feed a known distance, print an
 all-white raster of that height: the head advances the rows and fires no dots.
@@ -334,9 +335,9 @@ sequenceDiagram
     A->>P: subscribe ff01 (status) and ff03 (credits)
     Note right of A: Both, before any print.<br/>Subscribing to one stalls the job.
     P-->>A: ff03: 01 04 — opening credit window, size 4
-    A->>P: 1F 07 setBluetoothType
-    A->>P: 10 FF 20 F2 / F1 / F3 — version, serial, MAC
-    P-->>A: firmware, serial (model is taken from the advertised name)
+    A->>P: 1F B2 00 setBluetoothType
+    A->>P: 10 FF 20 F0 / F1 / F2, 10 FF 30 11 — model, firmware, serial, MAC
+    P-->>A: firmware, serial (model and MAC stay silent; model comes from the advertised name)
     end
 
     rect rgb(245, 243, 236)
@@ -459,8 +460,9 @@ to 16 KB rather than the observed 18,360 B because the throttle point is where t
 buffer was already full and nothing says the figure holds at a different battery
 level. Erring low costs an unnecessary 52-byte follow-up; erring high costs a label.
 
-It is a threshold, not a ceiling — nothing about a large label is refused or warned
-about, because the next section is the remedy and it is automatic.
+It is a threshold, not a ceiling — nothing about a large label is refused, because
+splitting it into bands is the remedy and it is on by default. See "Splitting one
+label across several jobs".
 
 ### What `1F 11 51` and `1F 11 50` appear to be — [unconfirmed]
 
@@ -550,9 +552,12 @@ affirmative: whatever it uses to decide where the gap is survives a job boundary
 the last band's seek lands correctly even though that band printed only a third of
 the label.
 
-**The seam is exactly 1 mm, and it cannot be closed.** The printer takes up eight
-dots at the start of a job before it lays down a raster. That millimetre passes the
-head with nothing fired at it, and nothing takes it back:
+**The seam is exactly 1 mm, and winding back a few dots does not close it.** It is
+closed now by a different route — a retract at the boundary plus blank rows, under
+"What a retract does mid-label" below — and what follows here is the fallback used
+when `closeSplitSeam` is off. The printer takes up eight dots at the start of a job
+before it lays down a raster. That millimetre passes the head with nothing fired at
+it, and none of these takes it back:
 
 - **Winding back eight dots** — sent, acknowledged, ignored.
 - **Winding back forty** — sent, acknowledged, ignored. Forty had looked as though
@@ -566,11 +571,11 @@ head with nothing fired at it, and nothing takes it back:
   repeating rows does not undo it, it prints them again after the gap and pushes
   everything below down by another millimetre.
 
-Printing rows and the gap seek remain the only two things that move paper on a
-P50S, which is where this document started.
+Printing rows, the gap seek and the `alignPaperStart` retract remain the only three
+things that move paper on a P50S.
 
-So the millimetre is spent, and what is left is choosing what it costs and where it
-falls.
+With the seam fix off, the millimetre is spent, and what is left is choosing what it
+costs and where it falls.
 
 **What it costs:** the eight rows that land in it are skipped, not printed late.
 Late shifts the whole remainder of the label down a millimetre per boundary, which
@@ -587,7 +592,8 @@ quietest row available.
 
 The cost is that the head now stops at each boundary while the driver waits, and a
 stopped head is where a seam would show. The planner minimises the band count for
-that reason, and the option is off by default.
+that reason. Splitting (`splitForSeek`) and the seam fix (`closeSplitSeam`) are both
+on by default.
 
 ### The diagnostics feed used to seek
 
@@ -669,7 +675,14 @@ until something needs it". Something needed it, and the answer is no: 10 → 15 
 Floyd–Steinberg from 23,140 to 22,829 bytes, 1.3%. The parameter the goldens pin can
 stay pinned.
 
-### The follow-up seek job — confirmed working
+### The follow-up seek job — removed
+
+**Superseded.** This route is gone from the code — `followUpSeekJob()`, its setting
+and its panel controls were removed — and "Why the follow-up seek route is closed"
+below explains why: a seek in a job of its own needs about 24 mm of approach that no
+retract can buy back. Splitting is what registers a tall label. The section is kept
+for its measurements; its claims of a working route, and its description of the
+print panel, no longer hold.
 
 The seek is honoured by any job the printer reads in full, so the fix is to send one
 of those. After an oversized label is out the driver sends a second, ordinary job
@@ -901,15 +914,15 @@ there.
 ### Rewinding: what has been tried, and where — [answered]
 
 `adjustPosition` is dead in every mode and every position. `alignPaperStart` is the
-one command that winds paper back, it only does so before a raster, and it stacks
-twice before the roll refuses.
+one command that winds paper back, it only does so before a raster, and only once
+per job.
 
-|                            | before the raster               | after the raster                     |
-| -------------------------- | ------------------------------- | ------------------------------------ |
-| `1F 11 51` alignPaperStart | **retracts, ~20 mm; stacks ×2** | **inert** — four in one job, nothing |
-| `1F 11 10` BackwardDots    | **inert** — 8 dots, 40 dots     | **inert** — 640 dots                 |
-| `1F 11 11` BackwardMm      | **inert** — 80 mm               | **inert** — 80 mm                    |
-| `1F 11 00` ForwardDots     | **inert** — 40 dots             | **inert** — 40 dots                  |
+|                            | before the raster                   | after the raster                     |
+| -------------------------- | ----------------------------------- | ------------------------------------ |
+| `1F 11 51` alignPaperStart | **retracts, once; repeats ignored** | **inert** — four in one job, nothing |
+| `1F 11 10` BackwardDots    | **inert** — 8 dots, 40 dots         | **inert** — 640 dots                 |
+| `1F 11 11` BackwardMm      | **inert** — 80 mm                   | **inert** — 80 mm                    |
+| `1F 11 00` ForwardDots     | **inert** — 40 dots                 | **inert** — 40 dots                  |
 
 So `AdjustMode` is not implemented on this firmware in any of its four values. All
 four combinations of mode and position were probed with `probeJob()`, each in a job
@@ -924,16 +937,16 @@ that moves paper — retracted the paper. That matters because the previous evid
 for `1F 11 51` was a full print, and reading a full print's movement as belonging to
 one command in it is the mistake that cost three labels earlier in this file.
 
-**It stacks, and the ceiling is mechanical.** Two `1F 11 51` in one job both moved
-paper. On a third the label went stale — the paper stopped coming back, because the
-roll inside the cartridge will not unwind that far in reverse. Two consequences:
+**It does not stack.** This section first recorded two `1F 11 51` in one job both
+moving paper, and read the command as a relative move with about forty millimetres
+of usable rewind. Controlled runs later showed otherwise — see "Why the follow-up
+seek route is closed" below:
 
-- `alignPaperStart` is a **relative move**, not an align to a fixed registration
-  point. The name allowed both readings and only one of them left this route open.
-- The usable rewind is about **forty millimetres**, full stop. A full-height 80 mm
-  label cannot be wound all the way back, so any scheme that needs to must be
-  redesigned around forty rather than tuned. `MAX_STACKED_RETRACTS` in
-  `src/printer/protocol/constants.ts` carries the number.
+- A repeat within one job is ignored, and retracts sent as separate jobs still move
+  the paper one retract's worth in total.
+- So `alignPaperStart` is an **align** to a position the printer already tracks,
+  not a relative move. How far it travels depends on where the paper starts: about
+  20 mm from the tear-off position, 8 mm mid-label.
 
 ### The seek has a minimum approach distance — [measured]
 
@@ -948,8 +961,8 @@ carrying a gap seek, and see where it lands.
 
 The seek is not choosing wrongly and it is not unreliable. **It cannot see a boundary
 that is nearly under it.** Below roughly twenty-four millimetres of approach it misses
-and runs a full pitch to the next one. `SEEK_MIN_APPROACH_DOTS` in
-`src/printer/protocol/constants.ts`.
+and runs a full pitch to the next one. The figure is recorded here only: the
+constant that once carried it was removed with the follow-up route.
 
 Every wasted label in this file follows from that. A full-height label ends _at_ its
 gap — approach zero — so a seek sent afterwards, in a job of its own, can only find
@@ -965,7 +978,7 @@ decide what a command on this printer does, and that has now caught us four time
 
 The practical consequence: **`splitForSeek` is the route that works for a tall label at
 full quality.** Its seek needs no approach at all. The follow-up needs 24 mm bought
-back by retracting, and the retract may not be able to buy that much.
+back by retracting, and the retract cannot buy that much.
 
 ### Why the follow-up seek route is closed — [settled]
 
