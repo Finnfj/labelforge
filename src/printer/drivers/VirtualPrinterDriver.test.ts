@@ -1,113 +1,86 @@
 import { describe, expect, it } from 'vitest'
 import { VirtualPrinterDriver } from './VirtualPrinterDriver'
-import { encodeImage } from '../protocol/encodeImage'
 import { checkerboard } from '../diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
+import { jobStreamBytes } from '../dialect'
+import { testDialect } from '../dialects/testing/testDialect'
+
+/*
+ * Recording a print, through a dialect that is not x2.
+ *
+ * What a print says is the dialect's business and is tested there; the exact x2
+ * bytes this driver records are pinned in wire.snapshot.test.ts. What is left here
+ * is how it records them.
+ */
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
 
 /** No pacing delay: these assert ordering, not timing. */
-const driver = () => new VirtualPrinterDriver(Infinity)
-
-/**
- * Split a printout's writes into framing commands and raster chunks.
- *
- * Bracketed by position rather than filtered by length. Length worked only while
- * the virtual driver still sent the 4-byte `setDensity`; the captured sequence
- * uses the 10-byte `setPrintParams`, which is longer than a chunk of a small
- * label. The same trap caught the BLE driver's test, and the same fix applies —
- * bracketing is exact, and asserts the boundaries are where they should be.
- */
-function splitJob(wire: Uint8Array[]) {
-  const start = wire.findIndex((b) => hex(b) === '1f 11 51')
-  const end = wire.findIndex((b) => hex(b) === '1f 12 20 00')
-  expect(start, 'alignPaperStart is missing').toBeGreaterThanOrEqual(0)
-  expect(end, 'the gap seek is missing').toBeGreaterThan(start)
-  return {
-    framing: [...wire.slice(0, start + 1), ...wire.slice(end)].map(hex),
-    chunks: wire.slice(start + 1, end),
-  }
-}
+const driver = (bandRows = 4) =>
+  new VirtualPrinterDriver(Infinity, { dialect: testDialect({ bandRows }) })
 
 describe('VirtualPrinterDriver', () => {
-  it('emits the documented print sequence', async () => {
-    const p = driver()
+  it('records each command on a line of its own, and the raster in chunks', async () => {
+    // A real printer would see one stream; a log is read by a person, so each
+    // command keeps its own line and its name.
+    const p = driver(8)
     await p.connect()
-    const bitmap = checkerboard(384, 32)
-    await p.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
+    const lines: string[] = []
+    p.on('wire', (w) => lines.push(w.note ?? `raster ${w.bytes.length}`))
+    await p.print({ bitmap: checkerboard(384, 8), settings: DEFAULT_PRINT_SETTINGS })
 
-    const [printout] = p.printouts
-    expect(printout).toBeDefined()
-
-    // The captured vendor sequence, which the BLE driver also asserts verbatim.
-    // Both now build it from cmd.printJobFraming, so this test and its BLE twin
-    // fail together if either side is changed alone.
-    expect(splitJob(printout.wire).framing).toEqual([
-      '1f 80 02 20', //                     setPaperTypeSilent(gap), mode 02
-      '1f 70 02 08 00 00 00 00 00 00', //   setPrintParams(8)
-      '1f c0 01 00', //                     startPrintJob
-      '1f 11 51', //                        alignPaperStart
-      '1f 12 20 00', //                     locate(Gap) — the alignment fix
-      '1f c0 01 01', //                     stopPrintJob
-      '1f 11 50', //                        alignPaperEnd
+    // 8 rows of 48 bytes is 384 bytes of raster: four full chunks and the rest.
+    expect(DEFAULT_CHUNK_SIZE).toBe(90)
+    expect(lines).toEqual([
+      'start',
+      'raster 90',
+      'raster 90',
+      'raster 90',
+      'raster 90',
+      'raster 24',
+      'stop',
+      'end',
     ])
   })
 
-  it('transmits exactly the encoded image, chunked', async () => {
-    const p = driver()
+  it('records exactly the bytes of the plan, in order', async () => {
+    const dialect = testDialect()
+    const p = new VirtualPrinterDriver(Infinity, { dialect })
     await p.connect()
-    const bitmap = checkerboard(384, 64)
-    await p.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
+    const bitmap = checkerboard(64, 12)
+    const settings = { ...DEFAULT_PRINT_SETTINGS, copies: 2 }
+    await p.print({ bitmap, settings })
 
-    const expected = encodeImage(bitmap)
-    const { chunks } = splitJob(p.printouts[0].wire)
-    const joined = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
-    let at = 0
-    for (const c of chunks) {
-      expect(c.length).toBeLessThanOrEqual(DEFAULT_CHUNK_SIZE)
-      joined.set(c, at)
-      at += c.length
-    }
-    expect(Array.from(joined)).toEqual(Array.from(expected))
+    const expected = dialect
+      .planPrint(bitmap, settings)
+      .jobs.flatMap((job) => [...job.parts, ...job.epilogue].map((p) => hex(p.bytes)))
+    expect(p.printouts[0].wire.map(hex).join(' ')).toBe(expected.join(' '))
   })
 
-  it('repeats the job framing per copy', async () => {
-    const p = driver()
-    await p.connect()
-    await p.print({
-      bitmap: checkerboard(64, 16),
-      settings: { ...DEFAULT_PRINT_SETTINGS, copies: 3 },
-    })
-    const wire = p.printouts[0].wire
-    // Configuration rides along per copy, inside the job, as the capture shows —
-    // it used to be sent once before the loop, which is not what the vendor app
-    // does and not what the BLE driver does.
-    for (const command of ['1f 80 02 20', '1f c0 01 00', '1f 12 20 00', '1f 11 50']) {
-      expect(
-        wire.filter((b) => hex(b) === command),
-        command,
-      ).toHaveLength(3)
-    }
-  })
-
-  it('reports progress ending at 100% of the declared total', async () => {
-    const p = driver()
+  it('reports progress over the stream bytes, ending at 100%', async () => {
+    const dialect = testDialect()
+    const p = new VirtualPrinterDriver(Infinity, { dialect })
     await p.connect()
     const seen: PrintProgress[] = []
     p.on('progress', (x) => seen.push(x))
-    await p.print({ bitmap: checkerboard(384, 64), settings: DEFAULT_PRINT_SETTINGS })
+    const bitmap = checkerboard(384, 12)
+    await p.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
 
+    // The same total the BLE driver reports for the same plan.
+    const total = dialect
+      .planPrint(bitmap, DEFAULT_PRINT_SETTINGS)
+      .jobs.reduce((n, j) => n + jobStreamBytes(j), 0)
     expect(seen[0].phase).toBe('prepare')
+    expect(seen[0].total).toBe(total)
     const last = seen[seen.length - 1]
     expect(last.phase).toBe('done')
-    expect(last.sent).toBe(last.total)
-    // Monotonic, never overshooting.
+    expect(last.sent).toBe(total)
     for (const s of seen) expect(s.sent).toBeLessThanOrEqual(s.total)
   })
 
   it('aborts mid-transfer without recording a printout', async () => {
-    const p = driver()
+    const p = driver(64)
     await p.connect()
     const controller = new AbortController()
     p.on('progress', (x) => {
@@ -115,10 +88,8 @@ describe('VirtualPrinterDriver', () => {
     })
     await expect(
       p.print(
-        { bitmap: checkerboard(384, 400), settings: DEFAULT_PRINT_SETTINGS },
-        {
-          signal: controller.signal,
-        },
+        { bitmap: checkerboard(384, 64), settings: DEFAULT_PRINT_SETTINGS },
+        { signal: controller.signal },
       ),
     ).rejects.toThrow()
     expect(p.printouts).toHaveLength(0)
