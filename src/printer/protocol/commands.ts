@@ -235,9 +235,10 @@ export function printJobFraming(settings: {
    * Retract from the tear-off position before printing.
    *
    * On for a label, which is what the capture shows and what undoes the advance
-   * the job before it made. Off for a continuation: when one label is split
-   * across several jobs, only the first has a tear-off advance behind it to
-   * undo, and retracting again mid-label would tear the image.
+   * the job before it made. When one label is split across several jobs, the x2
+   * print plan decides per band: with the paper seam closed every band retracts,
+   * to undo the take-up its own job start costs; left open, only the first does,
+   * since only it has a tear-off advance behind it to undo.
    */
   alignStart?: boolean
 }): PrintJobFraming {
