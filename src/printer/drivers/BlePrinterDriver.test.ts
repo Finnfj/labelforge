@@ -5,7 +5,8 @@ import { checkerboard } from '../diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { CreditWindow } from './CreditWindow'
 import { findProfile } from '../profiles'
-import { jobStreamBytes } from '../dialect'
+import { planStreamBytes } from '../dialect'
+import { concatBytes } from '../../lib/bytes'
 import { START, testDialect, testPrinter } from '../dialects/testing/testDialect'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
@@ -23,16 +24,6 @@ function identityResponder() {
     if (key === '1f 20 00') return Uint8Array.of(0xff, 0x00)
     return undefined
   }
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
-  let at = 0
-  for (const part of parts) {
-    out.set(part, at)
-    at += part.length
-  }
-  return out
 }
 
 describe('BlePrinterDriver connecting', () => {
@@ -199,11 +190,10 @@ describe('BlePrinterDriver printing a plan', () => {
     // Two jobs of 3 + 192 + 1 bytes, at 90 a chunk, and the end byte after the last.
     expect(transport.writes.map((w) => w.length)).toEqual([90, 90, 16, 90, 90, 16, 1])
     const plan = dialect.planPrint(bitmap, DEFAULT_PRINT_SETTINGS)
-    const expected = plan.jobs.flatMap((job) => [
-      ...job.parts.map((p) => p.bytes),
-      ...job.epilogue.map((c) => c.bytes),
-    ])
-    expect(hex(transport.written)).toBe(hex(concat(expected)))
+    const expected = plan.copies
+      .flatMap((copy) => copy.jobs)
+      .flatMap((job) => [...job.parts.map((p) => p.bytes), ...job.epilogue.map((c) => c.bytes)])
+    expect(hex(transport.written)).toBe(hex(concatBytes(expected)))
   })
 
   it('sends no byte of a job without a credit in hand', async () => {
@@ -295,9 +285,7 @@ describe('BlePrinterDriver printing a plan', () => {
     driver.on('progress', (p) => seen.push(p))
     await driver.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
 
-    const total = dialect
-      .planPrint(bitmap, DEFAULT_PRINT_SETTINGS)
-      .jobs.reduce((n, j) => n + jobStreamBytes(j), 0)
+    const total = planStreamBytes(dialect.planPrint(bitmap, DEFAULT_PRINT_SETTINGS))
     expect(seen[0].phase).toBe('prepare')
     expect(seen[0].total).toBe(total)
     const last = seen.at(-1)!
@@ -329,7 +317,7 @@ describe('BlePrinterDriver printing a plan', () => {
       if (w.dir === 'out') logged.push(w.bytes)
     })
     await driver.print({ bitmap: checkerboard(64, 8), settings: DEFAULT_PRINT_SETTINGS })
-    expect(hex(concat(logged))).toBe(hex(transport.written))
+    expect(hex(concatBytes(logged))).toBe(hex(transport.written))
   })
 
   it('refuses to print while disconnected', async () => {

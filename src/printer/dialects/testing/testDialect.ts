@@ -21,7 +21,7 @@ export const END = 0xee
 export interface TestDialectOptions {
   /** Rows per band, so a few rows already make a multi-band print. */
   bandRows?: number
-  /** Every job's wait, in milliseconds. */
+  /** Every wait, between jobs and at the end of a copy, in milliseconds. */
   waitMs?: number
 }
 
@@ -29,34 +29,31 @@ export function testDialect(options: TestDialectOptions = {}): Dialect {
   const bandRows = options.bandRows ?? 4
   const waitMs = options.waitMs ?? 10
   return {
-    id: 'test',
     planPrint(bitmap, settings) {
       const bands: PackedBitmap[] = []
       for (let from = 0; from < bitmap.heightDots; from += bandRows) {
         bands.push(sliceRows(bitmap, from, Math.min(bandRows, bitmap.heightDots - from)))
       }
-      const jobs: PlannedJob[] = []
-      for (let copy = 1; copy <= settings.copies; copy++) {
-        bands.forEach((band, i) => {
-          const last = i === bands.length - 1
-          const length = band.data.length
-          jobs.push({
-            copy,
-            parts: [
-              {
-                kind: 'command',
-                bytes: Uint8Array.of(START, length >> 8, length & 0xff),
-                note: 'start',
-              },
-              { kind: 'raster', bytes: band.data },
-              { kind: 'command', bytes: Uint8Array.of(STOP), note: 'stop' },
-            ],
-            epilogue: last ? [{ bytes: Uint8Array.of(END), note: 'end' }] : [],
-            wait: { timeoutMs: waitMs, onSilence: last ? 'warn' : 'stop-copy' },
-          })
-        })
+      const jobs: PlannedJob[] = bands.map((band, i) => {
+        const last = i === bands.length - 1
+        const length = band.data.length
+        return {
+          parts: [
+            {
+              kind: 'command',
+              bytes: Uint8Array.of(START, length >> 8, length & 0xff),
+              note: 'start',
+            },
+            { kind: 'raster', bytes: band.data },
+            { kind: 'command', bytes: Uint8Array.of(STOP), note: 'stop' },
+          ],
+          epilogue: last ? [{ bytes: Uint8Array.of(END), note: 'end' }] : [],
+          waitMs: last ? null : waitMs,
+        }
+      })
+      return {
+        copies: Array.from({ length: settings.copies }, () => ({ jobs, finishWaitMs: waitMs })),
       }
-      return { jobs }
     },
   }
 }

@@ -1,6 +1,6 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
-import { jobsByCopy, jobStreamBytes, type Dialect } from '../dialect'
+import { planStreamBytes, type Dialect } from '../dialect'
 import { x2 } from '../dialects/x2'
 import { DEFAULT_PROFILE } from '../profiles'
 import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
@@ -117,7 +117,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
       // The same plan the BLE driver sends, so what is recorded here is what a real
       // printer would have received. Waits are ignored: there is nothing to wait for.
       const plan = this.#dialect.planPrint(job.bitmap, job.settings)
-      const total = plan.jobs.reduce((n, j) => n + jobStreamBytes(j), 0)
+      const total = planStreamBytes(plan)
       const copies = job.settings.copies
       // Chunk the raster at the size the BLE driver uses. Not the same
       // *boundaries*, though, and deliberately: the real driver chunks the whole job
@@ -129,13 +129,13 @@ export class VirtualPrinterDriver implements PrinterDriver {
 
       this.#emitter.emit('progress', { phase: 'prepare', sent: 0, total, copy: 0, copies })
 
-      for (const jobs of jobsByCopy(plan)) {
-        const copy = jobs[0].copy
+      for (const [index, plannedCopy] of plan.copies.entries()) {
+        const copy = index + 1
         opts?.signal?.throwIfAborted()
         this.#emitter.emit('progress', { phase: 'handshake', sent, total, copy, copies })
 
-        for (const planned of jobs) {
-          for (const part of planned.parts) {
+        for (const plannedJob of plannedCopy.jobs) {
+          for (const part of plannedJob.parts) {
             if (part.kind === 'command') {
               send(part.bytes, part.note)
               sent += part.bytes.length
@@ -153,7 +153,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
               this.#emitter.emit('progress', { phase: 'transfer', sent, total, copy, copies })
             }
           }
-          for (const { bytes, note } of planned.epilogue) send(bytes, note)
+          for (const { bytes, note } of plannedJob.epilogue) send(bytes, note)
         }
 
         this.#emitter.emit('progress', { phase: 'feed', sent, total, copy, copies })

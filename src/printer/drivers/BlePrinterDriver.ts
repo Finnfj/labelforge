@@ -1,3 +1,4 @@
+import { concatBytes } from '../../lib/bytes'
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import * as cmd from '../dialects/x2/commands'
@@ -11,14 +12,7 @@ import {
   decodeText,
   faultFromFlags,
 } from '../dialects/x2/responses'
-import {
-  jobsByCopy,
-  jobStreamBytes,
-  type Dialect,
-  type JobWait,
-  type NamedCommand,
-  type PlannedJob,
-} from '../dialect'
+import { planStreamBytes, type Dialect, type NamedCommand, type PlannedJob } from '../dialect'
 import { x2 } from '../dialects/x2'
 import type {
   PrintJob,
@@ -333,7 +327,7 @@ export class BlePrinterDriver implements PrinterDriver {
       // What goes on the wire is the dialect's to decide. This driver decides how:
       // each job as one credited stream, waits where the plan asks for them.
       const plan = this.#dialect.planPrint(job.bitmap, job.settings)
-      const total = plan.jobs.reduce((n, j) => n + jobStreamBytes(j), 0)
+      const total = planStreamBytes(plan)
       let sent = 0
 
       const progress = (phase: PrintProgressPhase, copy: number) =>
@@ -347,36 +341,37 @@ export class BlePrinterDriver implements PrinterDriver {
 
       progress('prepare', 0)
 
-      for (const jobs of jobsByCopy(plan)) {
-        const copy = jobs[0].copy
+      for (const [index, plannedCopy] of plan.copies.entries()) {
+        const copy = index + 1
         opts.signal?.throwIfAborted()
         progress('handshake', copy)
 
-        // The last job's wait is what makes `done` mean done: the printer is still
-        // printing — a full-height label for ten seconds after its last byte — and a
-        // job it never finished becomes visible only by not being acknowledged. A
-        // copy cut short still waits it out, so the printer has stopped moving paper
-        // before anything else is sent.
-        let closed = false
-        for (const [i, planned] of jobs.entries()) {
+        for (const plannedJob of plannedCopy.jobs) {
           opts.signal?.throwIfAborted()
-          await this.#sendJob(joinParts(planned), planned.epilogue, opts.signal, (written) => {
-            sent += written
-            progress('transfer', copy)
-          })
-          if (!planned.wait) continue
-          if (i === jobs.length - 1) closed = true
+          await this.#sendJob(
+            joinParts(plannedJob),
+            plannedJob.epilogue,
+            opts.signal,
+            (written) => {
+              sent += written
+              progress('transfer', copy)
+            },
+          )
+          if (plannedJob.waitMs === null) continue
           progress('feed', copy)
-          if (await this.#waitForDone(opts.signal, planned.wait.timeoutMs)) continue
-          this.#warnSilent(planned.wait.onSilence)
-          if (planned.wait.onSilence === 'stop-copy') break
+          if (await this.#waitForDone(opts.signal, plannedJob.waitMs)) continue
+          this.#warnSilent('stopped')
+          break
         }
 
-        const closing = jobs.at(-1)!.wait
-        if (!closed && closing) {
+        // What makes `done` mean done: the printer is still printing — a full-height
+        // label for ten seconds after its last byte — and a label it never finished
+        // becomes visible only by not being acknowledged. A copy cut short waits too,
+        // so the printer has stopped moving paper before anything else is sent.
+        if (plannedCopy.finishWaitMs !== null) {
           progress('feed', copy)
-          if (!(await this.#waitForDone(opts.signal, closing.timeoutMs))) {
-            this.#warnSilent(closing.onSilence)
+          if (!(await this.#waitForDone(opts.signal, plannedCopy.finishWaitMs))) {
+            this.#warnSilent('unfinished')
           }
         }
       }
@@ -391,11 +386,11 @@ export class BlePrinterDriver implements PrinterDriver {
   }
 
   /** Say what a printer's silence means, in words that hold for any dialect. */
-  #warnSilent(meaning: JobWait['onSilence']): void {
+  #warnSilent(meaning: 'stopped' | 'unfinished'): void {
     this.#emitter.emit('log', {
       level: 'warn',
       message:
-        meaning === 'stop-copy'
+        meaning === 'stopped'
           ? // Carrying on regardless would send the next job into a printer still
             // moving paper, which is what lost the label last time.
             'The printer did not acknowledge part of this label, so the rest of it was not ' +
@@ -537,13 +532,7 @@ type PrintProgressPhase = PrinterEvents['progress']['phase']
  * byte waits for a credit (ADR 0002). It is also what the vendor app does.
  */
 function joinParts(job: PlannedJob): Uint8Array {
-  const out = new Uint8Array(jobStreamBytes(job))
-  let at = 0
-  for (const part of job.parts) {
-    out.set(part.bytes, at)
-    at += part.bytes.length
-  }
-  return out
+  return concatBytes(job.parts.map((part) => part.bytes))
 }
 
 function delay(ms: number, signal?: AbortSignal): Promise<void> {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createPackedBitmap, type PackedBitmap } from '../../../model/bitmap'
+import type { PackedBitmap } from '../../../model/bitmap'
+import { noisyBitmap } from '../../../test/bitmaps'
 import type { PlannedJob } from '../../dialect'
 import { checkerboard } from '../../diagnostics/testPatterns'
 import { PaperType, printDurationMs, SEEK_SAFE_JOB_BYTES } from './constants'
@@ -23,19 +24,12 @@ const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '
 const commands = (job: PlannedJob) =>
   job.parts.map((p) => (p.kind === 'raster' ? 'raster' : hex(p.bytes)))
 
-const plan = (bitmap: PackedBitmap, settings: Partial<PrintSettings> = {}) =>
-  planX2Print(bitmap, { ...DEFAULT_PRINT_SETTINGS, ...settings }).jobs
+const planOf = (bitmap: PackedBitmap, settings: Partial<PrintSettings> = {}) =>
+  planX2Print(bitmap, { ...DEFAULT_PRINT_SETTINGS, ...settings })
 
-/** A bitmap that does not compress, so a tall one has to be split. Deterministic. */
-function noisyBitmap(widthDots: number, heightDots: number): PackedBitmap {
-  const bm = createPackedBitmap(widthDots, heightDots)
-  let seed = 0x2545f491
-  for (let i = 0; i < bm.data.length; i++) {
-    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
-    bm.data[i] = (seed >>> 16) & 0xff
-  }
-  return bm
-}
+/** The jobs of one copy, which is every copy. */
+const plan = (bitmap: PackedBitmap, settings: Partial<PrintSettings> = {}) =>
+  planOf(bitmap, settings).copies[0].jobs
 
 const START = '1f c0 01 00'
 const RETRACT = '1f 11 51'
@@ -138,20 +132,16 @@ describe('planX2Print', () => {
     expect(commands(jobs[0])).toContain(SEEK_GAP)
   })
 
-  it('waits for each band, and stops the copy if a middle band goes unanswered', () => {
+  it('waits for each band before the next, then for the whole label', () => {
     // The printer takes no job while it is working on one. Sending the next band
     // into a printer still moving paper is what lost the label.
     const bitmap = noisyBitmap(384, 360)
-    const jobs = plan(bitmap)
-    for (const job of jobs.slice(0, -1)) {
-      expect(job.wait?.onSilence).toBe('stop-copy')
-    }
-    // The last band waits for the whole label to print. Silence there only warns,
-    // because the label may well be fine.
-    expect(jobs.at(-1)!.wait).toEqual({
-      timeoutMs: printDurationMs(bitmap.heightDots),
-      onSilence: 'warn',
-    })
+    const [copy] = planOf(bitmap).copies
+    expect(copy.jobs.length).toBeGreaterThan(1)
+    for (const job of copy.jobs.slice(0, -1)) expect(job.waitMs).toBeGreaterThan(0)
+    // The last band is followed by the copy's own wait, for the label to print.
+    expect(copy.jobs.at(-1)!.waitMs).toBeNull()
+    expect(copy.finishWaitMs).toBe(printDurationMs(bitmap.heightDots))
   })
 
   it('seeks the boundary its paper type actually has', () => {
@@ -165,17 +155,18 @@ describe('planX2Print', () => {
   it('repeats the whole label per copy, configuration and gap seek included', () => {
     // Each copy has to seek, or only the first lands on a label. Configuration
     // rides along inside every job, as the capture shows.
-    const jobs = plan(checkerboard(64, 16), { copies: 3 })
-    expect(jobs.map((j) => j.copy)).toEqual([1, 2, 3])
-    for (const job of jobs) {
-      expect(commands(job)).toEqual(expect.arrayContaining(['1f 80 02 20', START, SEEK_GAP]))
-      expect(job.epilogue.map((c) => hex(c.bytes))).toEqual([TEAR_OFF])
+    const { copies } = planOf(checkerboard(64, 16), { copies: 3 })
+    expect(copies).toHaveLength(3)
+    for (const { jobs } of copies) {
+      expect(jobs).toHaveLength(1)
+      expect(commands(jobs[0])).toEqual(expect.arrayContaining(['1f 80 02 20', START, SEEK_GAP]))
+      expect(jobs[0].epilogue.map((c) => hex(c.bytes))).toEqual([TEAR_OFF])
     }
   })
 
-  it('sends every band of one copy before the next copy', () => {
-    const single = plan(noisyBitmap(384, 360))
-    const jobs = plan(noisyBitmap(384, 360), { copies: 2 })
-    expect(jobs.map((j) => j.copy)).toEqual([...single.map(() => 1), ...single.map(() => 2)])
+  it('plans every band of the label again for each copy', () => {
+    const { copies } = planOf(noisyBitmap(384, 360), { copies: 2 })
+    expect(copies[0].jobs.length).toBeGreaterThan(1)
+    expect(copies[1]).toEqual(copies[0])
   })
 })

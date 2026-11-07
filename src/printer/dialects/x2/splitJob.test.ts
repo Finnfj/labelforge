@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createPackedBitmap, type PackedBitmap } from '../../../model/bitmap'
+import type { PackedBitmap } from '../../../model/bitmap'
+import { noisyBitmap } from '../../../test/bitmaps'
 import { encodeImage } from './encodeImage'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
 import {
@@ -24,15 +25,7 @@ const W = 384
 const RB = W >> 3
 
 /** Incompressible rows, so the planner cannot get lucky on size. */
-function noise(rows: number): PackedBitmap {
-  const bm = createPackedBitmap(W, rows)
-  let seed = 0x2545f491
-  for (let i = 0; i < bm.data.length; i++) {
-    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
-    bm.data[i] = (seed >>> 16) & 0xff
-  }
-  return bm
-}
+const noise = (rows: number): PackedBitmap => noisyBitmap(W, rows)
 
 describe('planSeekableBands', () => {
   it('leaves a label that already fits as one band', () => {

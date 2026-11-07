@@ -5,6 +5,7 @@
  * play and they are *not* two protocol generations: `1F` covers print control and
  * configuration, `10 FF` covers device-information queries.
  */
+import { concatBytes } from '../../../lib/bytes'
 import {
   MAX_DENSITY,
   MIN_DENSITY,
@@ -302,18 +303,11 @@ export function locateModeFor(paperType: PaperTypeValue): LocateModeValue {
  * app doing, which is the better reason.
  */
 export function printJobStream(framing: PrintJobFraming, image: Uint8Array): Uint8Array {
-  const parts = [
+  return concatBytes([
     ...framing.preamble.map((c) => c.bytes),
     image,
     ...framing.trailer.map((c) => c.bytes),
-  ]
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
-  let at = 0
-  for (const part of parts) {
-    out.set(part, at)
-    at += part.length
-  }
-  return out
+  ])
 }
 
 /**

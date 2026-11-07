@@ -3,7 +3,7 @@ import { VirtualPrinterDriver } from './VirtualPrinterDriver'
 import { checkerboard } from '../diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
-import { jobStreamBytes } from '../dialect'
+import { planStreamBytes } from '../dialect'
 import { testDialect } from '../dialects/testing/testDialect'
 
 /*
@@ -54,7 +54,8 @@ describe('VirtualPrinterDriver', () => {
 
     const expected = dialect
       .planPrint(bitmap, settings)
-      .jobs.flatMap((job) => [...job.parts, ...job.epilogue].map((p) => hex(p.bytes)))
+      .copies.flatMap((copy) => copy.jobs)
+      .flatMap((job) => [...job.parts, ...job.epilogue].map((p) => hex(p.bytes)))
     expect(p.printouts[0].wire.map(hex).join(' ')).toBe(expected.join(' '))
   })
 
@@ -68,9 +69,7 @@ describe('VirtualPrinterDriver', () => {
     await p.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
 
     // The same total the BLE driver reports for the same plan.
-    const total = dialect
-      .planPrint(bitmap, DEFAULT_PRINT_SETTINGS)
-      .jobs.reduce((n, j) => n + jobStreamBytes(j), 0)
+    const total = planStreamBytes(dialect.planPrint(bitmap, DEFAULT_PRINT_SETTINGS))
     expect(seen[0].phase).toBe('prepare')
     expect(seen[0].total).toBe(total)
     const last = seen[seen.length - 1]

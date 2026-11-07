@@ -3,7 +3,9 @@ import { BlePrinterDriver } from './BlePrinterDriver'
 import { VirtualPrinterDriver } from './VirtualPrinterDriver'
 import { MockTransport } from '../transport/MockTransport'
 import { checkerboard } from '../diagnostics/testPatterns'
-import { createPackedBitmap, type PackedBitmap } from '../../model/bitmap'
+import type { PackedBitmap } from '../../model/bitmap'
+import { concatBytes } from '../../lib/bytes'
+import { noisyBitmap } from '../../test/bitmaps'
 import { DEFAULT_PRINT_SETTINGS, type PrintSettings } from '../types'
 import { PaperType } from '../dialects/x2/constants'
 
@@ -31,12 +33,7 @@ async function describeWrites(writes: { bytes: Uint8Array; note?: string }[]) {
   if (total <= FULL_HEX_LIMIT) {
     return writes.map((w) => (w.note ? `${hex(w.bytes)}  # ${w.note}` : hex(w.bytes)))
   }
-  const stream = new Uint8Array(total)
-  let at = 0
-  for (const w of writes) {
-    stream.set(w.bytes, at)
-    at += w.bytes.length
-  }
+  const stream = concatBytes(writes.map((w) => w.bytes))
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', stream))
   const runs: string[] = []
   let last = -1
@@ -60,17 +57,6 @@ async function describeWrites(writes: { bytes: Uint8Array; note?: string }[]) {
     notes: writes.flatMap((w) => (w.note ? [w.note] : [])).join(', ') || undefined,
     sha256: Array.from(digest, (v) => v.toString(16).padStart(2, '0')).join(''),
   }
-}
-
-/** A bitmap that does not compress, so a tall one has to be split. Deterministic. */
-function noisyBitmap(widthDots: number, heightDots: number): PackedBitmap {
-  const bm = createPackedBitmap(widthDots, heightDots)
-  let seed = 0x2545f491
-  for (let i = 0; i < bm.data.length; i++) {
-    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff
-    bm.data[i] = (seed >>> 16) & 0xff
-  }
-  return bm
 }
 
 /** Identity answers, and `4F 4B` shortly after a stream that ends a job. */
@@ -126,23 +112,35 @@ const CASES: Array<[string, () => PackedBitmap, PrintSettings]> = [
     () => noisyBitmap(384, 360),
     { ...DEFAULT_PRINT_SETTINGS, splitForSeek: false },
   ],
-  ['two copies', () => checkerboard(64, 16), { ...DEFAULT_PRINT_SETTINGS, copies: 2 }],
+  [
+    'two copies of a small label',
+    () => checkerboard(64, 16),
+    { ...DEFAULT_PRINT_SETTINGS, copies: 2 },
+  ],
   [
     'two copies of a split label',
     () => noisyBitmap(384, 360),
     { ...DEFAULT_PRINT_SETTINGS, copies: 2 },
   ],
   [
-    'continuous paper',
+    'a label on continuous paper',
     () => checkerboard(64, 16),
     { ...DEFAULT_PRINT_SETTINGS, paperType: PaperType.Continuous },
   ],
-  ['speed set', () => checkerboard(64, 16), { ...DEFAULT_PRINT_SETTINGS, speed: 1 }],
-  ['no gap seek', () => checkerboard(64, 16), { ...DEFAULT_PRINT_SETTINGS, seekGap: false }],
+  [
+    'a label asked for with a speed',
+    () => checkerboard(64, 16),
+    { ...DEFAULT_PRINT_SETTINGS, speed: 1 },
+  ],
+  [
+    'a label asked for without a gap seek',
+    () => checkerboard(64, 16),
+    { ...DEFAULT_PRINT_SETTINGS, seekGap: false },
+  ],
 ]
 
-describe('wire snapshots: BLE driver', () => {
-  it('connect sequence', async () => {
+describe('what the BLE driver writes for', () => {
+  it('connecting', async () => {
     const transport = new MockTransport()
     transport.autoRespond = printerResponder(transport)
     const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20 })
@@ -161,7 +159,7 @@ describe('wire snapshots: BLE driver', () => {
   }
 })
 
-describe('wire snapshots: virtual driver', () => {
+describe('what the virtual printer writes for', () => {
   for (const [name, bitmap, settings] of CASES) {
     it(name, async () => {
       expect(await virtualWrites(bitmap(), settings)).toMatchSnapshot()

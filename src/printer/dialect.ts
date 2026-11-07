@@ -11,8 +11,6 @@ import type { PrintSettings } from './types'
  * it. Where this line falls, and why, is recorded in ADR 0003.
  */
 export interface Dialect {
-  /** Short, stable name, for logs and tests. */
-  readonly id: string
   /**
    * Everything one print puts on the wire: every band of every copy, in order.
    *
@@ -22,9 +20,23 @@ export interface Dialect {
   planPrint(bitmap: PackedBitmap, settings: PrintSettings): PrintPlan
 }
 
-/** The ordered jobs a dialect produces to put one label on paper. */
+/** The ordered jobs a dialect produces to put one label on paper, copy by copy. */
 export interface PrintPlan {
+  copies: PlannedCopy[]
+}
+
+/** One copy of the label: its jobs in order, and how it ends. */
+export interface PlannedCopy {
   jobs: PlannedJob[]
+  /**
+   * How long to wait, after the copy's last job, for the printer to report the
+   * label finished, or null to go straight on.
+   *
+   * Every copy ends with this wait, a copy cut short by a silent job included, so
+   * the printer has stopped moving paper before anything else is sent. Silence
+   * here is reported rather than acted on: the label may well be fine.
+   */
+  finishWaitMs: number | null
 }
 
 /** A command with the name the diagnostics log shows for it. */
@@ -45,35 +57,19 @@ export type JobPart = ({ kind: 'command' } & NamedCommand) | { kind: 'raster'; b
  * and the virtual driver logs each command on its own line.
  */
 export interface PlannedJob {
-  /** Which copy this job belongs to, counting from 1. */
-  copy: number
   parts: JobPart[]
   /** Sent after the job's stream has gone, each as a write of its own. */
   epilogue: NamedCommand[]
   /**
-   * Whether to wait for the printer to report the job done before going on.
+   * How long to wait for the printer to report this job done before sending the
+   * next one, or null to go straight on.
    *
-   * Null for a job that is followed without waiting. A driver with nothing to
-   * wait for, such as the virtual printer, ignores it.
+   * Silence stops the rest of the copy: the next job would go to a printer still
+   * moving paper. A driver may wait longer than this, never shorter; the BLE
+   * driver has a minimum of its own. A driver with nothing to wait for, such as
+   * the virtual printer, ignores it.
    */
-  wait: JobWait | null
-}
-
-export interface JobWait {
-  /**
-   * How long to wait for the printer to report the job done before its silence
-   * counts. A driver may wait longer, never shorter: the BLE driver also has a
-   * minimum of its own, and waits whichever is longer.
-   */
-  timeoutMs: number
-  /**
-   * What silence means.
-   *
-   * `stop-copy`: the rest of this copy cannot safely follow, so its remaining jobs
-   * are not sent. The copy still ends with the wait of its last job.
-   * `warn`: the job may well be fine; say so, and carry on.
-   */
-  onSilence: 'stop-copy' | 'warn'
+  waitMs: number | null
 }
 
 /** Bytes of a job's stream, which is what a driver's progress counts. */
@@ -81,13 +77,10 @@ export function jobStreamBytes(job: PlannedJob): number {
   return job.parts.reduce((n, part) => n + part.bytes.length, 0)
 }
 
-/** The plan's jobs grouped by copy, in order. */
-export function jobsByCopy(plan: PrintPlan): PlannedJob[][] {
-  const copies: PlannedJob[][] = []
-  for (const job of plan.jobs) {
-    const last = copies.at(-1)
-    if (last && last[0].copy === job.copy) last.push(job)
-    else copies.push([job])
-  }
-  return copies
+/** Bytes of every job's stream in the plan: the total a driver's progress runs to. */
+export function planStreamBytes(plan: PrintPlan): number {
+  return plan.copies.reduce(
+    (n, copy) => n + copy.jobs.reduce((m, job) => m + jobStreamBytes(job), 0),
+    0,
+  )
 }
