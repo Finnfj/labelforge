@@ -11,6 +11,15 @@ import type { PrintSettings } from './types'
  * it. Where this line falls, and why, is recorded in ADR 0003.
  */
 export interface Dialect {
+  /** The density levels it prints at, and the one it uses when none is asked for. */
+  readonly density: { min: number; max: number; default: number }
+  /**
+   * How big this bitmap's job would be, and whether the printer reads it whole.
+   *
+   * What the print panel asks before a print, to say whether the label goes out
+   * as several bands and whether a simpler picture would avoid that.
+   */
+  assessJob(bitmap: PackedBitmap): JobAssessment
   /**
    * Everything one print puts on the wire: every band of every copy, in order.
    *
@@ -18,6 +27,27 @@ export interface Dialect {
    * can count bytes for progress before it sends the first one.
    */
   planPrint(bitmap: PackedBitmap, settings: PrintSettings): PrintPlan
+}
+
+export interface JobAssessment {
+  /** Bytes of the job that would carry this bitmap. */
+  bytes: number
+  /**
+   * The printer's read-ahead (see GLOSSARY.md), or null for a dialect whose
+   * printers have none worth planning around.
+   */
+  readAheadBytes: number | null
+  /**
+   * Whether the printer takes in the whole job before it starts printing, so its
+   * gap seek registers the label without splitting it into bands.
+   */
+  fits: boolean
+  /**
+   * Whether the picture's content changes the size: true for a compressed raster,
+   * where a simpler dither makes a smaller job; false where only the dimensions
+   * count, and no change to the picture would help.
+   */
+  compressed: boolean
 }
 
 /** The ordered jobs a dialect produces to put one label on paper, copy by copy. */

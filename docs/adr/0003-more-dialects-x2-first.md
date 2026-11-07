@@ -26,9 +26,15 @@ they hand over (`PackedBitmap`) is the only thing a dialect receives from them. 
 adapters sit behind the interface: x2, and a small test dialect that keeps the
 drivers honest about knowing no x2 bytes.
 
+The app reaches the dialect through the driver (`PrinterDriver.dialect`), and asks it
+two things: the density levels it prints at, and whether a label's job fits the
+printer's read-ahead, which decides whether the print panel says the label goes out
+in bands and whether a simpler dither would avoid that. Print settings speak of
+stock, speed and density in the app's own terms; the dialect turns them into bytes.
+
 Not yet behind it, and still x2's: the connect handshake, status and reply
 decoding and the credit frame format (in the BLE driver); the credit pacing delays
 (in `CreditWindow`); the default chunk size (in the virtual printer and the printer
-profiles); the GATT service and characteristics (in the Bluetooth transport); the
-print settings' paper-type and speed values; and the print panel's check of whether
-a label fits in one job. They move when a second production dialect needs them to.
+profiles); the GATT service and characteristics (in the Bluetooth transport); and
+the Diagnostics panel, which builds x2 commands and probe jobs itself. They move
+when a second production dialect needs them to.

@@ -12,16 +12,24 @@ import { rasterize, type SkippedElement } from '../render/rasterize'
 import { LabelTooWideError, headOriginDots } from '../render/padToHead'
 import type { PreviewMode } from '../render/preview'
 import { checkerboard, rulerStrip, testStrip } from '../printer/diagnostics/testPatterns'
-import { MAX_DENSITY, MIN_DENSITY, SEEK_SAFE_JOB_BYTES } from '../printer/dialects/x2/constants'
-import { needsSplitToSeek } from '../printer/dialects/x2/commands'
-import { encodeImage } from '../printer/dialects/x2/encodeImage'
-import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../printer/types'
+import type { JobAssessment } from '../printer/dialect'
+import {
+  DEFAULT_PRINT_SETTINGS,
+  type PrintProgress,
+  type PrintSettings,
+  type PrintSpeed,
+} from '../printer/types'
 import { resolveAssetUrl } from '../storage/assets'
 import { registerStoredFonts } from '../storage/fonts'
 import { PaperRoll } from './PaperRoll'
 import type { DiagnosticFlags } from './useDiagnosticFlags'
 import type { ZoomSetting } from './zoom'
 import type { PrinterConnection } from './usePrinter'
+
+/** Bytes as kilobytes, the way the panel shows a job's size. */
+function kb(bytes: number): string {
+  return (bytes / 1024).toFixed(1)
+}
 
 /**
  * Name a missing font in a way that says what to do about it.
@@ -38,10 +46,11 @@ function describeFont(family: string): string {
 /**
  * Ways to make a photograph compress, worst compromise last.
  *
- * A raster over `SEEK_SAFE_JOB_BYTES` is one the printer starts printing before it
- * has read the gap seek at the end of the job, so the label cannot register itself.
- * The only lever on that size is how the photograph is dithered — text and codes
- * threshold to runs that compress to nothing however large the label is.
+ * A job larger than the printer's read-ahead is one it starts printing before it
+ * has read the gap seek at the end, so the label cannot register itself. Where the
+ * raster is compressed, the only lever on that size is how the photograph is
+ * dithered — text and codes threshold to runs that compress to nothing however
+ * large the label is.
  *
  * Ordered dithering is the big win, roughly four times smaller, but it is a
  * visibly different picture: a regular grid rather than diffused grain. Reducing
@@ -85,6 +94,7 @@ export function PrintPanel({
   updateElement(id: string, patch: Partial<ImageElement>): void
 }) {
   const printer = connection.driver
+  const dialect = printer.dialect
 
   const [settings, setSettings] = useState<PrintSettings>(DEFAULT_PRINT_SETTINGS)
   const [bitmap, setBitmap] = useState<PackedBitmap | null>(null)
@@ -98,10 +108,10 @@ export function PrintPanel({
   const [showHeadArea, setShowHeadArea] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [clipped, setClipped] = useState(false)
-  const [jobBytes, setJobBytes] = useState(0)
+  const [assessment, setAssessment] = useState<JobAssessment | null>(null)
   const [remedy, setRemedy] = useState<{
     rung: (typeof TONE_LADDER)[number]
-    bytes: number
+    assessment: JobAssessment
   } | null>(null)
   const [skipped, setSkipped] = useState<SkippedElement[]>([])
   const [fontFallbacks, setFontFallbacks] = useState<string[]>([])
@@ -159,11 +169,10 @@ export function PrintPanel({
           })
           if (cancelled) return
           setBitmap(result.bitmap)
-          // Whether the printer can seek this job itself turns on the compressed
-          // size, and there is no estimating that — a dithered photograph barely
-          // compresses while flat artwork collapses to nothing. Encoding is a
-          // millisecond here and the preview is already debounced.
-          setJobBytes(encodeImage(result.bitmap).length)
+          // Whether the printer can seek this job itself is the dialect's to say. For
+          // a compressed raster that means encoding it, which is a millisecond here,
+          // and the preview is already debounced.
+          setAssessment(dialect.assessJob(result.bitmap))
           setLabelWidthDots(result.labelWidthDots)
           setClipped(result.clipped)
           setSkipped(result.skipped)
@@ -176,12 +185,12 @@ export function PrintPanel({
           // document — a label printed with the QR payload you had just replaced.
           // No bitmap disables printing, which is the correct answer here.
           setBitmap(null)
-          setJobBytes(0)
+          setAssessment(null)
           setSkipped([])
           setFontFallbacks([])
           setError(
             e instanceof LabelTooWideError
-              ? `${e.message} Choose a narrower roll — a P50S head is 384 dots, or 48 mm.`
+              ? `${e.message} Choose a narrower roll — this printer's head is ${headWidth} dots, or ${dotsToMm(headWidth)} mm.`
               : e instanceof Error
                 ? e.message
                 : String(e),
@@ -193,15 +202,16 @@ export function PrintPanel({
       cancelled = true
       clearTimeout(id)
     }
-  }, [doc, headWidth, padToHead, align, offsetDots, feedAfterDots])
+  }, [doc, dialect, headWidth, padToHead, align, offsetDots, feedAfterDots])
 
-  // The mildest rung of the tone ladder that would take this label under the size
-  // the printer reads in full. Asked only when the answer could matter — it is a
-  // full rasterise per rung, and there is no estimating it, because how well a
-  // dither compresses depends entirely on the picture. Stops at the first that
-  // fits, so it is usually one or two.
+  // The mildest rung of the tone ladder that would take this label under the
+  // printer's read-ahead. Asked only when the answer could matter — the raster is
+  // compressed, and it is a full rasterise per rung, with no estimating it, because
+  // how well a dither compresses depends entirely on the picture. Stops at the
+  // first that fits, so it is usually one or two.
   const photoIds = photoElementIds(doc)
-  const wantsTrial = needsSplitToSeek(jobBytes) && photoIds.length > 0
+  const wantsTrial =
+    assessment != null && !assessment.fits && assessment.compressed && photoIds.length > 0
   useEffect(() => {
     if (!wantsTrial) {
       setRemedy(null)
@@ -218,13 +228,13 @@ export function PrintPanel({
         clipToHead: true,
         feedAfterDots,
       }
-      let best: { rung: (typeof TONE_LADDER)[number]; bytes: number } | null = null
+      let best: { rung: (typeof TONE_LADDER)[number]; assessment: JobAssessment } | null = null
       for (const rung of TONE_LADDER) {
         if (cancelled) return
         try {
           const result = await rasterize(withPhotoTone(doc, rung.tone), options)
-          best = { rung, bytes: encodeImage(result.bitmap).length }
-          if (!needsSplitToSeek(best.bytes)) break
+          best = { rung, assessment: dialect.assessJob(result.bitmap) }
+          if (best.assessment.fits) break
         } catch {
           // The real raster already succeeded, so a failure here says nothing to
           // the user. No advice beats wrong advice.
@@ -237,10 +247,17 @@ export function PrintPanel({
     return () => {
       cancelled = true
     }
-  }, [wantsTrial, doc, padToHead, headWidth, align, offsetDots, feedAfterDots])
+  }, [wantsTrial, dialect, doc, padToHead, headWidth, align, offsetDots, feedAfterDots])
 
   /** True when the ladder found a rung that actually fits. */
-  const remedyFits = remedy != null && !needsSplitToSeek(remedy.bytes)
+  const remedyFits = remedy?.assessment.fits === true
+
+  // Density within the range the connected dialect prints at. Left unset, the
+  // dialect's own default; set on another printer, clamped into this one's range.
+  const densityLevel = Math.min(
+    dialect.density.max,
+    Math.max(dialect.density.min, settings.density ?? dialect.density.default),
+  )
 
   const send = useCallback(
     async (target: PackedBitmap) => {
@@ -252,14 +269,21 @@ export function PrintPanel({
           throw new Error('Connect a printer first.')
         }
         abortRef.current = new AbortController()
-        await printer.print({ bitmap: target, settings }, { signal: abortRef.current.signal })
+        await printer.print(
+          {
+            bitmap: target,
+            settings:
+              settings.density === undefined ? settings : { ...settings, density: densityLevel },
+          },
+          { signal: abortRef.current.signal },
+        )
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
       } finally {
         abortRef.current = null
       }
     },
-    [printer, settings],
+    [printer, settings, densityLevel],
   )
 
   const printPattern = useCallback(
@@ -291,12 +315,12 @@ export function PrintPanel({
           <span>Density</span>
           <input
             type="range"
-            min={MIN_DENSITY}
-            max={MAX_DENSITY}
-            value={settings.density}
+            min={dialect.density.min}
+            max={dialect.density.max}
+            value={densityLevel}
             onChange={(e) => setSettings((s) => ({ ...s, density: Number(e.target.value) }))}
           />
-          <em>{settings.density}</em>
+          <em>{densityLevel}</em>
         </label>
         <label className="field">
           <span>Copies</span>
@@ -319,15 +343,15 @@ export function PrintPanel({
         both on by default. So the visible part is one sentence saying what is
         happening, and everything that was deliberation goes behind the disclosure.
       */}
-      {needsSplitToSeek(jobBytes) && (
+      {assessment != null && !assessment.fits && (
         // A hint while it is being handled, a warning once the user has turned the
         // handling off — which is the only state now where an oversized label is
         // actually a problem.
         <div className={settings.splitForSeek === false ? 'warn' : 'hint'}>
           <p>
-            This label is {(jobBytes / 1024).toFixed(1)} KB &mdash; more than the printer reads
-            before it starts printing, so the gap seek at the end of the job would go unread and it
-            could not find the next label on its own.{' '}
+            This label is {kb(assessment.bytes)} KB &mdash; more than the printer reads before it
+            starts printing, so the gap seek at the end of the job would go unread and it could not
+            find the next label on its own.{' '}
             {settings.splitForSeek === false ? (
               <strong>Splitting is off, so it will drift by a gap-width on every print.</strong>
             ) : (
@@ -387,11 +411,11 @@ export function PrintPanel({
                 <p>
                   A smaller raster avoids the split altogether:{' '}
                   <strong>{remedy!.rung.label.toLowerCase()}</strong> brings the same label to{' '}
-                  {(remedy!.bytes / 1024).toFixed(1)} KB, under the {SEEK_SAFE_JOB_BYTES / 1024} KB
-                  the printer reads in full, so it registers itself in a single job. The cost is{' '}
-                  {remedy!.rung.describe}. This is the mildest change that fits: the picture is the
-                  only thing on a label whose size is a choice, since text and codes compress to
-                  almost nothing however large it is.{' '}
+                  {kb(remedy!.assessment.bytes)} KB, under the{' '}
+                  {(remedy!.assessment.readAheadBytes ?? 0) / 1024} KB the printer reads in full, so
+                  it registers itself in a single job. The cost is {remedy!.rung.describe}. This is
+                  the mildest change that fits: the picture is the only thing on a label whose size
+                  is a choice, since text and codes compress to almost nothing however large it is.{' '}
                   <button
                     className="linklike"
                     onClick={() => photoIds.forEach((id) => updateElement(id, remedy!.rung.tone))}
@@ -403,9 +427,9 @@ export function PrintPanel({
               {remedy != null && !remedyFits && (
                 <p>
                   Nothing on the tone list would get it under the line &mdash; even ordered
-                  dithering leaves {(remedy.bytes / 1024).toFixed(1)} KB against the{' '}
-                  {SEEK_SAFE_JOB_BYTES / 1024} KB the printer reads in full. This picture has too
-                  much fine detail to compress, so splitting is the only route.
+                  dithering leaves {kb(remedy.assessment.bytes)} KB against the{' '}
+                  {(remedy.assessment.readAheadBytes ?? 0) / 1024} KB the printer reads in full.
+                  This picture has too much fine detail to compress, so splitting is the only route.
                 </p>
               )}
 
@@ -509,9 +533,8 @@ export function PrintPanel({
       {clipped && (
         <p className="warn">
           This label is {dotsToMm(labelWidthDots)} mm wide but the print head is only{' '}
-          {dotsToMm(headWidth)} mm, so anything past that edge is cut off. 384 dots was measured
-          with the edge-frame pattern and agrees with the vendor SDK; if your unit differs, the head
-          width is under Advanced in the Printer panel.
+          {dotsToMm(headWidth)} mm, so anything past that edge is cut off. If your printer's head is
+          wider than that, set its width under Advanced in the Printer panel.
         </p>
       )}
 
@@ -586,17 +609,14 @@ export function PrintPanel({
                   onChange={(e) =>
                     setSettings((s) => ({
                       ...s,
-                      speed:
-                        e.target.value === 'off'
-                          ? undefined
-                          : (Number(e.target.value) as 0 | 1 | 2),
+                      speed: e.target.value === 'off' ? undefined : (e.target.value as PrintSpeed),
                     }))
                   }
                 >
                   <option value="off">Don&rsquo;t send</option>
-                  <option value={0}>Low</option>
-                  <option value={1}>Medium</option>
-                  <option value={2}>High</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
                 </select>
               </label>
               <span className="hint">

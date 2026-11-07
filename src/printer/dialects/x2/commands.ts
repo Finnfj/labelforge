@@ -6,13 +6,7 @@
  * configuration, `10 FF` covers device-information queries.
  */
 import { concatBytes } from '../../../lib/bytes'
-import {
-  MAX_DENSITY,
-  MIN_DENSITY,
-  SEEK_SAFE_JOB_BYTES,
-  type PaperTypeValue,
-  type SpeedValue,
-} from './constants'
+import { MAX_DENSITY, MIN_DENSITY, type PaperTypeValue, type SpeedValue } from './constants'
 
 const cmd = (...bytes: number[]) => Uint8Array.from(bytes)
 
@@ -308,23 +302,6 @@ export function printJobStream(framing: PrintJobFraming, image: Uint8Array): Uin
     image,
     ...framing.trailer.map((c) => c.bytes),
   ])
-}
-
-/**
- * Whether a raster this big needs splitting for its gap seek to be read.
- *
- * The printer honours a job's seek only when it read the job whole before the motor
- * started; above {@link SEEK_SAFE_JOB_BYTES} it did not, and a tall label's own seek
- * goes unread. Splitting is the answer — see `planSeekableBands()`.
- *
- * Takes the encoded `1F 10` command's length rather than the whole job's, because that
- * is what a caller has before it has built any framing: the print panel warns from the
- * same number the drivers decide on, and 29 bytes of framing is nothing against a
- * 16 KB threshold. One basis everywhere beats a more precise one that two callers
- * compute differently.
- */
-export function needsSplitToSeek(encodedImageBytes: number): boolean {
-  return encodedImageBytes > SEEK_SAFE_JOB_BYTES
 }
 
 /*

@@ -7,7 +7,6 @@ import type { PackedBitmap } from '../../model/bitmap'
 import { concatBytes } from '../../lib/bytes'
 import { noisyBitmap } from '../../test/bitmaps'
 import { DEFAULT_PRINT_SETTINGS, type PrintSettings } from '../types'
-import { PaperType } from '../dialects/x2/constants'
 
 /*
  * What each driver puts on the wire, write by write, pinned absolutely.
@@ -125,12 +124,12 @@ const CASES: Array<[string, () => PackedBitmap, PrintSettings]> = [
   [
     'a label on continuous paper',
     () => checkerboard(64, 16),
-    { ...DEFAULT_PRINT_SETTINGS, paperType: PaperType.Continuous },
+    { ...DEFAULT_PRINT_SETTINGS, stock: 'continuous' },
   ],
   [
     'a label asked for with a speed',
     () => checkerboard(64, 16),
-    { ...DEFAULT_PRINT_SETTINGS, speed: 1 },
+    { ...DEFAULT_PRINT_SETTINGS, speed: 'medium' },
   ],
   [
     'a label asked for without a gap seek',
