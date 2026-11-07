@@ -59,7 +59,7 @@ export function appendBlankRows(bm: PackedBitmap, rows: number): PackedBitmap {
  *
  * Rows are byte-aligned and independent, so a band is a contiguous run of the
  * backing array and this is one copy. That is what makes splitting a raster across
- * several print jobs cheap — see `printer/protocol/splitJob.ts` for why anyone
+ * several print jobs cheap — see `printer/dialects/x2/splitJob.ts` for why anyone
  * would want to.
  */
 export function sliceRows(bm: PackedBitmap, startRow: number, rows: number): PackedBitmap {
@@ -79,7 +79,7 @@ export function sliceRows(bm: PackedBitmap, startRow: number, rows: number): Pac
  * The counterpart to {@link appendBlankRows}, and it exists for the seam between
  * the bands of a split label: the head is deliberately wound back further than it
  * needs to be, and these rows carry it forward to exactly where the last band
- * stopped without firing a dot on the way. See `printer/protocol/splitJob.ts`.
+ * stopped without firing a dot on the way. See `printer/dialects/x2/splitJob.ts`.
  */
 export function prependBlankRows(bm: PackedBitmap, rows: number): PackedBitmap {
   const extra = Math.max(0, Math.round(rows))

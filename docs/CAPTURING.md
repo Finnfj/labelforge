@@ -49,7 +49,7 @@ shared without handing over unrelated traffic. Wireshark (filter `btatt`) works 
 Most commands on this printer are acknowledged and ignored when sent on their own, and
 act only inside a job, on one side of the raster. Diagnostics has an instrument for
 that: **feed _N_ mm, then send «hex»** (`probeJob()` in
-`src/printer/protocol/probeJob.ts`).
+`src/printer/dialects/x2/probeJob.ts`).
 
 It builds one real job: preamble, a blank raster of the requested height, the bytes
 under test, `stopPrintJob`. What it leaves out is the point. It carries no gap seek,

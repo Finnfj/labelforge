@@ -1,4 +1,4 @@
-import type { PrinterFault } from '../types'
+import type { PrinterFault } from '../../types'
 
 /**
  * Interpretation of what the printer sends back.

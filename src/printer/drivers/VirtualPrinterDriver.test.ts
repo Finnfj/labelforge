@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { VirtualPrinterDriver } from './VirtualPrinterDriver'
 import { checkerboard } from '../diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
-import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
+import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
 import { jobStreamBytes } from '../dialect'
 import { testDialect } from '../dialects/testing/testDialect'
 

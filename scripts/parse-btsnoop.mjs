@@ -57,7 +57,7 @@ const ATT_OPCODE = {
 /**
  * Commands we already know, so anything unrecognised stands out.
  *
- * Deliberately a duplicate of src/printer/protocol/commands.ts rather than an import:
+ * Deliberately a duplicate of src/printer/dialects/x2/commands.ts rather than an import:
  * this script must run on a bare `node` with no build step, and a lookup table in a
  * diagnostic tool is cheap to keep honest. Longest prefix wins.
  */

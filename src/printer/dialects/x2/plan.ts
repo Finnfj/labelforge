@@ -1,10 +1,10 @@
 import type { PackedBitmap } from '../../../model/bitmap'
 import type { JobPart, NamedCommand, PlannedJob, PrintPlan } from '../../dialect'
 import type { PrintSettings } from '../../types'
-import { printJobFraming } from '../../protocol/commands'
-import { printDurationMs } from '../../protocol/constants'
-import { encodeImage } from '../../protocol/encodeImage'
-import { planBands } from '../../protocol/splitJob'
+import { printJobFraming } from './commands'
+import { printDurationMs } from './constants'
+import { encodeImage } from './encodeImage'
+import { planBands } from './splitJob'
 
 /**
  * The x2 print plan: one label, every band of every copy.

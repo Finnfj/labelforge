@@ -1,16 +1,16 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
-import * as cmd from '../protocol/commands'
-import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
+import * as cmd from '../dialects/x2/commands'
+import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
 import { DEFAULT_PROFILE, matchProfile, type PrinterProfile } from '../profiles'
-import { CreditWindow } from '../protocol/CreditWindow'
+import { CreditWindow } from './CreditWindow'
 import {
   decodeBattery,
   decodeLabelHeight,
   decodeStatusFlags,
   decodeText,
   faultFromFlags,
-} from '../protocol/responses'
+} from '../dialects/x2/responses'
 import {
   jobsByCopy,
   jobStreamBytes,

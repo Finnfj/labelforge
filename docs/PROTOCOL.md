@@ -58,8 +58,9 @@ and throughput has not been a problem.
 **A job is one byte stream** ([ADR 0002](adr/0002-one-flow-controlled-stream-per-job.md)).
 Preamble, raster and trailer are concatenated and chunked as a whole, so chunk
 boundaries fall wherever they fall and every byte waits for a credit.
-`printJobStream()` in `src/printer/protocol/commands.ts` builds it. The only write
-boundary is before the tear-off advance, which goes out on its own after the job.
+The Bluetooth driver joins each job of the print plan into that stream before
+chunking it. The only write boundary is before the tear-off advance, which goes out
+on its own after the job.
 
 ## Commands
 
@@ -157,7 +158,7 @@ Reachable only through the diagnostics raw-hex box.
 - `payloadLen` is the compressed length, 32-bit.
 - `payload` is `zlib.deflate(packed, { level: -1, windowBits: 10, memLevel: 8,
 strategy: 0 })`: a standard zlib stream, not raw deflate. `windowBits: 10` is
-  load-bearing; the golden fixtures in `src/printer/protocol/` pin the SDK's output
+  load-bearing; the golden fixtures in `src/printer/dialects/x2/` pin the SDK's output
   byte for byte.
 
 Bit packing: row-major, rows padded to a whole byte, **MSB first**, a set bit is a
@@ -184,8 +185,9 @@ speed of about 43 rows per second (`PRINT_ROWS_PER_SECOND`).
 
 Captured from the vendor app printing the same label three times, byte-identical each
 time, and repeated verbatim per copy, configuration included. `printJobFraming()` in
-`src/printer/protocol/commands.ts` is the one place both the Bluetooth driver and the
-virtual printer build a job from, so they cannot drift apart.
+`src/printer/dialects/x2/commands.ts` builds each job, and the x2 print plan in
+`src/printer/dialects/x2/plan.ts` is the one place both the Bluetooth driver and the
+virtual printer get a print from, so they cannot drift apart.
 
 ```mermaid
 sequenceDiagram
@@ -302,7 +304,7 @@ remedies, in the order the print panel offers them.
 ### 1. Splitting into bands — the default
 
 [ADR 0001](adr/0001-split-tall-labels-into-bands.md) records why. `planSeekableBands()`
-in `src/printer/protocol/splitJob.ts` cuts the raster into the fewest horizontal bands
+in `src/printer/dialects/x2/splitJob.ts` cuts the raster into the fewest horizontal bands
 that each encode under the limit. The bands go out one at a time, each waiting for
 `4F 4B`, because the printer accepts no job while it is working on one; only the last
 band carries the gap seek, and the tear-off advance happens once at the end. A raster

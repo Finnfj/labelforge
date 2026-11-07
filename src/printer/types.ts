@@ -1,6 +1,6 @@
 import type { PackedBitmap } from '../model/bitmap'
 import type { ProfileSupport } from './profiles'
-import type { PaperTypeValue, SpeedValue } from './protocol/constants'
+import type { PaperTypeValue, SpeedValue } from './dialects/x2/constants'
 
 /**
  * The seam between the app and the hardware.

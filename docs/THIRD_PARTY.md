@@ -54,7 +54,7 @@ CMF/FLG header construction.
 
 The parameters are `level: -1, windowBits: 10, memLevel: 8, strategy: 0`. Calling
 `pako.deflate` with those options reproduces the SDK's output **byte for byte**; this
-is pinned by the golden-fixture test in `src/printer/protocol/`, whose expected values
+is pinned by the golden-fixture test in `src/printer/dialects/x2/`, whose expected values
 were captured from the original SDK. The `windowBits: 10` in particular is
 load-bearing — the default of 15 produces different bytes.
 

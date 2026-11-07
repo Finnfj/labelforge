@@ -5,7 +5,7 @@ import { MockTransport } from '../transport/MockTransport'
 import { checkerboard } from '../diagnostics/testPatterns'
 import { createPackedBitmap, type PackedBitmap } from '../../model/bitmap'
 import { DEFAULT_PRINT_SETTINGS, type PrintSettings } from '../types'
-import { PaperType } from '../protocol/constants'
+import { PaperType } from '../dialects/x2/constants'
 
 /*
  * What each driver puts on the wire, write by write, pinned absolutely.

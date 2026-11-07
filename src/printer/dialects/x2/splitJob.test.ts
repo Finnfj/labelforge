@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createPackedBitmap, type PackedBitmap } from '../../model/bitmap'
+import { createPackedBitmap, type PackedBitmap } from '../../../model/bitmap'
 import { encodeImage } from './encodeImage'
 import { SEEK_SAFE_JOB_BYTES } from './constants'
 import {

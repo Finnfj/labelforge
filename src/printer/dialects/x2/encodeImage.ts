@@ -1,5 +1,5 @@
 import { deflate } from 'pako'
-import type { PackedBitmap } from '../../model/bitmap'
+import type { PackedBitmap } from '../../../model/bitmap'
 
 /**
  * zlib parameters the printer's firmware expects.

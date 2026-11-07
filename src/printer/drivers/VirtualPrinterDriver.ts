@@ -3,7 +3,7 @@ import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import { jobsByCopy, jobStreamBytes, type Dialect } from '../dialect'
 import { x2 } from '../dialects/x2'
 import { DEFAULT_PROFILE } from '../profiles'
-import { DEFAULT_CHUNK_SIZE } from '../protocol/constants'
+import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
 import type {
   PrintJob,
   PrinterCapabilities,
