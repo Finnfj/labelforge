@@ -4,7 +4,7 @@ import { MockTransport } from '../transport/MockTransport'
 import { checkerboard } from '../diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { CreditWindow } from './CreditWindow'
-import { ALL_NAME_PREFIXES, ALL_SERVICES, findProfile, type PrinterProfile } from '../profiles'
+import { ALL_NAME_PREFIXES, ALL_SERVICES, findProfile, type DrivenProfile } from '../profiles'
 import { planStreamBytes } from '../dialect'
 import { concatBytes } from '../../lib/bytes'
 import {
@@ -19,10 +19,10 @@ import {
   testPrinter,
 } from '../dialects/testing/testDialect'
 import { x2 } from '../dialects/x2'
-import { X2_CREDIT_PACING } from '../dialects/x2/link'
+import type { CreditPacing } from '../dialect'
 
 /** A profile no real printer has, speaking the test dialect, not yet confirmed. */
-function experimentalProfile(): PrinterProfile {
+function experimentalProfile(): DrivenProfile {
   return {
     id: 'test-experimental',
     label: 'Test printer',
@@ -55,8 +55,8 @@ describe('BlePrinterDriver connecting', () => {
     const driver = new BlePrinterDriver(transport)
     const capabilities = await driver.connect()
 
-    // The vendor app sends setBTType immediately after connecting.
-    expect(hex(transport.writes[0])).toBe('1f b2 00')
+    // The dialect's handshake goes out first, before anything is asked.
+    expect(transport.writes[0]).toEqual(x2.conversation.handshake[0].bytes)
     // A real P50S never answers the model query, so the model comes from the
     // advertised BLE name instead of being reported as unknown.
     expect(capabilities.model).toBe('P50')
@@ -106,7 +106,7 @@ describe('BlePrinterDriver connecting', () => {
     expect(capabilities.profileAssumed).toBe(false)
     // Same dialect means the same opening command; nothing about the sequence
     // changes for a model in the x2 family.
-    expect(hex(transport.writes[0])).toBe('1f b2 00')
+    expect(transport.writes[0]).toEqual(x2.conversation.handshake[0].bytes)
   })
 
   it('assumes a P50 for a name it does not recognise, and admits it', async () => {
@@ -212,8 +212,8 @@ describe('BlePrinterDriver connecting', () => {
  *
  * What a print says is the dialect's business and is tested there; the exact x2
  * bytes this driver writes are pinned in wire.snapshot.test.ts. What is left here
- * is what the driver adds: every job as one credited stream in chunks, its
- * epilogue after it, and the waits the plan asks for.
+ * is what the driver adds: every job as one stream, in the chunks its link cuts and
+ * paced as its link says, its epilogue after it, and the waits the plan asks for.
  */
 
 /** A connected driver printing in the test dialect to a printer that speaks it. */
@@ -265,8 +265,9 @@ describe('BlePrinterDriver printing a plan', () => {
     const bitmap = checkerboard(384, 8)
     await driver.print({ bitmap, settings: DEFAULT_PRINT_SETTINGS })
 
-    // Two jobs of 3 + 192 + 1 bytes, at 90 a chunk, and the end byte after the last.
-    expect(transport.writes.map((w) => w.length)).toEqual([90, 90, 16, 90, 90, 16, 1])
+    // Two jobs of 3 + 192 + 1 bytes, at the test link's 64 a chunk, and the end byte
+    // after the last.
+    expect(transport.writes.map((w) => w.length)).toEqual([64, 64, 64, 4, 64, 64, 64, 4, 1])
     const plan = dialect.planPrint(bitmap, DEFAULT_PRINT_SETTINGS)
     const expected = plan.copies
       .flatMap((copy) => copy.jobs)
@@ -398,7 +399,7 @@ describe('BlePrinterDriver printing a plan', () => {
     const plan = dialect.planPrint(bitmap, DEFAULT_PRINT_SETTINGS)
     const expected = plan.copies.flatMap((copy) =>
       copy.jobs.flatMap((job) => [
-        ...dialect.link.chunk(concatBytes(job.parts.map((p) => p.bytes)), 90),
+        ...dialect.link.chunk(concatBytes(job.parts.map((p) => p.bytes)), dialect.link.chunkSize),
         ...job.epilogue.map((c) => c.bytes),
       ]),
     )
@@ -470,23 +471,39 @@ describe('BlePrinterDriver printing a plan', () => {
   })
 })
 
+/**
+ * A pacing unlike x2's: `01 n` adds n credits, `02 n` sets the window to n, and
+ * anything else grants nothing. What x2's own frames mean is tested on x2's link.
+ */
+const PACING: CreditPacing = {
+  kind: 'credits',
+  readGrant: (bytes) =>
+    bytes.length < 2
+      ? null
+      : bytes[0] === 0x01
+        ? { add: bytes[1] }
+        : bytes[0] === 0x02
+          ? { set: bytes[1] }
+          : null,
+  delayWithCreditsMs: 3,
+  delayWithoutCreditsMs: 40,
+}
+
 describe('CreditWindow', () => {
   it('does not block when the printer never grants credits', async () => {
     // A printer without flow control must not stall the whole job waiting for a
     // signal that is never coming.
-    const window = new CreditWindow(X2_CREDIT_PACING)
+    const window = new CreditWindow(PACING)
     await expect(window.acquire({ timeoutMs: 50 })).resolves.toBeUndefined()
     expect(window.hasFlowControl).toBe(false)
-    expect(window.delayMs).toBe(30)
+    expect(window.delayMs).toBe(PACING.delayWithoutCreditsMs)
   })
 
-  it('ignores frames that are not credit grants', () => {
-    // A real P50S sends `02 dc 00` on this channel alongside the `01 01` grants.
-    // Reading byte 1 regardless of frame type — as the vendor SDK does — would
-    // bank 220 phantom credits and disable flow control for the whole session,
-    // which shows up as bands missing from long labels and nothing else.
-    const window = new CreditWindow(X2_CREDIT_PACING)
-    window.onNotify(Uint8Array.of(0x02, 0xdc, 0x00))
+  it('ignores a notification its pacing reads as no grant', () => {
+    // Banking credits from a frame that grants none would disable flow control for
+    // the rest of the session, which shows up as bands missing from long labels.
+    const window = new CreditWindow(PACING)
+    window.onNotify(Uint8Array.of(0x03, 0xdc, 0x00))
     expect(window.available).toBe(0)
     expect(window.hasFlowControl).toBe(false)
 
@@ -495,26 +512,20 @@ describe('CreditWindow', () => {
     expect(window.hasFlowControl).toBe(true)
   })
 
-  it('opens with a window of 4, as observed on real hardware', () => {
-    const window = new CreditWindow(X2_CREDIT_PACING)
-    window.onNotify(Uint8Array.of(0x01, 0x04))
-    expect(window.available).toBe(4)
-  })
-
-  it('treats a value of 4 as a window and anything else as an increment', () => {
-    const window = new CreditWindow(X2_CREDIT_PACING)
-    window.onNotify(Uint8Array.of(0x01, 0x04))
+  it('sets the window where the grant says so, and adds to it otherwise', () => {
+    const window = new CreditWindow(PACING)
+    window.onNotify(Uint8Array.of(0x02, 0x04))
     expect(window.available).toBe(4)
     window.onNotify(Uint8Array.of(0x01, 0x02))
     expect(window.available).toBe(6)
-    window.onNotify(Uint8Array.of(0x01, 0x04))
+    window.onNotify(Uint8Array.of(0x02, 0x04))
     expect(window.available).toBe(4)
   })
 
-  it('consumes a credit per acquire and switches to the fast delay', async () => {
-    const window = new CreditWindow(X2_CREDIT_PACING)
+  it('consumes a credit per acquire and switches to the faster delay', async () => {
+    const window = new CreditWindow(PACING)
     window.onNotify(Uint8Array.of(0x01, 0x02))
-    expect(window.delayMs).toBe(5)
+    expect(window.delayMs).toBe(PACING.delayWithCreditsMs)
     await window.acquire()
     expect(window.available).toBe(1)
     await window.acquire()
@@ -522,7 +533,7 @@ describe('CreditWindow', () => {
   })
 
   it('waits for a credit once flow control is active, then proceeds', async () => {
-    const window = new CreditWindow(X2_CREDIT_PACING)
+    const window = new CreditWindow(PACING)
     window.onNotify(Uint8Array.of(0x01, 0x01))
     await window.acquire()
 
@@ -541,7 +552,7 @@ describe('CreditWindow', () => {
   it('recovers rather than hanging if credits stop arriving', async () => {
     vi.useFakeTimers()
     try {
-      const window = new CreditWindow(X2_CREDIT_PACING)
+      const window = new CreditWindow(PACING)
       window.onNotify(Uint8Array.of(0x01, 0x01))
       await window.acquire()
 
@@ -554,7 +565,7 @@ describe('CreditWindow', () => {
   })
 
   it('is abortable while waiting', async () => {
-    const window = new CreditWindow(X2_CREDIT_PACING)
+    const window = new CreditWindow(PACING)
     window.onNotify(Uint8Array.of(0x01, 0x01))
     await window.acquire()
 
@@ -566,39 +577,37 @@ describe('CreditWindow', () => {
 })
 
 describe('gap calibration', () => {
-  it('locates three times before asking for the height, as the vendor SDK requires', async () => {
-    // The vendor's own comment: ask for the height before locating a few labels
-    // and the value comes back inaccurate.
-    const transport = new MockTransport({
-      autoRespond: (bytes) => {
-        const key = hex(bytes)
-        if (key === '1d 0c') return Uint8Array.of(0x4f, 0x4b) // OK
-        if (key === '10 ff 50 f2') return Uint8Array.of(0x00, 0xf0) // 240 dots
-        return identityResponder()(bytes)
+  it("hands calibration to the dialect, asking through the driver's queries", async () => {
+    // How many passes and in what order is x2's business, tested on x2. What the
+    // driver owes is a working way to ask, and the dialect's answer back.
+    const transport = new MockTransport({ autoRespond: () => Uint8Array.of(0x42) })
+    const base = testDialect()
+    const dialect = {
+      ...base,
+      conversation: {
+        ...base.conversation,
+        calibrateLabelGap: async (ask: (c: Uint8Array) => Promise<Uint8Array | null>) => {
+          const reply = await ask(Uint8Array.of(0x99))
+          return { labelHeightDots: reply ? reply[0] : null, passes: [reply] }
+        },
       },
-    })
-    const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 50 })
+    }
+    const driver = new BlePrinterDriver(transport, { dialect, queryTimeoutMs: 50 })
     await driver.connect()
     transport.reset()
 
-    const passes: number[] = []
-    const result = await driver.calibrateLabelGap({ onPass: (pass) => passes.push(pass) })
-
-    const sent = transport.writes.map(hex)
-    expect(sent.filter((b) => b === '1d 0c')).toHaveLength(3)
-    expect(passes).toEqual([1, 2, 3])
-    // The height query must come after the last locate, not before.
-    expect(sent.lastIndexOf('1d 0c')).toBeLessThan(sent.indexOf('10 ff 50 f2'))
-    expect(result.labelHeightDots).toBe(240)
+    const result = await driver.calibrateLabelGap()
+    expect(transport.writes.map(hex)).toEqual(['99'])
+    expect(result.labelHeightDots).toBe(0x42)
   })
 
-  it('reports no height rather than a wrong one when the printer stays silent', async () => {
-    const transport = new MockTransport()
-    const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20 })
+  it('refuses to calibrate a printer whose dialect has no gap to find', async () => {
+    const driver = new BlePrinterDriver(new MockTransport(), {
+      dialect: testDialect(),
+      queryTimeoutMs: 20,
+    })
     await driver.connect()
-    const result = await driver.calibrateLabelGap({ passes: 2 })
-    expect(result.labelHeightDots).toBeNull()
-    expect(result.passes).toEqual([null, null])
+    await expect(driver.calibrateLabelGap()).rejects.toThrow(/no label gap/i)
   })
 
   it('refuses to calibrate while disconnected', async () => {

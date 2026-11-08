@@ -81,7 +81,7 @@ export class WebBluetoothTransport implements Transport {
       // put the 128-bit service in their advertisement, so a service filter
       // yields an empty chooser and looks like the printer is missing.
       device = await navigator.bluetooth.requestDevice(
-        options.acceptAllDevices || namePrefixes.length === 0
+        options.acceptAllDevices
           ? { acceptAllDevices: true, optionalServices }
           : { filters: namePrefixes.map((namePrefix) => ({ namePrefix })), optionalServices },
       )

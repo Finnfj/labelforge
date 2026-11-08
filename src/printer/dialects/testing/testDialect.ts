@@ -1,3 +1,4 @@
+import { sliceBytes } from '../../../lib/bytes'
 import { sliceRows, type PackedBitmap } from '../../../model/bitmap'
 import type { Dialect, PlannedJob } from '../../dialect'
 import type { MockTransport } from '../../transport/MockTransport'
@@ -59,15 +60,12 @@ export function testDialect(options: TestDialectOptions = {}): Dialect {
         credits: acknowledged ? undefined : 'test-credits',
         writeMode: acknowledged ? 'with-response' : 'fastest-offered',
       },
-      chunkSize: 16,
-      chunk(stream, chunkSize) {
-        const chunks: Uint8Array[] = []
-        for (let offset = 0; offset < stream.length; offset += chunkSize) {
-          const slice = stream.subarray(offset, Math.min(offset + chunkSize, stream.length))
-          chunks.push(acknowledged ? Uint8Array.of(FRAME, ...slice) : slice)
-        }
-        return chunks
-      },
+      // Unlike x2's 90, so a driver that still assumed it would show.
+      chunkSize: 64,
+      chunk: (stream, chunkSize) =>
+        sliceBytes(stream, chunkSize).map((slice) =>
+          acknowledged ? Uint8Array.of(FRAME, ...slice) : slice,
+        ),
       pacing: acknowledged
         ? { kind: 'acknowledged' }
         : {

@@ -1,3 +1,4 @@
+import { sliceBytes } from '../../../lib/bytes'
 import type { CreditPacing, Link } from '../../dialect'
 import {
   CHAR_NOTIFY_CREDITS,
@@ -59,12 +60,6 @@ export const x2Link: Link = {
     writeMode: 'fastest-offered',
   },
   chunkSize: DEFAULT_CHUNK_SIZE,
-  chunk(stream, chunkSize) {
-    const chunks: Uint8Array[] = []
-    for (let offset = 0; offset < stream.length; offset += chunkSize) {
-      chunks.push(stream.subarray(offset, Math.min(offset + chunkSize, stream.length)))
-    }
-    return chunks
-  },
+  chunk: sliceBytes,
   pacing: X2_CREDIT_PACING,
 }

@@ -487,6 +487,18 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
 }
 
+/* A fieldset used only to disable a run of controls at once, drawn as nothing. */
+.plain-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.plain-fieldset:disabled {
+  opacity: 0.55;
+}
+
 button.primary {
   background: var(--accent);
   border-color: var(--accent);

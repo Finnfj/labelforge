@@ -1,7 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import { planStreamBytes, type Dialect } from '../dialect'
-import { DEFAULT_PROFILE, type PrinterProfile } from '../profiles'
+import { DEFAULT_PROFILE, type DrivenProfile } from '../profiles'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -38,7 +38,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
   #emitter = new Emitter<PrinterEvents>()
   #printouts: VirtualPrintout[] = []
   #dialect: Dialect
-  #profile: PrinterProfile
+  #profile: DrivenProfile
 
   /** Bytes per simulated second. Set to Infinity in tests to remove the delay. */
   readonly throughputBytesPerSecond: number
@@ -50,11 +50,11 @@ export class VirtualPrinterDriver implements PrinterDriver {
    */
   constructor(
     throughputBytesPerSecond = 4000,
-    options: { dialect?: Dialect; profile?: PrinterProfile } = {},
+    options: { dialect?: Dialect; profile?: DrivenProfile } = {},
   ) {
     this.throughputBytesPerSecond = throughputBytesPerSecond
     this.#profile = options.profile ?? DEFAULT_PROFILE
-    this.#dialect = options.dialect ?? this.#profile.dialect ?? DEFAULT_PROFILE.dialect!
+    this.#dialect = options.dialect ?? this.#profile.dialect
   }
 
   get state(): PrinterState {

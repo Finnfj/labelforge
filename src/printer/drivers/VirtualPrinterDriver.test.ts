@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { VirtualPrinterDriver } from './VirtualPrinterDriver'
 import { checkerboard } from '../diagnostics/testPatterns'
 import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
-import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
 import { planStreamBytes } from '../dialect'
 import { testDialect } from '../dialects/testing/testDialect'
 import { x2 } from '../dialects/x2'
@@ -31,18 +30,8 @@ describe('VirtualPrinterDriver', () => {
     p.on('wire', (w) => lines.push(w.note ?? `raster ${w.bytes.length}`))
     await p.print({ bitmap: checkerboard(384, 8), settings: DEFAULT_PRINT_SETTINGS })
 
-    // 8 rows of 48 bytes is 384 bytes of raster: four full chunks and the rest.
-    expect(DEFAULT_CHUNK_SIZE).toBe(90)
-    expect(lines).toEqual([
-      'start',
-      'raster 90',
-      'raster 90',
-      'raster 90',
-      'raster 90',
-      'raster 24',
-      'stop',
-      'end',
-    ])
+    // 8 rows of 48 bytes is 384 bytes of raster: six chunks at the test link's 64.
+    expect(lines).toEqual(['start', ...Array(6).fill('raster 64'), 'stop', 'end'])
   })
 
   it('records exactly the bytes of the plan, in order', async () => {

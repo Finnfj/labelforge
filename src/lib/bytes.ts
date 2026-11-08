@@ -8,3 +8,12 @@ export function concatBytes(parts: readonly Uint8Array[]): Uint8Array<ArrayBuffe
   }
   return out
 }
+
+/** Consecutive views of `bytes`, each `size` long but the last, sharing its buffer. */
+export function sliceBytes(bytes: Uint8Array, size: number): Uint8Array[] {
+  const slices: Uint8Array[] = []
+  for (let offset = 0; offset < bytes.length; offset += size) {
+    slices.push(bytes.subarray(offset, Math.min(offset + size, bytes.length)))
+  }
+  return slices
+}

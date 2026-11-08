@@ -20,6 +20,16 @@ The printer's permission to send one more chunk. A link paced by acknowledged wr
 has none.
 _Avoid_: token, ack
 
+**Link**:
+How a dialect's printers carry a job over Bluetooth: the service they are reached on,
+how a job is cut into chunks, and what paces them.
+_Avoid_: transport (the transport is the Bluetooth connection itself), protocol
+
+**Pacing**:
+What decides when the next chunk may go: a credit from the printer, or the printer
+acknowledging the write before.
+_Avoid_: throttling
+
 **Band**:
 A horizontal slice of one label's raster, sent as a job of its own.
 _Avoid_: part, chunk, split
@@ -82,6 +92,12 @@ _Avoid_: gap, join (a gap is the stock's own space between labels)
 A command family shared by a group of printer models, such as MarkLife's x2 and L11,
 or DYMO's LetraTag.
 _Avoid_: protocol version, generation
+
+**Conversation**:
+What a dialect says to a printer outside a print, and what the printer's replies
+mean: the greeting after connecting, questions about itself, and its report that a
+job is done or failed.
+_Avoid_: handshake (only the greeting), protocol
 
 **Evidence tier**:
 How a protocol fact was established: read from the vendor SDK, tested on hardware,

@@ -92,8 +92,8 @@ export function densityLevel(dialect: Dialect, asked: number | undefined): numbe
  *
  * The BLE driver owns the mechanics — writing, waiting for credits, aborting — and
  * asks the link for the policy: which service to open, how a job's stream is cut
- * into chunks, and what paces them. The virtual printer has no link to speak of
- * and ignores it.
+ * into chunks, and what paces them. The virtual printer has no radio, and takes
+ * only the chunk size, to pace its log the way a real link would.
  */
 export interface Link {
   readonly gatt: GattLayout
@@ -175,10 +175,20 @@ export interface Conversation {
    * Have the printer find its label gap, then read back the label height. Absent
    * where the dialect has no gap sensor to drive.
    */
-  calibrateLabelGap?(
-    ask: Ask,
-    options: { passes?: number; onPass?: (pass: number, reply: Uint8Array | null) => void },
-  ): Promise<{ labelHeightDots: number | null; passes: Array<Uint8Array | null> }>
+  calibrateLabelGap?(ask: Ask, options: GapCalibrationOptions): Promise<GapCalibration>
+}
+
+export interface GapCalibrationOptions {
+  /** How many times to have the printer find the gap before reading the height. */
+  passes?: number
+  onPass?: (pass: number, reply: Uint8Array | null) => void
+}
+
+export interface GapCalibration {
+  /** The label height the printer measured, or null if it did not say. */
+  labelHeightDots: number | null
+  /** The printer's reply to each pass, null where it stayed silent. */
+  passes: Array<Uint8Array | null>
 }
 
 /** The ordered jobs a dialect produces to put one label on paper, copy by copy. */

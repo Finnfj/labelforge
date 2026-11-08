@@ -17,7 +17,7 @@ describe('printer profiles', () => {
   it('gives every driveable profile the numbers a driver needs', () => {
     for (const profile of PROFILES) {
       if (profile.support === 'incompatible') continue
-      expect(profile.chunkSize, profile.id).toBeGreaterThan(0)
+      expect(profile.chunkSize ?? profile.dialect.link.chunkSize, profile.id).toBeGreaterThan(0)
       expect(profile.headWidthDots, profile.id).toBeGreaterThan(0)
     }
   })

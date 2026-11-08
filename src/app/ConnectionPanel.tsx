@@ -102,8 +102,8 @@ export function ConnectionPanel({
             <span>Show all Bluetooth devices</span>
           </label>
           <p className="hint">
-            The chooser normally lists only devices whose name starts with P50. Tick the box above
-            if yours does not appear — the name prefixes come from reverse engineering, not from a
+            The chooser normally lists only devices whose name this app knows. Tick the box above if
+            yours does not appear — the name prefixes come from reverse engineering, not from a
             specification, so an unexpected one is quite possible.
           </p>
         </>

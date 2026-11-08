@@ -15,7 +15,7 @@ import { DEFAULT_PRINT_SETTINGS } from '../printer/types'
 import { decodeText, toHex } from '../printer/dialects/x2/responses'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import type { DiagnosticFlagsHandle } from './useDiagnosticFlags'
-import { PROFILES } from '../printer/profiles'
+import { PROFILES, type ProfileSupport } from '../printer/profiles'
 import { WIRE_LOG_LIMIT } from './usePrinter'
 import type { PrinterConnection, WireEntry } from './usePrinter'
 
@@ -24,6 +24,14 @@ const LOG_LINES_SHOWN = 200
 
 /** Densities to walk when finding a good darkness. One label each. */
 const DENSITY_LADDER = [3, 6, 9, 12, 15]
+
+/** How the model override names each level of support, after the model's name. */
+const SUPPORT_SUFFIX: Record<ProfileSupport, string> = {
+  confirmed: '',
+  unverified: ' — unverified',
+  experimental: ' — experimental',
+  incompatible: ' — incompatible',
+}
 
 /** Candidate head widths for the ruler probe. */
 const HEAD_WIDTH_CANDIDATES = [320, 384, 400, 576]
@@ -48,8 +56,9 @@ export function DiagnosticsPanel({
   const [error, setError] = useState<string | null>(null)
 
   const connected = connection.capabilities != null
-  // Everything from the probes to the density ladder builds x2 commands itself, so
-  // it is offered only while the driver speaks x2 (ADR 0004).
+  // Everything from the probes to the density ladder is built for x2 printers: it
+  // sends x2 commands itself, or walks x2's head widths and density range. So it is
+  // disabled while the driver speaks another dialect (ADR 0004).
   const speaksX2 = connection.driver.dialect === x2
   const headWidth = connection.geometry.headWidthDots
 
@@ -162,7 +171,7 @@ export function DiagnosticsPanel({
       <p className="hint">
         Adds an Output dropdown to the Printer panel. The virtual printer runs the real command
         sequence and the real encoder with no hardware attached, so the preview is byte-for-byte
-        what a P50 would receive.
+        what the printer it stands in for would receive: a P50, or the model forced below.
       </p>
       <label className="field field--check" style={{ marginTop: '0.5rem' }}>
         <input
@@ -189,11 +198,7 @@ export function DiagnosticsPanel({
             {PROFILES.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.label}
-                {p.support === 'confirmed'
-                  ? ''
-                  : p.support === 'unverified'
-                    ? ' — unverified'
-                    : ' — incompatible'}
+                {SUPPORT_SUFFIX[p.support]}
               </option>
             ))}
           </select>
@@ -205,6 +210,19 @@ export function DiagnosticsPanel({
           </span>
         )}
       </div>
+      <label className="field field--check" style={{ marginTop: '0.5rem' }}>
+        <input
+          type="checkbox"
+          checked={diagnostics.flags.experimentalPrinters}
+          onChange={(e) => diagnostics.setFlag('experimentalPrinters', e.target.checked)}
+        />
+        <span>Drive experimental printers</span>
+      </label>
+      <p className="hint">
+        A printer whose protocol has been worked out but never printed with on our own hardware is
+        recognised and refused, so nobody sends it untested bytes by accident. Tick this to drive it
+        anyway. Changing this drops the connection.
+      </p>
       <p className="hint">
         Normally leave this on Detect. The model is worked out from the advertised Bluetooth name,
         and those prefixes come from reverse engineering rather than a specification — so this
@@ -214,401 +232,398 @@ export function DiagnosticsPanel({
         connection.
       </p>
 
-      {speaksX2 ? (
-        <>
-          <details className="advanced">
-            <summary>
-              Read-only probes
-              <span className="advanced__hint">identity and status queries</span>
-            </summary>
-            <div className="advanced__body">
-              <h3 className="subhead">Read-only probes</h3>
-              <div className="row">
-                {(
-                  [
-                    ['Status flags', cmd.getStatusFlags()],
-                    ['Label height', cmd.getLabelHeight()],
-                    ['Printer info', cmd.getPrinterInfo()],
-                    ['Bluetooth name', cmd.getBluetoothName()],
-                    ['MAC', cmd.getBluetoothMac()],
-                    ['BT version', cmd.getBluetoothVersion()],
-                    ['Shutdown time', cmd.getShutdownMinutes()],
-                    ['Model', cmd.getPrinterModel()],
-                  ] as Array<[string, Uint8Array]>
-                ).map(([label, bytes]) => (
-                  <button
-                    key={label}
-                    disabled={!connected || busy}
-                    onClick={() => probe(label, bytes)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {Object.keys(replies).length > 0 && (
-                <pre className="log" style={{ maxHeight: '9rem' }}>
-                  {Object.entries(replies)
-                    .map(([label, value]) => `${label.padEnd(16)} ${value}`)
-                    .join('\n')}
-                </pre>
-              )}
-              <p className="hint">
-                All of these only read, and all are from the vendor SDK&rsquo;s{' '}
-                <em>archived original</em>. The tidied-up version of that SDK invented a set of{' '}
-                <code>1f</code> getters that appear nowhere in the vendor&rsquo;s own code — those
-                were what this panel asked for previously, which is why every one came back empty.
-                The <code>10 ff</code> family below is what the vendor actually uses, and the
-                members already tried do answer.
-              </p>
-            </div>
-          </details>
-
-          <details className="advanced">
-            <summary>
-              Label gap
-              <span className="advanced__hint">superseded by the automatic gap seek</span>
-            </summary>
-            <div className="advanced__body">
-              <p className="hint">
-                <strong>None of this is needed any more.</strong> Every print ends with a sensor gap
-                seek, which is how the vendor app registers labels and what keeps successive prints
-                aligned. Kept for continuous stock and for stepping the paper by hand.
-              </p>
-              <h3 className="subhead">Label gap</h3>
-              <div className="row">
+      {!speaksX2 && (
+        <p className="hint">
+          These tools are built for x2 printers, and this one speaks another dialect.
+        </p>
+      )}
+      <fieldset className="plain-fieldset" disabled={!speaksX2}>
+        <details className="advanced">
+          <summary>
+            Read-only probes
+            <span className="advanced__hint">identity and status queries</span>
+          </summary>
+          <div className="advanced__body">
+            <h3 className="subhead">Read-only probes</h3>
+            <div className="row">
+              {(
+                [
+                  ['Status flags', cmd.getStatusFlags()],
+                  ['Label height', cmd.getLabelHeight()],
+                  ['Printer info', cmd.getPrinterInfo()],
+                  ['Bluetooth name', cmd.getBluetoothName()],
+                  ['MAC', cmd.getBluetoothMac()],
+                  ['BT version', cmd.getBluetoothVersion()],
+                  ['Shutdown time', cmd.getShutdownMinutes()],
+                  ['Model', cmd.getPrinterModel()],
+                ] as Array<[string, Uint8Array]>
+              ).map(([label, bytes]) => (
                 <button
-                  className="primary"
+                  key={label}
                   disabled={!connected || busy}
-                  onClick={() =>
-                    run('Calibrate label gap', async () => {
-                      const driver = connection.driver
-                      if (!(driver instanceof BlePrinterDriver)) {
-                        throw new Error('Calibration needs a real printer, not the virtual one.')
-                      }
-                      const result = await driver.calibrateLabelGap({
-                        passes: 3,
-                        onPass: (pass, reply) =>
-                          setReplies((current) => ({
-                            ...current,
-                            [`Locate pass ${pass}`]: reply ? toHex(reply) : 'no reply',
-                          })),
-                      })
-                      setReplies((current) => ({
-                        ...current,
-                        'Label height': result.labelHeightDots
-                          ? `${result.labelHeightDots} dots = ${dotsToMm(result.labelHeightDots)} mm`
-                          : 'not reported',
-                      }))
+                  onClick={() => probe(label, bytes)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {Object.keys(replies).length > 0 && (
+              <pre className="log" style={{ maxHeight: '9rem' }}>
+                {Object.entries(replies)
+                  .map(([label, value]) => `${label.padEnd(16)} ${value}`)
+                  .join('\n')}
+              </pre>
+            )}
+            <p className="hint">
+              All of these only read, and all are from the vendor SDK&rsquo;s{' '}
+              <em>archived original</em>. The tidied-up version of that SDK invented a set of{' '}
+              <code>1f</code> getters that appear nowhere in the vendor&rsquo;s own code — those
+              were what this panel asked for previously, which is why every one came back empty. The{' '}
+              <code>10 ff</code> family below is what the vendor actually uses, and the members
+              already tried do answer.
+            </p>
+          </div>
+        </details>
+
+        <details className="advanced">
+          <summary>
+            Label gap
+            <span className="advanced__hint">superseded by the automatic gap seek</span>
+          </summary>
+          <div className="advanced__body">
+            <p className="hint">
+              <strong>None of this is needed any more.</strong> Every print ends with a sensor gap
+              seek, which is how the vendor app registers labels and what keeps successive prints
+              aligned. Kept for continuous stock and for stepping the paper by hand.
+            </p>
+            <h3 className="subhead">Label gap</h3>
+            <div className="row">
+              <button
+                className="primary"
+                disabled={!connected || busy}
+                onClick={() =>
+                  run('Calibrate label gap', async () => {
+                    const driver = connection.driver
+                    if (!(driver instanceof BlePrinterDriver)) {
+                      throw new Error('Calibration needs a real printer, not the virtual one.')
+                    }
+                    const result = await driver.calibrateLabelGap({
+                      passes: 3,
+                      onPass: (pass, reply) =>
+                        setReplies((current) => ({
+                          ...current,
+                          [`Locate pass ${pass}`]: reply ? toHex(reply) : 'no reply',
+                        })),
                     })
-                  }
-                >
-                  Calibrate label gap
-                </button>
-              </div>
-
-              <div className="row" style={{ marginTop: '0.6rem' }}>
-                <label className="field">
-                  <span style={{ minWidth: '4rem' }}>Feed</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={feedMm}
-                    onChange={(e) =>
-                      setFeedMm(Math.max(1, Math.min(200, Number(e.target.value) || 1)))
-                    }
-                  />
-                  <em>mm</em>
-                </label>
-                <button
-                  className="primary"
-                  disabled={!connected || busy}
-                  onClick={() =>
-                    run(`Feed ${feedMm} mm by printing blank`, () =>
-                      connection.driver.print({
-                        bitmap: blankLabel(headWidth, DOTS_PER_MM * feedMm),
-                        // No gap seek. With one this fed the requested millimetres and
-                        // then went looking for the boundary, which is not a feed and
-                        // defeats the point of stepping the paper to find it.
-                        settings: { ...DEFAULT_PRINT_SETTINGS, seekGap: false },
-                      }),
-                    )
-                  }
-                >
-                  Feed by printing blank
-                </button>
-              </div>
-              <p className="hint">
-                <strong>Feed by printing blank</strong> is the one that works. Every dedicated
-                motion command on this firmware is acknowledged and then ignored, but a print job
-                does move paper — so an all-white raster of the requested height advances the paper
-                by exactly that much and fires no dots. The gap seek is left out of this one, so it
-                advances what you ask and no more. Use it to step the paper until the gap sits where
-                you want it, then read the millimetres off.
-              </p>
-              <h4 className="subhead">Try a command where commands work</h4>
-              <div className="row">
-                <label className="field">
-                  <span style={{ minWidth: '4rem' }}>Feed</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={probeFeedMm}
-                    onChange={(e) =>
-                      setProbeFeedMm(Math.max(1, Math.min(200, Number(e.target.value) || 1)))
-                    }
-                  />
-                  <em>mm,</em>
-                </label>
-                <label className="field">
-                  <select
-                    value={probePosition}
-                    onChange={(e) => setProbePosition(e.target.value as 'before' | 'after')}
-                  >
-                    <option value="after">then send</option>
-                    <option value="before">and send first</option>
-                  </select>
-                </label>
-                <input
-                  className="mono"
-                  placeholder="1f 11 11 00 50"
-                  value={probeHex}
-                  onChange={(e) => setProbeHex(e.target.value)}
-                  style={{ flex: 1, minWidth: '10rem' }}
-                />
-                <button
-                  disabled={!connected || busy || parsedProbe === null}
-                  onClick={() =>
-                    parsedProbe &&
-                    run(
-                      `Probe ${toHex(parsedProbe)} ${probePosition === 'before' ? 'before' : 'after'} ${probeFeedMm} mm`,
-                      () =>
-                        connection.driver.sendCommand(
-                          probeJob({
-                            // Gap stock either way: the probe never seeks, so the paper
-                            // type only decides a byte in the preamble.
-                            paperType: PaperType.Gap,
-                            density: X2_DENSITY.default,
-                            feedDots: DOTS_PER_MM * probeFeedMm,
-                            widthDots: headWidth,
-                            probe: parsedProbe,
-                            position: probePosition,
-                          }),
-                          `probe job: ${probeFeedMm} mm blank, ${probePosition} ${toHex(parsedProbe)}`,
-                        ),
-                    )
-                  }
-                >
-                  Send in a job
-                </button>
-              </div>
-              {probeHex.trim().length > 0 && parsedProbe === null && (
-                <p className="error">Not valid hex. Use bytes like &ldquo;1f 11 11 00 50&rdquo;.</p>
-              )}
-              <p className="hint">
-                A command sent on its own is acknowledged and ignored on this firmware; the ones
-                that do anything only act inside a job, after a raster. That is why the gap seek
-                took four rounds of looking to find, having been in the table all along. This builds
-                that position: a real job, a blank strip of the height you ask for, then your bytes,
-                then the end of the job.
-                <br />
-                Nothing else in it moves paper &mdash; no retract, no seek, no advance to the
-                tear-off &mdash; so whatever the paper does is down to your bytes. Feed a few
-                millimetres so there is something to measure against.
-                <br />
-                <strong>Which side of the strip matters.</strong> The gap seek acts only after a
-                raster and is inert anywhere else, which is why it took four rounds to find.{' '}
-                <code>1f 11 51</code> looks like the opposite: it retracts when it comes before one,
-                as it does in a real job, and four of them after a raster moved nothing. A command
-                that does nothing on one side has not been ruled out, only ruled out there.
-              </p>
-              <p className="warn">
-                <strong>Calibrate label gap does not work on a P50S.</strong> It runs the vendor
-                SDK&rsquo;s own documented sequence — locate three times, then read the height — but
-                this firmware ignores the locate command and does not implement the height query, so
-                there is nothing to read. Kept only in case another model in the family answers.
-              </p>
+                    setReplies((current) => ({
+                      ...current,
+                      'Label height': result.labelHeightDots
+                        ? `${result.labelHeightDots} dots = ${dotsToMm(result.labelHeightDots)} mm`
+                        : 'not reported',
+                    }))
+                  })
+                }
+              >
+                Calibrate label gap
+              </button>
             </div>
-          </details>
 
-          <details className="advanced">
-            <summary>
-              Commands with no effect on a P50S
-              <span className="advanced__hint">tested, inert, kept as a record</span>
-            </summary>
-            <div className="advanced__body">
-              <h3 className="subhead">Commands with no effect on a P50S</h3>
-              <div className="row">
-                <button
-                  disabled={!connected || busy}
-                  onClick={() => sendInJob('Self test', cmd.selfCheck())}
-                >
-                  Self test
-                </button>
-                <button
-                  disabled={!connected || busy}
-                  onClick={() => sendInJob('Learn paper', cmd.learnPaper())}
-                >
-                  Learn paper
-                </button>
-                <button
-                  disabled={!connected || busy}
-                  title="Does nothing here. This same command IS the gap seek, but only after a raster payload — which is where every print now sends it."
-                  onClick={() => sendInJob('Locate gap', cmd.locate(cmd.LocateMode.Gap))}
-                >
-                  Locate gap
-                </button>
-                <button
-                  disabled={!connected || busy}
-                  onClick={() => send('Paper type: gap', cmd.setPaperType(PaperType.Gap))}
-                >
-                  Set gap labels
-                </button>
-                <button
-                  disabled={!connected || busy}
-                  onClick={() =>
-                    send('Paper type: continuous', cmd.setPaperType(PaperType.Continuous))
-                  }
-                >
-                  Set continuous
-                </button>
-                <button
-                  disabled={!connected || busy}
-                  onClick={() => sendInJob('Feed to end', cmd.alignPaperEnd())}
-                >
-                  Feed
-                </button>
-              </div>
-              <label className="field field--check">
+            <div className="row" style={{ marginTop: '0.6rem' }}>
+              <label className="field">
+                <span style={{ minWidth: '4rem' }}>Feed</span>
                 <input
-                  type="checkbox"
-                  checked={wrapInJob}
-                  onChange={(e) => setWrapInJob(e.target.checked)}
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={feedMm}
+                  onChange={(e) =>
+                    setFeedMm(Math.max(1, Math.min(200, Number(e.target.value) || 1)))
+                  }
                 />
-                <span>Wrap maintenance commands in a print job</span>
+                <em>mm</em>
               </label>
-              <div className="row" style={{ marginTop: '0.5rem' }}>
-                <button
-                  disabled={!connected || busy}
-                  onClick={() => sendInJob('Locate label', cmd.locateLabel())}
-                >
-                  Locate label
-                </button>
-                <button
-                  disabled={!connected || busy}
-                  onClick={() => sendInJob('Learn label gap', cmd.learnLabelGap())}
-                >
-                  Learn gap
-                </button>
-                <button
-                  disabled={!connected || busy}
-                  onClick={() =>
-                    sendInJob('Feed via ESC J', cmd.feedDotLines(DOTS_PER_MM * feedMm))
-                  }
-                >
-                  Feed via ESC J
-                </button>
-              </div>
-              <p className="warn">
-                Every command in this group has been tested against a P50S (V2.0.00) and{' '}
-                <strong>none of them does anything</strong> — bare or wrapped in a print job. The
-                printer acknowledges the write with a credit and ignores it. That includes the
-                ESC/POS feed, which is why the gap is crossed by printing blank instead. They are
-                kept because they come from the vendor SDK and may be implemented on other models,
-                but nothing here should be relied on, and printing needs none of it.
-              </p>
+              <button
+                className="primary"
+                disabled={!connected || busy}
+                onClick={() =>
+                  run(`Feed ${feedMm} mm by printing blank`, () =>
+                    connection.driver.print({
+                      bitmap: blankLabel(headWidth, DOTS_PER_MM * feedMm),
+                      // No gap seek. With one this fed the requested millimetres and
+                      // then went looking for the boundary, which is not a feed and
+                      // defeats the point of stepping the paper to find it.
+                      settings: { ...DEFAULT_PRINT_SETTINGS, seekGap: false },
+                    }),
+                  )
+                }
+              >
+                Feed by printing blank
+              </button>
             </div>
-          </details>
+            <p className="hint">
+              <strong>Feed by printing blank</strong> is the one that works. Every dedicated motion
+              command on this firmware is acknowledged and then ignored, but a print job does move
+              paper — so an all-white raster of the requested height advances the paper by exactly
+              that much and fires no dots. The gap seek is left out of this one, so it advances what
+              you ask and no more. Use it to step the paper until the gap sits where you want it,
+              then read the millimetres off.
+            </p>
+            <h4 className="subhead">Try a command where commands work</h4>
+            <div className="row">
+              <label className="field">
+                <span style={{ minWidth: '4rem' }}>Feed</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={probeFeedMm}
+                  onChange={(e) =>
+                    setProbeFeedMm(Math.max(1, Math.min(200, Number(e.target.value) || 1)))
+                  }
+                />
+                <em>mm,</em>
+              </label>
+              <label className="field">
+                <select
+                  value={probePosition}
+                  onChange={(e) => setProbePosition(e.target.value as 'before' | 'after')}
+                >
+                  <option value="after">then send</option>
+                  <option value="before">and send first</option>
+                </select>
+              </label>
+              <input
+                className="mono"
+                placeholder="1f 11 11 00 50"
+                value={probeHex}
+                onChange={(e) => setProbeHex(e.target.value)}
+                style={{ flex: 1, minWidth: '10rem' }}
+              />
+              <button
+                disabled={!connected || busy || parsedProbe === null}
+                onClick={() =>
+                  parsedProbe &&
+                  run(
+                    `Probe ${toHex(parsedProbe)} ${probePosition === 'before' ? 'before' : 'after'} ${probeFeedMm} mm`,
+                    () =>
+                      connection.driver.sendCommand(
+                        probeJob({
+                          // Gap stock either way: the probe never seeks, so the paper
+                          // type only decides a byte in the preamble.
+                          paperType: PaperType.Gap,
+                          density: X2_DENSITY.default,
+                          feedDots: DOTS_PER_MM * probeFeedMm,
+                          widthDots: headWidth,
+                          probe: parsedProbe,
+                          position: probePosition,
+                        }),
+                        `probe job: ${probeFeedMm} mm blank, ${probePosition} ${toHex(parsedProbe)}`,
+                      ),
+                  )
+                }
+              >
+                Send in a job
+              </button>
+            </div>
+            {probeHex.trim().length > 0 && parsedProbe === null && (
+              <p className="error">Not valid hex. Use bytes like &ldquo;1f 11 11 00 50&rdquo;.</p>
+            )}
+            <p className="hint">
+              A command sent on its own is acknowledged and ignored on this firmware; the ones that
+              do anything only act inside a job, after a raster. That is why the gap seek took four
+              rounds of looking to find, having been in the table all along. This builds that
+              position: a real job, a blank strip of the height you ask for, then your bytes, then
+              the end of the job.
+              <br />
+              Nothing else in it moves paper &mdash; no retract, no seek, no advance to the tear-off
+              &mdash; so whatever the paper does is down to your bytes. Feed a few millimetres so
+              there is something to measure against.
+              <br />
+              <strong>Which side of the strip matters.</strong> The gap seek acts only after a
+              raster and is inert anywhere else, which is why it took four rounds to find.{' '}
+              <code>1f 11 51</code> looks like the opposite: it retracts when it comes before one,
+              as it does in a real job, and four of them after a raster moved nothing. A command
+              that does nothing on one side has not been ruled out, only ruled out there.
+            </p>
+            <p className="warn">
+              <strong>Calibrate label gap does not work on a P50S.</strong> It runs the vendor
+              SDK&rsquo;s own documented sequence — locate three times, then read the height — but
+              this firmware ignores the locate command and does not implement the height query, so
+              there is nothing to read. Kept only in case another model in the family answers.
+            </p>
+          </div>
+        </details>
 
-          <details className="advanced">
-            <summary>
-              Head width
-              <span className="advanced__hint">
-                measured at 384 dots; only needed if yours differs
-              </span>
-            </summary>
-            <div className="advanced__body">
-              <h3 className="subhead">Head width</h3>
-              <div className="row">
+        <details className="advanced">
+          <summary>
+            Commands with no effect on a P50S
+            <span className="advanced__hint">tested, inert, kept as a record</span>
+          </summary>
+          <div className="advanced__body">
+            <h3 className="subhead">Commands with no effect on a P50S</h3>
+            <div className="row">
+              <button
+                disabled={!connected || busy}
+                onClick={() => sendInJob('Self test', cmd.selfCheck())}
+              >
+                Self test
+              </button>
+              <button
+                disabled={!connected || busy}
+                onClick={() => sendInJob('Learn paper', cmd.learnPaper())}
+              >
+                Learn paper
+              </button>
+              <button
+                disabled={!connected || busy}
+                title="Does nothing here. This same command IS the gap seek, but only after a raster payload — which is where every print now sends it."
+                onClick={() => sendInJob('Locate gap', cmd.locate(cmd.LocateMode.Gap))}
+              >
+                Locate gap
+              </button>
+              <button
+                disabled={!connected || busy}
+                onClick={() => send('Paper type: gap', cmd.setPaperType(PaperType.Gap))}
+              >
+                Set gap labels
+              </button>
+              <button
+                disabled={!connected || busy}
+                onClick={() =>
+                  send('Paper type: continuous', cmd.setPaperType(PaperType.Continuous))
+                }
+              >
+                Set continuous
+              </button>
+              <button
+                disabled={!connected || busy}
+                onClick={() => sendInJob('Feed to end', cmd.alignPaperEnd())}
+              >
+                Feed
+              </button>
+            </div>
+            <label className="field field--check">
+              <input
+                type="checkbox"
+                checked={wrapInJob}
+                onChange={(e) => setWrapInJob(e.target.checked)}
+              />
+              <span>Wrap maintenance commands in a print job</span>
+            </label>
+            <div className="row" style={{ marginTop: '0.5rem' }}>
+              <button
+                disabled={!connected || busy}
+                onClick={() => sendInJob('Locate label', cmd.locateLabel())}
+              >
+                Locate label
+              </button>
+              <button
+                disabled={!connected || busy}
+                onClick={() => sendInJob('Learn label gap', cmd.learnLabelGap())}
+              >
+                Learn gap
+              </button>
+              <button
+                disabled={!connected || busy}
+                onClick={() => sendInJob('Feed via ESC J', cmd.feedDotLines(DOTS_PER_MM * feedMm))}
+              >
+                Feed via ESC J
+              </button>
+            </div>
+            <p className="warn">
+              Every command in this group has been tested against a P50S (V2.0.00) and{' '}
+              <strong>none of them does anything</strong> — bare or wrapped in a print job. The
+              printer acknowledges the write with a credit and ignores it. That includes the ESC/POS
+              feed, which is why the gap is crossed by printing blank instead. They are kept because
+              they come from the vendor SDK and may be implemented on other models, but nothing here
+              should be relied on, and printing needs none of it.
+            </p>
+          </div>
+        </details>
+
+        <details className="advanced">
+          <summary>
+            Head width
+            <span className="advanced__hint">
+              measured at 384 dots; only needed if yours differs
+            </span>
+          </summary>
+          <div className="advanced__body">
+            <h3 className="subhead">Head width</h3>
+            <div className="row">
+              <button
+                className="primary"
+                disabled={!connected || busy}
+                onClick={() =>
+                  run('Edge frame', () =>
+                    connection.driver.print({
+                      bitmap: edgeFrame(headWidth),
+                      settings: DEFAULT_PRINT_SETTINGS,
+                    }),
+                  )
+                }
+              >
+                Edge frame
+              </button>
+              {HEAD_WIDTH_CANDIDATES.map((width) => (
                 <button
-                  className="primary"
+                  key={width}
                   disabled={!connected || busy}
                   onClick={() =>
-                    run('Edge frame', () =>
+                    run(`Ruler strip ${width}`, () =>
                       connection.driver.print({
-                        bitmap: edgeFrame(headWidth),
+                        bitmap: rulerStrip(width),
                         settings: DEFAULT_PRINT_SETTINGS,
                       }),
                     )
                   }
                 >
-                  Edge frame
+                  Ruler {width}
                 </button>
-                {HEAD_WIDTH_CANDIDATES.map((width) => (
-                  <button
-                    key={width}
-                    disabled={!connected || busy}
-                    onClick={() =>
-                      run(`Ruler strip ${width}`, () =>
-                        connection.driver.print({
-                          bitmap: rulerStrip(width),
-                          settings: DEFAULT_PRINT_SETTINGS,
-                        }),
-                      )
-                    }
-                  >
-                    Ruler {width}
-                  </button>
-                ))}
-              </div>
-              <p className="hint">
-                <strong>Start with the edge frame.</strong> It draws on the outermost dots of a{' '}
-                {headWidth}
-                -dot raster, so if all four sides land on the paper the geometry above is right. A
-                missing side means the raster is wider than the paper; a margin before a side means
-                it is narrower or offset — adjust the width, then the offset, and reprint. The ruler
-                strips are for measuring how far out it is: long ticks are 10 mm apart, so{' '}
-                {headWidth} dots should span exactly {dotsToMm(headWidth)} mm. Nothing reports any
-                of this, so printing is the only way to find out.
-              </p>
+              ))}
             </div>
-          </details>
-
-          <h3 className="subhead">Density</h3>
-          <div className="row">
-            <button
-              disabled={!connected || busy}
-              onClick={() =>
-                run('Density ladder', async () => {
-                  // One label per density, in order. Interleaving them on a single
-                  // label would need density to change mid-job, which the firmware
-                  // is not documented to support.
-                  for (const density of DENSITY_LADDER) {
-                    await connection.driver.print({
-                      bitmap: densityPatch(headWidth),
-                      settings: { ...DEFAULT_PRINT_SETTINGS, density },
-                    })
-                  }
-                })
-              }
-            >
-              Print density ladder ({DENSITY_LADDER.length} labels)
-            </button>
+            <p className="hint">
+              <strong>Start with the edge frame.</strong> It draws on the outermost dots of a{' '}
+              {headWidth}
+              -dot raster, so if all four sides land on the paper the geometry above is right. A
+              missing side means the raster is wider than the paper; a margin before a side means it
+              is narrower or offset — adjust the width, then the offset, and reprint. The ruler
+              strips are for measuring how far out it is: long ticks are 10 mm apart, so {
+                headWidth
+              }{' '}
+              dots should span exactly {dotsToMm(headWidth)} mm. Nothing reports any of this, so
+              printing is the only way to find out.
+            </p>
           </div>
-          <p className="hint">
-            Prints densities {DENSITY_LADDER.join(', ')} in that order, each a solid half beside a
-            50% checker. Pick the lowest one where the solid is fully black and the checker has not
-            filled in.
-          </p>
-        </>
-      ) : (
+        </details>
+
+        <h3 className="subhead">Density</h3>
+        <div className="row">
+          <button
+            disabled={!connected || busy}
+            onClick={() =>
+              run('Density ladder', async () => {
+                // One label per density, in order. Interleaving them on a single
+                // label would need density to change mid-job, which the firmware
+                // is not documented to support.
+                for (const density of DENSITY_LADDER) {
+                  await connection.driver.print({
+                    bitmap: densityPatch(headWidth),
+                    settings: { ...DEFAULT_PRINT_SETTINGS, density },
+                  })
+                }
+              })
+            }
+          >
+            Print density ladder ({DENSITY_LADDER.length} labels)
+          </button>
+        </div>
         <p className="hint">
-          The probes, gap calibration, head width and density tools build their own commands in the
-          x2 dialect, and this printer speaks another, so they are hidden. The raw command and the
-          byte log below work with any printer.
+          Prints densities {DENSITY_LADDER.join(', ')} in that order, each a solid half beside a 50%
+          checker. Pick the lowest one where the solid is fully black and the checker has not filled
+          in.
         </p>
-      )}
+      </fieldset>
 
       <h3 className="subhead">Raw command</h3>
       <div className="row">

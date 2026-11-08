@@ -9,7 +9,14 @@ import {
   type PrinterProfile,
 } from '../profiles'
 import { CreditWindow } from './CreditWindow'
-import type { Dialect, NamedCommand, PlannedJob, Reply } from '../dialect'
+import type {
+  Dialect,
+  GapCalibration,
+  GapCalibrationOptions,
+  NamedCommand,
+  PlannedJob,
+  Reply,
+} from '../dialect'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -40,12 +47,12 @@ export class PrintFailedError extends Error {
 }
 
 /**
- * Raised when the printer is a model this app knows it cannot drive, or will
- * drive only with the experimental opt-in on.
+ * Raised when the printer is a model this app refuses to drive: one that speaks a
+ * dialect it does not implement, or an experimental one while experimental
+ * support is off.
  *
  * Its own type so the UI can present it as a fact about the hardware rather
- * than as a failure — nothing went wrong, the printer simply speaks a different
- * protocol.
+ * than as a failure — nothing went wrong, and the reason says why it was refused.
  */
 export class IncompatiblePrinterError extends Error {
   readonly modelLabel: string
@@ -79,7 +86,7 @@ export interface BlePrinterOptions {
   /** Reply timeout. Shortened in tests so a silent printer is cheap to assert. */
   queryTimeoutMs?: number
   /**
-   * The shortest wait for an end-of-job "OK". A job's own wait is longer when
+   * The shortest wait for an end-of-job reply. A job's own wait is longer when
    * the print plan says so. Shortened in tests so a silent printer is cheap.
    */
   doneTimeoutMs?: number
@@ -110,6 +117,8 @@ export class BlePrinterDriver implements PrinterDriver {
   #credits: CreditWindow | null = null
   #profile: PrinterProfile
   #lockProfile: boolean
+  /** The chunk size asked for, which wins over the profile's and the dialect's. */
+  #chunkSizeOption: number | undefined
   #allowExperimental: boolean
   /** Whether the dialect was handed in, rather than taken from the profile. */
   #dialectFixed: boolean
@@ -143,7 +152,8 @@ export class BlePrinterDriver implements PrinterDriver {
     this.#allowExperimental = options.allowExperimental ?? false
     this.#dialectFixed = options.dialect !== undefined
     this.#dialect = options.dialect ?? profileDialect(this.#profile)
-    this.#chunkSize = options.chunkSize ?? this.#profile.chunkSize ?? this.#dialect.link.chunkSize
+    this.#chunkSizeOption = options.chunkSize
+    this.#chunkSize = this.#chunkSizeFor(this.#profile)
     this.#headWidthDots =
       options.headWidthDots ?? this.#profile.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
     this.#queryTimeoutMs = options.queryTimeoutMs ?? QUERY_TIMEOUT_MS
@@ -252,12 +262,10 @@ export class BlePrinterDriver implements PrinterDriver {
       this.#profileAssumed = matched === null
       const profile = matched ?? DEFAULT_PROFILE
       this.#profile = profile
-      if (!this.#dialectFixed && profile.dialect) {
+      if (!this.#dialectFixed && profile.support !== 'incompatible') {
         this.#dialect = profile.dialect
-        this.#chunkSize = profile.chunkSize ?? profile.dialect.link.chunkSize
-      } else {
-        this.#chunkSize = profile.chunkSize ?? this.#chunkSize
       }
+      this.#chunkSize = this.#chunkSizeFor(profile)
       this.#headWidthDots = profile.headWidthDots ?? this.#headWidthDots
     }
 
@@ -271,9 +279,14 @@ export class BlePrinterDriver implements PrinterDriver {
       this.#refuse(
         label,
         'Support for it is experimental: it has not been printed with on our own hardware. ' +
-          'Turn on its experimental support under Diagnostics to try it.',
+          'Turn on "Drive experimental printers" under Diagnostics to try it.',
       )
     }
+  }
+
+  /** The chunk size asked for, else the profile's, else the dialect's link's. */
+  #chunkSizeFor(profile: PrinterProfile): number {
+    return this.#chunkSizeOption ?? profile.chunkSize ?? this.#dialect.link.chunkSize
   }
 
   #refuse(label: string, reason: string): never {
@@ -319,9 +332,7 @@ export class BlePrinterDriver implements PrinterDriver {
   }
 
   /** Locate the label gap, then read back the measured label height, as the dialect does it. */
-  async calibrateLabelGap(
-    options: { passes?: number; onPass?: (pass: number, reply: Uint8Array | null) => void } = {},
-  ): Promise<{ labelHeightDots: number | null; passes: Array<Uint8Array | null> }> {
+  async calibrateLabelGap(options: GapCalibrationOptions = {}): Promise<GapCalibration> {
     if (this.#state === 'disconnected') throw new Error('Not connected to a printer.')
     const { conversation } = this.#dialect
     if (!conversation.calibrateLabelGap) {
@@ -558,7 +569,7 @@ type JobReply = Exclude<Reply, { kind: 'other' }>
  * is refused before a byte is sent, so its stand-in is never spoken.
  */
 function profileDialect(profile: PrinterProfile): Dialect {
-  return profile.dialect ?? DEFAULT_PROFILE.dialect!
+  return profile.support === 'incompatible' ? DEFAULT_PROFILE.dialect : profile.dialect
 }
 
 /**

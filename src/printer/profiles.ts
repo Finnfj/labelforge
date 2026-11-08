@@ -24,7 +24,6 @@
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../model/units'
 import type { Dialect } from './dialect'
 import { x2 } from './dialects/x2'
-import { DEFAULT_CHUNK_SIZE } from './dialects/x2/constants'
 
 export type ProfileSupport =
   /** Driven successfully against real hardware. */
@@ -32,14 +31,14 @@ export type ProfileSupport =
   /** Believed to speak a dialect confirmed on another model, but never run against one. */
   | 'unverified'
   /**
-   * Speaks a dialect not yet confirmed on our own hardware. Driven only when the
-   * experimental opt-in under Diagnostics is on, and refused otherwise (ADR 0003).
+   * Speaks a dialect not yet confirmed on our own hardware. Driven only with
+   * "Drive experimental printers" on under Diagnostics, refused otherwise (ADR 0003).
    */
   | 'experimental'
   /** Known to speak a dialect this app does not implement. */
   | 'incompatible'
 
-export interface PrinterProfile {
+interface ProfileFields {
   id: string
   label: string
   /**
@@ -50,41 +49,50 @@ export interface PrinterProfile {
    * back to the P50 profile rather than being refused.
    */
   namePrefixes: readonly string[]
-  support: ProfileSupport
-  /**
-   * What the printer speaks, and so which service is opened once it is
-   * recognised. Omitted only for an incompatible model, which is never driven.
-   */
-  dialect?: Dialect
-  /** Omitted where it would be meaningless — an incompatible model is never driven. */
+  /** Where the model's chunks are not its dialect's usual size. */
   chunkSize?: number
   headWidthDots?: number
   /** Shown in the UI when this profile is in play. */
   note?: string
 }
 
+/** A model this app drives, in its dialect, once it is recognised. */
+export interface DrivenProfile extends ProfileFields {
+  support: Exclude<ProfileSupport, 'incompatible'>
+  /** What the printer speaks, and so which service is opened once it is recognised. */
+  dialect: Dialect
+}
+
+/** A model recognised only to be refused: it speaks a dialect this app does not implement. */
+export interface IncompatibleProfile extends ProfileFields {
+  support: 'incompatible'
+}
+
+export type PrinterProfile = DrivenProfile | IncompatibleProfile
+
+const P50: DrivenProfile = {
+  id: 'p50',
+  label: 'MarkLife P50 / P50S',
+  // The two catch-alls have always been here, and stay: the prefixes are
+  // inferred, so an unexpected P50 variant is likelier than a foreign device.
+  namePrefixes: ['P50', 'Marklife', 'Printer'],
+  support: 'confirmed',
+  dialect: x2,
+  headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
+}
+
 export const PROFILES: readonly PrinterProfile[] = [
-  {
-    id: 'p50',
-    label: 'MarkLife P50 / P50S',
-    // The two catch-alls have always been here, and stay: the prefixes are
-    // inferred, so an unexpected P50 variant is likelier than a foreign device.
-    namePrefixes: ['P50', 'Marklife', 'Printer'],
-    support: 'confirmed',
-    dialect: x2,
-    chunkSize: DEFAULT_CHUNK_SIZE,
-    headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
-  },
+  P50,
   {
     id: 'm60',
     label: 'MarkLife M60 / X2',
     namePrefixes: ['M60', 'X2'],
     support: 'unverified',
     dialect: x2,
-    // Both numbers are the P50's, because nothing reports either and nobody has
-    // measured an M60. The head width in particular is a guess: it is the one
-    // thing the diagnostics ruler strip exists to settle, and it has not been.
-    chunkSize: DEFAULT_CHUNK_SIZE,
+    // Both numbers are the P50's — the chunk size by way of the x2 link — because
+    // nothing reports either and nobody has measured an M60. The head width in
+    // particular is a guess: it is the one thing the diagnostics ruler strip
+    // exists to settle, and it has not been.
     headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
     note:
       'Believed to use the same print protocol as the P50, but this has never been run ' +
@@ -121,7 +129,7 @@ export const PROFILES: readonly PrinterProfile[] = [
 ]
 
 /** The profile assumed when a printer's advertised name matches nothing. */
-export const DEFAULT_PROFILE: PrinterProfile = PROFILES[0]
+export const DEFAULT_PROFILE: DrivenProfile = P50
 
 /** Every prefix worth putting in the device chooser, including refusable ones. */
 export const ALL_NAME_PREFIXES: readonly string[] = PROFILES.flatMap((p) => p.namePrefixes)
@@ -134,7 +142,9 @@ export const ALL_NAME_PREFIXES: readonly string[] = PROFILES.flatMap((p) => p.na
  * the chooser asks for all of them.
  */
 export const ALL_SERVICES: readonly string[] = [
-  ...new Set(PROFILES.flatMap((p) => (p.dialect ? [p.dialect.link.gatt.service] : []))),
+  ...new Set(
+    PROFILES.flatMap((p) => (p.support === 'incompatible' ? [] : [p.dialect.link.gatt.service])),
+  ),
 ]
 
 /**

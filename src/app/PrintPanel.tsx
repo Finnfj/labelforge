@@ -492,7 +492,7 @@ export function PrintPanel({
 
       <p className="hint" style={{ marginTop: '0.6rem' }}>
         {connection.kind === 'virtual'
-          ? 'Output goes to a virtual printer — no hardware required. The bitmap below is byte-for-byte what a real P50 would receive.'
+          ? 'Output goes to a virtual printer — no hardware required. The bitmap below is byte-for-byte what the printer it stands in for would receive.'
           : 'Output goes to the connected printer. The bitmap below is exactly what it receives.'}
       </p>
 

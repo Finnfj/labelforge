@@ -14,6 +14,11 @@ export interface DiagnosticFlags {
   virtualPrinter: boolean
   /** Show the speed and test-pattern block in the Print panel. */
   advancedPrint: boolean
+  /**
+   * Drive printers whose dialect is experimental: not yet printed with on our own
+   * hardware. Off, they are recognised and refused (ADR 0003).
+   */
+  experimentalPrinters: boolean
 }
 
 const STORAGE_KEY = 'labelforge.diagnostics.v1'
@@ -21,6 +26,7 @@ const STORAGE_KEY = 'labelforge.diagnostics.v1'
 const DEFAULTS: DiagnosticFlags = {
   virtualPrinter: false,
   advancedPrint: false,
+  experimentalPrinters: false,
 }
 
 function load(): DiagnosticFlags {
@@ -31,6 +37,7 @@ function load(): DiagnosticFlags {
     return {
       virtualPrinter: parsed.virtualPrinter === true,
       advancedPrint: parsed.advancedPrint === true,
+      experimentalPrinters: parsed.experimentalPrinters === true,
     }
   } catch {
     return DEFAULTS
