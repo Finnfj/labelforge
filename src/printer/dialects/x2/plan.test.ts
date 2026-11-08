@@ -3,10 +3,12 @@ import type { PackedBitmap } from '../../../model/bitmap'
 import { noisyBitmap } from '../../../test/bitmaps'
 import type { PlannedJob } from '../../dialect'
 import { checkerboard } from '../../diagnostics/testPatterns'
-import { PaperType, printDurationMs, SEEK_SAFE_JOB_BYTES } from './constants'
+import { printDurationMs, SEEK_SAFE_JOB_BYTES } from './constants'
 import { encodeImage } from './encodeImage'
 import { DEFAULT_PRINT_SETTINGS, type PrintSettings } from '../../types'
 import { planX2Print } from './plan'
+import { bandBudgetBytes } from './splitJob'
+import { x2 } from '.'
 
 /*
  * The x2 print plan, asserted directly: what each job of a print says, in order.
@@ -144,12 +146,38 @@ describe('planX2Print', () => {
     expect(copy.finishWaitMs).toBe(printDurationMs(bitmap.heightDots))
   })
 
-  it('seeks the boundary its paper type actually has', () => {
+  it('seeks the boundary its stock actually has', () => {
     // On continuous stock there is no gap to find.
-    const parts = commands(plan(checkerboard(64, 16), { paperType: PaperType.Continuous })[0])
+    const parts = commands(plan(checkerboard(64, 16), { stock: 'continuous' })[0])
     expect(parts).toContain('1f 80 02 10') // setPaperTypeSilent(continuous)
     expect(parts).toContain('1f 12 10 00') // locate(none), matching
     expect(parts).not.toContain(SEEK_GAP)
+  })
+
+  it('tells the printer each stock by its own byte', () => {
+    const stockCommand = (stock: PrintSettings['stock']) =>
+      commands(plan(checkerboard(64, 16), { stock })[0])[0]
+    expect(stockCommand('gap')).toBe('1f 80 02 20')
+    expect(stockCommand('continuous')).toBe('1f 80 02 10')
+    expect(stockCommand('black-mark')).toBe('1f 80 02 30')
+  })
+
+  it('sends a speed only when one is asked for, as the levels the SDK names', () => {
+    // Left out, the preamble is the captured vendor sequence exactly.
+    const speedOf = (speed?: PrintSettings['speed']) =>
+      commands(plan(checkerboard(64, 16), { speed })[0]).filter((c) => c.startsWith('1f 60'))
+    expect(speedOf()).toEqual([])
+    expect(speedOf('low')).toEqual(['1f 60 01 00'])
+    expect(speedOf('medium')).toEqual(['1f 60 01 01'])
+    expect(speedOf('high')).toEqual(['1f 60 01 02'])
+  })
+
+  it('prints at density 8 unless asked for another level', () => {
+    // 8 is what the vendor app sends, and the dialect's default.
+    const params = (density?: number) => commands(plan(checkerboard(64, 16), { density })[0])[1]
+    expect(x2.density).toEqual({ min: 1, max: 15, default: 8 })
+    expect(params()).toBe('1f 70 02 08 00 00 00 00 00 00')
+    expect(params(3)).toBe('1f 70 02 03 00 00 00 00 00 00')
   })
 
   it('repeats the whole label per copy, configuration and gap seek included', () => {
@@ -168,5 +196,49 @@ describe('planX2Print', () => {
     const { copies } = planOf(noisyBitmap(384, 360), { copies: 2 })
     expect(copies[0].jobs.length).toBeGreaterThan(1)
     expect(copies[1]).toEqual(copies[0])
+  })
+})
+
+describe('x2.assessJob', () => {
+  it('says a label fits when its raster is within the band budget', () => {
+    // A checkerboard compresses to almost nothing, however large.
+    const bitmap = checkerboard(384, 640)
+    expect(x2.assessJob(bitmap)).toEqual({
+      bytes: encodeImage(bitmap).length,
+      fits: true,
+      compressed: true,
+    })
+  })
+
+  it('says a label over the read-ahead does not fit, and the budget it is over', () => {
+    // Then its gap seek would be read too late, and the plan splits it into bands.
+    const bitmap = noisyBitmap(384, 360)
+    const assessment = x2.assessJob(bitmap)
+    expect(assessment).toEqual({
+      bytes: encodeImage(bitmap).length,
+      fits: false,
+      bandBudgetBytes: bandBudgetBytes(),
+      compressed: true,
+    })
+    expect(assessment.bytes).toBeGreaterThan(SEEK_SAFE_JOB_BYTES)
+    expect(planOf(bitmap).copies[0].jobs.length).toBeGreaterThan(1)
+  })
+
+  it('says a label does not fit exactly when the plan splits it', () => {
+    // The band budget keeps 15% headroom under the 16 KB read-ahead. The panel's note
+    // once used the read-ahead itself, so a label in between was split without a word.
+    const between = noisyBitmap(384, 300)
+    const bytes = encodeImage(between).length
+    expect(bytes).toBeGreaterThan(bandBudgetBytes())
+    expect(bytes).toBeLessThanOrEqual(SEEK_SAFE_JOB_BYTES)
+    for (let rows = 240; rows <= 320; rows += 8) {
+      const bitmap = noisyBitmap(384, rows)
+      const split = planOf(bitmap).copies[0].jobs.length > 1
+      expect(x2.assessJob(bitmap).fits, `${rows} rows`).toBe(!split)
+    }
+  })
+
+  it('reports the raster as compressed, so a simpler picture can make it smaller', () => {
+    expect(x2.assessJob(checkerboard(64, 16)).compressed).toBe(true)
   })
 })

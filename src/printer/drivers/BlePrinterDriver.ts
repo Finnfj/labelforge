@@ -155,6 +155,10 @@ export class BlePrinterDriver implements PrinterDriver {
     return this.#capabilities
   }
 
+  get dialect(): Dialect {
+    return this.#dialect
+  }
+
   get transport(): Transport {
     return this.#transport
   }
@@ -284,8 +288,6 @@ export class BlePrinterDriver implements PrinterDriver {
     return {
       online: this.#state !== 'disconnected',
       batteryPercent: battery,
-      paperType: null,
-      density: null,
       labelHeightDots: labelHeight,
       fault: faultFromFlags(flags),
     }

@@ -11,6 +11,15 @@ import type { PrintSettings } from './types'
  * it. Where this line falls, and why, is recorded in ADR 0003.
  */
 export interface Dialect {
+  /** The density levels it prints at, and the one it uses when none is asked for. */
+  readonly density: { min: number; max: number; default: number }
+  /**
+   * How big this bitmap's job would be, and whether it goes out whole.
+   *
+   * What the print panel asks before a print, to say whether the label goes out
+   * as several bands and whether a simpler picture would avoid that.
+   */
+  assessJob(bitmap: PackedBitmap): JobAssessment
   /**
    * Everything one print puts on the wire: every band of every copy, in order.
    *
@@ -18,6 +27,45 @@ export interface Dialect {
    * can count bytes for progress before it sends the first one.
    */
   planPrint(bitmap: PackedBitmap, settings: PrintSettings): PrintPlan
+}
+
+/**
+ * How big a bitmap's job would be, and whether it goes out whole.
+ *
+ * A job within the dialect's band budget (see GLOSSARY.md) goes out as one; one
+ * over it is split into bands, and only then is the budget worth reporting.
+ */
+export type JobAssessment = {
+  /** Bytes of the job that would carry this bitmap. */
+  bytes: number
+  /**
+   * Whether the picture's content changes the size: true for a compressed raster,
+   * where a simpler dither makes a smaller job; false where only the dimensions
+   * count, and no change to the picture would help.
+   */
+  compressed: boolean
+} & (
+  | {
+      /** Within the band budget: the label goes out as one job. */
+      fits: true
+    }
+  | {
+      /** Over the band budget: the label goes out in bands. */
+      fits: false
+      /** The largest job the dialect sends whole. */
+      bandBudgetBytes: number
+    }
+)
+
+/**
+ * The density level a print goes out at on this dialect.
+ *
+ * The one asked for, clamped into the dialect's range, since it may have been set
+ * on another printer; or the dialect's own default when none was asked for.
+ */
+export function densityLevel(dialect: Dialect, asked: number | undefined): number {
+  const { min, max } = dialect.density
+  return Math.min(max, Math.max(min, asked ?? dialect.density.default))
 }
 
 /** The ordered jobs a dialect produces to put one label on paper, copy by copy. */

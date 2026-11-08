@@ -1,6 +1,6 @@
 import type { PackedBitmap } from '../model/bitmap'
 import type { ProfileSupport } from './profiles'
-import type { PaperTypeValue, SpeedValue } from './dialects/x2/constants'
+import type { Dialect } from './dialect'
 
 /**
  * The seam between the app and the hardware.
@@ -40,14 +40,21 @@ export type PrinterFault =
 export interface PrinterStatus {
   online: boolean
   batteryPercent: number | null
-  paperType: PaperTypeValue | null
-  density: number | null
   labelHeightDots: number | null
   fault: PrinterFault
 }
 
+/** The paper on the roll, by how its labels are marked out. See GLOSSARY.md. */
+export type Stock = 'gap' | 'continuous' | 'black-mark'
+
+export type PrintSpeed = 'low' | 'medium' | 'high'
+
 export interface PrintSettings {
-  density: number
+  /**
+   * How dark to print, within the range the dialect reports (`Dialect.density`).
+   * Left out, the dialect's own default.
+   */
+  density?: number
   /**
    * Motor speed, or undefined to say nothing about it.
    *
@@ -59,8 +66,8 @@ export interface PrintSettings {
    * Kept selectable because it may well work, and because a setting that can be
    * turned on is how you find out. See docs/PROTOCOL.md.
    */
-  speed?: SpeedValue
-  paperType: PaperTypeValue
+  speed?: PrintSpeed
+  stock: Stock
   copies: number
   /**
    * Seek the label boundary at the end of the job.
@@ -151,6 +158,8 @@ export interface PrinterDriver {
   readonly kind: 'virtual' | 'ble'
   readonly state: PrinterState
   readonly capabilities: PrinterCapabilities | null
+  /** What the bytes are: the dialect this driver prints in. */
+  readonly dialect: Dialect
 
   /** For BLE this must be called from a real user gesture. */
   connect(): Promise<PrinterCapabilities>
@@ -181,9 +190,9 @@ export interface PrinterDriver {
 }
 
 export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
-  density: 8,
-  // Deliberately absent — see PrintSettings.speed.
-  paperType: 0x20, // gap labels
+  // Density and speed deliberately absent: the dialect's default density, and no
+  // speed command at all — see PrintSettings.speed.
+  stock: 'gap',
   copies: 1,
   // On, because it is the only thing that registers a tall label. A raster that fits
   // under the limit comes back as one band, so this changes nothing for small labels.

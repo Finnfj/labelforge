@@ -57,6 +57,10 @@ export class VirtualPrinterDriver implements PrinterDriver {
     return this.#capabilities
   }
 
+  get dialect(): Dialect {
+    return this.#dialect
+  }
+
   /** Everything "printed" so far, oldest first. */
   get printouts(): readonly VirtualPrintout[] {
     return this.#printouts
@@ -96,8 +100,6 @@ export class VirtualPrinterDriver implements PrinterDriver {
     return {
       online: this.#state !== 'disconnected',
       batteryPercent: 100,
-      paperType: 0x20,
-      density: 8,
       labelHeightDots: null,
       fault: 'none',
     }

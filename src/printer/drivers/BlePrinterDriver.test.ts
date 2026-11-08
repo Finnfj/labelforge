@@ -8,6 +8,7 @@ import { findProfile } from '../profiles'
 import { planStreamBytes } from '../dialect'
 import { concatBytes } from '../../lib/bytes'
 import { START, testDialect, testPrinter } from '../dialects/testing/testDialect'
+import { x2 } from '../dialects/x2'
 
 const hex = (b: Uint8Array) => Array.from(b, (v) => v.toString(16).padStart(2, '0')).join(' ')
 
@@ -318,6 +319,13 @@ describe('BlePrinterDriver printing a plan', () => {
     })
     await driver.print({ bitmap: checkerboard(64, 8), settings: DEFAULT_PRINT_SETTINGS })
     expect(hex(concatBytes(logged))).toBe(hex(transport.written))
+  })
+
+  it('says which dialect it prints in, x2 unless told otherwise', () => {
+    // The print panel asks it for the density range and whether a label fits.
+    const dialect = testDialect()
+    expect(new BlePrinterDriver(new MockTransport(), { dialect }).dialect).toBe(dialect)
+    expect(new BlePrinterDriver(new MockTransport()).dialect).toBe(x2)
   })
 
   it('refuses to print while disconnected', async () => {
