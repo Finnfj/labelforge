@@ -1,0 +1,9 @@
+# Text is LF in the repository and in every working copy, whatever the machine's own
+# git settings. Prettier writes LF, so without this a Windows checkout with
+# core.autocrlf on shows every formatted file as modified and warns on every command.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.woff binary
+*.woff2 binary

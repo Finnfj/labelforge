@@ -21,6 +21,8 @@ jobs:
       # covers the shared libraries the runner image does not ship.
       - run: npx playwright install --with-deps chromium
       - run: npm run lint
+      - run: npm run format:check
       - run: npm run check:layering
+      - run: npm run check:paths
       - run: npm test -- --run
       - run: npm run build

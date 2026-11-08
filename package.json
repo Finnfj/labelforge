@@ -8,8 +8,10 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "check:layering": "node scripts/check-layering.mjs",
+    "check:paths": "node scripts/check-paths.mjs",
     "test": "vitest",
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "preview": "vite preview",
     "snoop": "node scripts/parse-btsnoop.mjs"
   },

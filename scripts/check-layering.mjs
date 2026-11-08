@@ -26,7 +26,8 @@ const RULES = {
 
 const BANNED_EVERYWHERE = ['marklife-label-printer-web-kit']
 
-const IMPORT_RE = /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g
+const IMPORT_RE =
+  /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g
 
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
@@ -54,7 +55,10 @@ for (const file of walk(SRC)) {
     }
     for (const forbidden of RULES[layer] ?? []) {
       // "react" must match the package, not e.g. "react-dom" inside app/
-      const hit = forbidden === 'react' ? spec === 'react' || spec.startsWith('react/') : spec.includes(forbidden)
+      const hit =
+        forbidden === 'react'
+          ? spec === 'react' || spec.startsWith('react/')
+          : spec.includes(forbidden)
       if (hit) {
         violations.push(`${rel}: layer "${layer}" must not import "${spec}"`)
       }
@@ -65,7 +69,9 @@ for (const file of walk(SRC)) {
 if (violations.length) {
   console.error('Layering violations:\n')
   for (const v of violations) console.error('  ' + v)
-  console.error(`\n${violations.length} violation(s). See scripts/check-layering.mjs for the rules.`)
+  console.error(
+    `\n${violations.length} violation(s). See scripts/check-layering.mjs for the rules.`,
+  )
   process.exit(1)
 }
 
