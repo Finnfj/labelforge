@@ -3,7 +3,12 @@ import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { Canvas, FabricObject, Textbox } from 'fabric'
 import { EditorCanvas } from './EditorCanvas'
-import { createEmptyDoc, type LabelDoc, type LabelElement, type TextElement } from '../model/labelDoc'
+import {
+  createEmptyDoc,
+  type LabelDoc,
+  type LabelElement,
+  type TextElement,
+} from '../model/labelDoc'
 import { mmToDots } from '../model/units'
 
 /**
