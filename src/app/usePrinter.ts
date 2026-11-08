@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { VirtualPrinterDriver } from '../printer/drivers/VirtualPrinterDriver'
 import { BlePrinterDriver } from '../printer/drivers/BlePrinterDriver'
 import { WebBluetoothTransport } from '../printer/transport/WebBluetoothTransport'
-import { findProfile } from '../printer/profiles'
+import { DEFAULT_PROFILE, findProfile } from '../printer/profiles'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../model/units'
 import type {
   PrinterCapabilities,
@@ -14,7 +14,11 @@ import type {
 export type PrinterKind = 'virtual' | 'ble'
 
 /**
- * Where the print head sits relative to the paper.
+ * Where the print head sits relative to the paper, for one kind of printer.
+ *
+ * Kept per printer profile, since a LetraTag's 30-dot head and a P50's 384 have
+ * nothing to share. Every printer of the default profile's dialect shares one, as
+ * they always have.
  *
  * None of this can be queried — no command reports head width, and nothing
  * reports how the stock is loaded under it. On a 40 mm roll under a 48 mm head
@@ -77,26 +81,44 @@ export const DEFAULT_GEOMETRY: HeadGeometry = {
  */
 const GEOMETRY_VERSION = 3
 
-function loadGeometry(): HeadGeometry {
+/**
+ * Where a profile's geometry is stored. Printers of the default profile's dialect
+ * keep the key there has always been, so a calibrated P50 keeps its calibration.
+ */
+function geometryKey(profileId: string): string {
+  const profile = findProfile(profileId)
+  const sharesDefault =
+    !profile || (profile.support !== 'incompatible' && profile.dialect === DEFAULT_PROFILE.dialect)
+  return sharesDefault ? GEOMETRY_KEY : `${GEOMETRY_KEY}.${profileId}`
+}
+
+/** The geometry a profile starts from: the defaults, at its own head width where it has one. */
+function defaultGeometry(profileId: string): HeadGeometry {
+  const headWidthDots = findProfile(profileId)?.headWidthDots
+  return headWidthDots ? { ...DEFAULT_GEOMETRY, headWidthDots } : DEFAULT_GEOMETRY
+}
+
+function loadGeometry(profileId: string): HeadGeometry {
+  const fallback = defaultGeometry(profileId)
   try {
-    const raw = localStorage.getItem(GEOMETRY_KEY)
-    if (!raw) return DEFAULT_GEOMETRY
+    const raw = localStorage.getItem(geometryKey(profileId))
+    if (!raw) return fallback
     const parsed = JSON.parse(raw) as Partial<HeadGeometry> & { version?: number }
-    if (parsed.version !== GEOMETRY_VERSION) return DEFAULT_GEOMETRY
+    if (parsed.version !== GEOMETRY_VERSION) return fallback
     return {
       headWidthDots:
         Number.isFinite(parsed.headWidthDots) && parsed.headWidthDots! > 0
           ? Math.round(parsed.headWidthDots!)
-          : DEFAULT_GEOMETRY.headWidthDots,
+          : fallback.headWidthDots,
       padToHead: parsed.padToHead === true,
       align: parsed.align === 'center' || parsed.align === 'right' ? parsed.align : 'left',
       offsetDots: Number.isFinite(parsed.offsetDots) ? Math.round(parsed.offsetDots!) : 0,
       feedAfterDots: Number.isFinite(parsed.feedAfterDots)
         ? Math.max(0, Math.round(parsed.feedAfterDots!))
-        : DEFAULT_GEOMETRY.feedAfterDots,
+        : fallback.feedAfterDots,
     }
   } catch {
-    return DEFAULT_GEOMETRY
+    return fallback
   }
 }
 
@@ -164,20 +186,34 @@ export function usePrinter(
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [wireLog, setWireLog] = useState<WireEntry[]>([])
-  const [geometry, setGeometryState] = useState<HeadGeometry>(loadGeometry)
   const [profileOverride, setProfileOverrideState] = useState<string | null>(null)
+  const [geometries, setGeometries] = useState<Record<string, HeadGeometry>>({})
 
-  const setGeometry = useCallback((patch: Partial<HeadGeometry>) => {
-    setGeometryState((current) => {
-      const next = { ...current, ...patch }
-      try {
-        localStorage.setItem(GEOMETRY_KEY, JSON.stringify({ ...next, version: GEOMETRY_VERSION }))
-      } catch {
-        // Private-mode storage refusal must not break printing.
-      }
-      return next
-    })
-  }, [])
+  // The geometry in force is the connected printer's, else the forced model's, else
+  // the default profile's: what the preview is drawn for before anything connects.
+  const geometryProfileId = capabilities?.profileId ?? profileOverride ?? DEFAULT_PROFILE.id
+  const geometry = useMemo(
+    () => geometries[geometryProfileId] ?? loadGeometry(geometryProfileId),
+    [geometries, geometryProfileId],
+  )
+
+  const setGeometry = useCallback(
+    (patch: Partial<HeadGeometry>) => {
+      setGeometries((all) => {
+        const next = { ...(all[geometryProfileId] ?? loadGeometry(geometryProfileId)), ...patch }
+        try {
+          localStorage.setItem(
+            geometryKey(geometryProfileId),
+            JSON.stringify({ ...next, version: GEOMETRY_VERSION }),
+          )
+        } catch {
+          // Private-mode storage refusal must not break printing.
+        }
+        return { ...all, [geometryProfileId]: next }
+      })
+    },
+    [geometryProfileId],
+  )
 
   const bluetoothSupported = useMemo(() => WebBluetoothTransport.isSupported(), [])
 

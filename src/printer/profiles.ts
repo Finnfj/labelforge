@@ -18,11 +18,16 @@
  * strictly better than that, and it is the part of this file that is certainly
  * correct.
  *
- * See docs/PROTOCOL.md for the evidence behind each entry, and note that only
- * the P50 is confirmed on hardware.
+ * Beyond MarkLife, DYMO's LetraTag speaks a dialect of its own over a service of
+ * its own, driven only with experimental support turned on (ADR 0003).
+ *
+ * See docs/PROTOCOL.md and docs/DYMO_PROTOCOL.md for the evidence behind each
+ * entry, and note that only the P50 is confirmed on hardware.
  */
-import { DEFAULT_HEAD_WIDTH_DOTS } from '../model/units'
+import { DEFAULT_HEAD_WIDTH_DOTS, LETRATAG_HEAD_WIDTH_DOTS, dotsToMm } from '../model/units'
 import type { Dialect } from './dialect'
+import { letratag } from './dialects/letratag'
+import { ADVERTISED_NAME_PREFIX as LETRATAG_PREFIX } from './dialects/letratag/constants'
 import { x2 } from './dialects/x2'
 
 export type ProfileSupport =
@@ -125,6 +130,20 @@ export const PROFILES: readonly PrinterProfile[] = [
     note:
       'These use an uncompressed print protocol that LabelForge does not implement. ' +
       'Connecting would achieve nothing — every command would be ignored.',
+  },
+  {
+    id: 'letratag',
+    label: 'DYMO LetraTag LT-200B',
+    namePrefixes: [LETRATAG_PREFIX],
+    // Printed with by the contributor whose captures the dialect comes from, never
+    // by anyone else working on LabelForge. See docs/DYMO_PROTOCOL.md.
+    support: 'experimental',
+    dialect: letratag,
+    headWidthDots: LETRATAG_HEAD_WIDTH_DOTS,
+    note:
+      'Its print protocol was worked out from captures of the DYMO app and a third ' +
+      `party's notes. It prints only the middle ${dotsToMm(LETRATAG_HEAD_WIDTH_DOTS)} mm of ` +
+      'its 12 mm tape.',
   },
 ]
 

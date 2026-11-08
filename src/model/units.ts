@@ -53,3 +53,13 @@ export function dotsToPt(dots: number): number {
  * other models in the family differ.
  */
 export const DEFAULT_HEAD_WIDTH_DOTS = 384
+
+/**
+ * Head width in dots on a DYMO LetraTag: 30 of its 32 addressable dots print, so
+ * only the middle 3.75 mm or so of its 12 mm tape is ever inked. From
+ * ysfchn/dymo-bluetooth: "the actual printable area is 30 pixels".
+ *
+ * Its dot pitch is 200 DPI by the same source, against the P50's 203; rendered at the
+ * P50's 8 dots per mm, a LetraTag label comes out about 1.6% long. Not yet measured.
+ */
+export const LETRATAG_HEAD_WIDTH_DOTS = 30

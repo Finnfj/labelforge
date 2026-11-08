@@ -228,6 +228,10 @@ export type JobPart = ({ kind: 'command' } & NamedCommand) | { kind: 'raster'; b
  * 0002), and the virtual driver logs each command on its own line.
  */
 export interface PlannedJob {
+  /**
+   * May be empty: a job can be its epilogue alone, a standalone command the printer
+   * answers, such as the LetraTag's probe.
+   */
   parts: JobPart[]
   /** Sent after the job's stream has gone, each as a write of its own. */
   epilogue: NamedCommand[]
