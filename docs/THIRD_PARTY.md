@@ -86,11 +86,11 @@ corroboration, and it is recorded as such.
 
 ## Dymo protocol provenance
 
-`docs/DYMO_PROTOCOL.md` documents a second printer family, not yet driven by any code
-in this project. Its facts come from two sources: our own HCI captures of the vendor
+`docs/DYMO_PROTOCOL.md` documents a second printer family, driven by the experimental
+LetraTag dialect. Its facts come from two sources: our own HCI captures of the vendor
 Android app, and **[ysfchn/dymo-bluetooth](https://github.com/ysfchn/dymo-bluetooth)**
 (MIT), an independent Python implementation for the same hardware (DYMO LetraTag
-LT-200B). **No code from it is used here** — `src/printer/dymo/constants.ts` contains
+LT-200B). **No code from it is used here** — `src/printer/dialects/letratag/` contains
 only interface facts (GATT UUIDs, fixed header/footer bytes, the checksum formula)
 independently confirmed against our own captures, the same standard applied to the
 MarkLife protocol above. Where the two sources disagree — notably a `bits per pixel`

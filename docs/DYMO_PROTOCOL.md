@@ -20,8 +20,10 @@ other — stronger than either alone, and about as good as the evidence gets wit
 driver of our own confirmed on hardware. Where they disagree, both the published claim
 and our observed bytes are recorded, because a disagreement here is exactly the kind
 of thing worth not quietly resolving in whichever direction seems more likely.
-**Nothing below has been sent to a printer by this project** — there is still no Dymo
-driver, only these notes.
+LabelForge drives the LetraTag with the dialect in `src/printer/dialects/letratag/`, as
+an **experimental** printer: refused unless "Drive experimental printers" is on under
+Diagnostics. The contributor who made the captures has printed with it (see "Lessons
+from the first real print"); nobody else working on LabelForge has yet.
 
 ## Device identity
 
@@ -202,8 +204,9 @@ The first LabelForge print on hardware came out **mirrored** and **far too small
 - **Too small**: the dot pitch had been estimated as 30 dots / 12 mm (2.5 dots/mm),
   assuming the head spans the whole tape. It doesn't; at the stated 200 DPI it spans
   ~3.8 mm, and the stretch puts columns at ~15.7/mm. The estimate predicted a print
-  ~3.1x too short, consistent with what came out. Now 200 DPI — **still to be confirmed
-  by measuring a print**.
+  ~3.1x too short, consistent with what came out. At 200 DPI the pitch is within 1.6%
+  of the P50's 8 dots/mm, so LabelForge renders at that shared 8 dots/mm — **still to
+  be confirmed by measuring a print**.
 
 ## Result notifications
 
@@ -216,13 +219,13 @@ job's last write, once it has printed. An earlier version of these notes read th
 "two per job" and, following ysfchn/dymo-bluetooth's `reply_get`, discarded the first
 after the job — which was the only one, so every LabelForge print timed out waiting
 for a second. ysfchn/dymo-bluetooth (which sends no probe) does see two after a job,
-the first a provisional "printing"; the driver now treats status `1` as that and
-keeps waiting, and takes anything else as the result.
+the first a provisional "printing"; LabelForge reads status `1` as that and keeps
+waiting, and takes anything else as the result.
 
 | Status | Printed? | Meaning                                                                                                 |
 | :----: | :------: | ------------------------------------------------------------------------------------------------------- |
 |  `0`   |  maybe   | completed (their note: can report success even with an open lid or missing cassette)                    |
-|  `1`   |   yes    | completed (treat the same as `0`)                                                                       |
+|  `1`   |   yes    | completed, or still printing: seen before the real result by ysfchn/dymo-bluetooth, so not a result     |
 |  `2`   |    no    | failed, unknown reason                                                                                  |
 |  `3`   |   yes    | completed, battery low                                                                                  |
 |  `4`   |    no    | cancelled                                                                                               |
@@ -233,7 +236,8 @@ keeps waiting, and takes anything else as the result.
 ## Open questions
 
 - **The standalone `1b 41 00` write before every job.** Not in ysfchn/dymo-bluetooth's
-  model at all. Probably a pre-flight probe; unconfirmed.
+  model at all. Probably a pre-flight probe; unconfirmed. LabelForge sends it before
+  every copy and waits for its reply, as the vendor app does.
 - **The undocumented `1b 23 01` directive** between `START` and `PRINT_DATA`. Sent by
   the real app in every capture, not required by the printer (their library omits it
   and still works), purpose unknown.
