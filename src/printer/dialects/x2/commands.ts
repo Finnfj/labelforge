@@ -6,13 +6,7 @@
  * configuration, `10 FF` covers device-information queries.
  */
 import { concatBytes } from '../../../lib/bytes'
-import {
-  MAX_DENSITY,
-  MIN_DENSITY,
-  SEEK_SAFE_JOB_BYTES,
-  type PaperTypeValue,
-  type SpeedValue,
-} from './constants'
+import { MAX_DENSITY, MIN_DENSITY, type PaperTypeValue, type SpeedValue } from './constants'
 
 const cmd = (...bytes: number[]) => Uint8Array.from(bytes)
 
@@ -209,6 +203,13 @@ export interface PrintJobFraming {
   epilogue: FramedCommand[]
 }
 
+/** The print settings as the bytes x2's job framing takes; see `x2FramingSettings()`. */
+export interface X2FramingSettings {
+  paperType: PaperTypeValue
+  density: number
+  speed?: SpeedValue
+}
+
 /**
  * The vendor app's exact per-copy print sequence, from an HCI capture.
  *
@@ -227,22 +228,21 @@ export interface PrintJobFraming {
  * shows. One thing the vendor app notably never sends is any feed command at
  * all; {@link setSpeed} is discussed below.
  */
-export function printJobFraming(settings: {
-  paperType: PaperTypeValue
-  density: number
-  speed?: SpeedValue
-  seekGap?: boolean
-  /**
-   * Retract from the tear-off position before printing.
-   *
-   * On for a label, which is what the capture shows and what undoes the advance
-   * the job before it made. When one label is split across several jobs, the x2
-   * print plan decides per band: with the paper seam closed every band retracts,
-   * to undo the take-up its own job start costs; left open, only the first does,
-   * since only it has a tear-off advance behind it to undo.
-   */
-  alignStart?: boolean
-}): PrintJobFraming {
+export function printJobFraming(
+  settings: X2FramingSettings & {
+    seekGap?: boolean
+    /**
+     * Retract from the tear-off position before printing.
+     *
+     * On for a label, which is what the capture shows and what undoes the advance
+     * the job before it made. When one label is split across several jobs, the x2
+     * print plan decides per band: with the paper seam closed every band retracts,
+     * to undo the take-up its own job start costs; left open, only the first does,
+     * since only it has a tear-off advance behind it to undo.
+     */
+    alignStart?: boolean
+  },
+): PrintJobFraming {
   return {
     preamble: [
       { bytes: setPaperTypeSilent(settings.paperType), note: 'setPaperTypeSilent' },
@@ -308,23 +308,6 @@ export function printJobStream(framing: PrintJobFraming, image: Uint8Array): Uin
     image,
     ...framing.trailer.map((c) => c.bytes),
   ])
-}
-
-/**
- * Whether a raster this big needs splitting for its gap seek to be read.
- *
- * The printer honours a job's seek only when it read the job whole before the motor
- * started; above {@link SEEK_SAFE_JOB_BYTES} it did not, and a tall label's own seek
- * goes unread. Splitting is the answer — see `planSeekableBands()`.
- *
- * Takes the encoded `1F 10` command's length rather than the whole job's, because that
- * is what a caller has before it has built any framing: the print panel warns from the
- * same number the drivers decide on, and 29 bytes of framing is nothing against a
- * 16 KB threshold. One basis everywhere beats a more precise one that two callers
- * compute differently.
- */
-export function needsSplitToSeek(encodedImageBytes: number): boolean {
-  return encodedImageBytes > SEEK_SAFE_JOB_BYTES
 }
 
 /*

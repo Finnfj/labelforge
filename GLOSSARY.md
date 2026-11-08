@@ -27,7 +27,22 @@ The ordered jobs a dialect produces to put one label on paper, every band of eve
 copy.
 _Avoid_: job list, schedule
 
+**Read-ahead**:
+How much of a job the printer takes in before it starts printing. A job larger than
+this has its gap seek read too late to register the label.
+_Avoid_: buffer size, seek limit
+
+**Band budget**:
+The largest job a dialect sends whole. A label whose job is bigger goes out in bands.
+Set below the read-ahead, to leave headroom.
+_Avoid_: split budget, seek limit, read-ahead (the read-ahead is the printer's)
+
 ## Paper motion
+
+**Stock**:
+The paper on the roll, by how its labels are marked out: gap labels, continuous, or
+black mark.
+_Avoid_: paper type, media
 
 **Gap seek**:
 The printer advancing paper to the next label gap, found by its own sensor.

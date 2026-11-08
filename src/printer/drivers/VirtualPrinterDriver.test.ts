@@ -5,6 +5,7 @@ import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
 import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
 import { planStreamBytes } from '../dialect'
 import { testDialect } from '../dialects/testing/testDialect'
+import { x2 } from '../dialects/x2'
 
 /*
  * Recording a print, through a dialect that is not x2.
@@ -94,6 +95,12 @@ describe('VirtualPrinterDriver', () => {
     expect(p.printouts).toHaveLength(0)
     // An aborted job must leave the printer usable, not stuck in "printing".
     expect(p.state).toBe('connected')
+  })
+
+  it('says which dialect it prints in, x2 unless told otherwise', () => {
+    const dialect = testDialect()
+    expect(new VirtualPrinterDriver(Infinity, { dialect }).dialect).toBe(dialect)
+    expect(new VirtualPrinterDriver(Infinity).dialect).toBe(x2)
   })
 
   it('refuses to print while disconnected', async () => {

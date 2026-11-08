@@ -4,6 +4,7 @@ import type { PrintSettings } from '../../types'
 import { printJobFraming } from './commands'
 import { printDurationMs } from './constants'
 import { encodeImage } from './encodeImage'
+import { x2FramingSettings } from './settings'
 import { planBands } from './splitJob'
 
 /**
@@ -33,12 +34,13 @@ export function planX2Print(bitmap: PackedBitmap, settings: PrintSettings): Prin
   const closeSeam = settings.closeSplitSeam !== false
   const bands = settings.splitForSeek === false ? [bitmap] : planBands(bitmap, { closeSeam })
   const rasters = bands.length === 1 ? [encodeImage(bitmap)] : bands.map(encodeImage)
-  const { epilogue } = printJobFraming(settings)
+  const framingSettings = x2FramingSettings(settings)
+  const { epilogue } = printJobFraming(framingSettings)
 
   const jobs: PlannedJob[] = bands.map((band, i) => {
     const last = i === bands.length - 1
     const framing = printJobFraming({
-      ...settings,
+      ...framingSettings,
       alignStart: i === 0 || closeSeam,
       // Overrides `settings.seekGap`, so a print asked for without a seek still
       // seeks in its last band. That is what both drivers did before this plan

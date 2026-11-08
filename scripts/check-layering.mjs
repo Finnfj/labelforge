@@ -1,6 +1,9 @@
 // Enforces the architectural layering described in docs/ and the plan:
 //
-//   app/     -> may import anything
+//   app/     -> may import anything, except a dialect's own code: only the
+//               Diagnostics panel, an x2 investigation tool, reaches into
+//               printer/dialects/x2/. Everything else asks the driver's dialect
+//               (ADR 0003).
 //   editor/  -> may not import printer/
 //   render/  -> may not import printer/ or react
 //   printer/ -> may not import fabric, react, or editor/
@@ -26,7 +29,11 @@ const RULES = {
 
 const BANNED_EVERYWHERE = ['marklife-label-printer-web-kit']
 
-const IMPORT_RE = /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g
+/** The app files allowed to import x2 directly. */
+const X2_IN_APP = new Set([join('app', 'DiagnosticsPanel.tsx')])
+
+const IMPORT_RE =
+  /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g
 
 function* walk(dir) {
   for (const entry of readdirSync(dir)) {
@@ -52,9 +59,15 @@ for (const file of walk(SRC)) {
         violations.push(`${rel}: imports banned package "${spec}"`)
       }
     }
+    if (layer === 'app' && spec.includes('printer/dialects/x2') && !X2_IN_APP.has(rel)) {
+      violations.push(`${rel}: only the Diagnostics panel may import "${spec}"; ask the dialect`)
+    }
     for (const forbidden of RULES[layer] ?? []) {
       // "react" must match the package, not e.g. "react-dom" inside app/
-      const hit = forbidden === 'react' ? spec === 'react' || spec.startsWith('react/') : spec.includes(forbidden)
+      const hit =
+        forbidden === 'react'
+          ? spec === 'react' || spec.startsWith('react/')
+          : spec.includes(forbidden)
       if (hit) {
         violations.push(`${rel}: layer "${layer}" must not import "${spec}"`)
       }
@@ -65,7 +78,9 @@ for (const file of walk(SRC)) {
 if (violations.length) {
   console.error('Layering violations:\n')
   for (const v of violations) console.error('  ' + v)
-  console.error(`\n${violations.length} violation(s). See scripts/check-layering.mjs for the rules.`)
+  console.error(
+    `\n${violations.length} violation(s). See scripts/check-layering.mjs for the rules.`,
+  )
   process.exit(1)
 }
 

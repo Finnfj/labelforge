@@ -3,6 +3,7 @@ import { DOTS_PER_MM, dotsToMm } from '../model/units'
 import * as cmd from '../printer/dialects/x2/commands'
 import { probeJob } from '../printer/dialects/x2/probeJob'
 import { PaperType } from '../printer/dialects/x2/constants'
+import { X2_DENSITY } from '../printer/dialects/x2/settings'
 import {
   blankLabel,
   densityPatch,
@@ -376,7 +377,7 @@ export function DiagnosticsPanel({
                         // Gap stock either way: the probe never seeks, so the paper
                         // type only decides a byte in the preamble.
                         paperType: PaperType.Gap,
-                        density: DEFAULT_PRINT_SETTINGS.density,
+                        density: X2_DENSITY.default,
                         feedDots: DOTS_PER_MM * probeFeedMm,
                         widthDots: headWidth,
                         probe: parsedProbe,
