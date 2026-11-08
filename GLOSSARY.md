@@ -55,7 +55,8 @@ that label's gap rather than the next one.
 _Avoid_: lead
 
 **Seam**:
-The boundary on paper between two bands of one label.
+The boundary on paper between two bands of one label. Where code design is the topic,
+the place a module's interface lives is its **interface**, never a seam.
 _Avoid_: gap, join (a gap is the stock's own space between labels)
 
 ## Printers

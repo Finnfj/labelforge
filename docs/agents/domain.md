@@ -44,8 +44,6 @@ When your output names a domain concept (in an issue title, a refactor proposal,
 
 If the concept you need isn't in the glossary yet, that's a signal: either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
 
-One word collides with the design vocabulary of `/codebase-design` and `/improve-codebase-architecture`: in this repo **Seam** is the paper join between two bands. Call the code-design sense an **interface**: "the dialect interface", not "the dialect seam".
-
 ## Flag ADR conflicts
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
