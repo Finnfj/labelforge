@@ -1,11 +1,5 @@
 import { Emitter } from '../../lib/emitter'
-import {
-  CHAR_NOTIFY_CREDITS,
-  CHAR_NOTIFY_STATUS,
-  CHAR_WRITE,
-  SERVICE_UUID,
-} from '../dialects/x2/constants'
-import { ALL_NAME_PREFIXES } from '../profiles'
+import type { GattLayout } from '../dialect'
 import { GattQueue } from './GattQueue'
 import {
   BluetoothUnavailableError,
@@ -25,13 +19,14 @@ export class WebBluetoothTransport implements Transport {
 
   #state: TransportState = 'disconnected'
   #device: BluetoothDevice | null = null
+  #server: BluetoothRemoteGATTServer | null = null
   #write: BluetoothRemoteGATTCharacteristic | null = null
   #notifiers = new Map<NotifyChannel, BluetoothRemoteGATTCharacteristic>()
   #handlers = new Map<NotifyChannel, Set<Handler>>()
   #emitter = new Emitter<TransportEvents>()
   #queue = new GattQueue()
-  /** Whether the write characteristic supports the fast, unacknowledged path. */
-  #canWriteWithoutResponse = false
+  /** Whether writes take the fast, unacknowledged path: offered, and the layout allows it. */
+  #writeWithoutResponse = false
 
   get state(): TransportState {
     return this.#state
@@ -60,6 +55,10 @@ export class WebBluetoothTransport implements Transport {
     }
   }
 
+  /**
+   * Show the chooser and connect to the printer's GATT server. Opening its
+   * service waits for {@link open}, once the driver knows which one it speaks.
+   */
   async connect(options: ConnectOptions = {}): Promise<void> {
     if (!WebBluetoothTransport.isSupported()) {
       throw new BluetoothUnavailableError(
@@ -74,6 +73,8 @@ export class WebBluetoothTransport implements Transport {
     }
 
     this.#setState('requesting')
+    const namePrefixes = options.devices?.namePrefixes ?? []
+    const optionalServices = [...(options.devices?.services ?? [])]
     let device: BluetoothDevice
     try {
       // Filter by advertised name, never by service UUID: these printers do not
@@ -81,18 +82,15 @@ export class WebBluetoothTransport implements Transport {
       // yields an empty chooser and looks like the printer is missing.
       device = await navigator.bluetooth.requestDevice(
         options.acceptAllDevices
-          ? { acceptAllDevices: true, optionalServices: [SERVICE_UUID] }
-          : {
-              filters: ALL_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
-              optionalServices: [SERVICE_UUID],
-            },
+          ? { acceptAllDevices: true, optionalServices }
+          : { filters: namePrefixes.map((namePrefix) => ({ namePrefix })), optionalServices },
       )
     } catch (error) {
       this.#setState('disconnected')
       if (error instanceof DOMException && error.name === 'NotFoundError') {
         throw new TransportError(
           'No printer was selected. If the list was empty, switch the printer on and try ' +
-            '"Show all devices" — its advertised name may not start with P50.',
+            '"Show all devices" — its advertised name may not be one this app knows.',
           error,
         )
       }
@@ -105,7 +103,21 @@ export class WebBluetoothTransport implements Transport {
     try {
       this.#setState('connecting')
       this.#queue.reopen()
-      await this.#openGatt(device)
+      this.#server = await this.#queue.run('gatt.connect', () => {
+        if (!device.gatt) throw new TransportError('This device exposes no GATT server.')
+        return device.gatt.connect()
+      })
+    } catch (error) {
+      await this.disconnect()
+      throw error instanceof TransportError
+        ? error
+        : new TransportError('Could not connect to the printer.', error)
+    }
+  }
+
+  async open(layout: GattLayout): Promise<void> {
+    try {
+      await this.#openService(layout)
       this.#setState('ready')
     } catch (error) {
       await this.disconnect()
@@ -115,28 +127,27 @@ export class WebBluetoothTransport implements Transport {
     }
   }
 
-  async #openGatt(device: BluetoothDevice): Promise<void> {
-    const server = await this.#queue.run('gatt.connect', () => {
-      if (!device.gatt) throw new TransportError('This device exposes no GATT server.')
-      return device.gatt.connect()
-    })
+  async #openService(layout: GattLayout): Promise<void> {
+    const server = this.#server
+    if (!server) throw new TransportError('Not connected to a printer.')
 
     const service = await this.#queue.run('getPrimaryService', () =>
-      server.getPrimaryService(SERVICE_UUID),
+      server.getPrimaryService(layout.service),
     )
 
     this.#write = await this.#queue.run('getCharacteristic(write)', () =>
-      service.getCharacteristic(CHAR_WRITE),
+      service.getCharacteristic(layout.write),
     )
-    this.#canWriteWithoutResponse = Boolean(this.#write.properties?.writeWithoutResponse)
+    this.#writeWithoutResponse =
+      layout.writeMode === 'fastest-offered' &&
+      Boolean(this.#write.properties?.writeWithoutResponse)
 
-    // Both notify channels must be live before any print starts: without the
-    // status channel there is no acknowledgement, and without credits the job
-    // stalls waiting for a window that was never opened.
-    for (const [channel, uuid] of [
-      ['status', CHAR_NOTIFY_STATUS],
-      ['credits', CHAR_NOTIFY_CREDITS],
-    ] as const) {
+    // Every notify channel the layout names must be live before any print starts:
+    // without the status channel there is no acknowledgement, and without credits
+    // the job stalls waiting for a window that was never opened.
+    const channels: Array<[NotifyChannel, string]> = [['status', layout.status]]
+    if (layout.credits) channels.push(['credits', layout.credits])
+    for (const [channel, uuid] of channels) {
       try {
         const characteristic = await this.#queue.run(`getCharacteristic(${channel})`, () =>
           service.getCharacteristic(uuid),
@@ -176,6 +187,7 @@ export class WebBluetoothTransport implements Transport {
   #onDisconnected = () => {
     // Every characteristic handle is invalidated by a disconnect; keeping them
     // would produce confusing "GATT operation failed" errors on reconnect.
+    this.#server = null
     this.#write = null
     this.#notifiers.clear()
     this.#queue.close('the printer disconnected')
@@ -206,10 +218,10 @@ export class WebBluetoothTransport implements Transport {
     payload.set(bytes)
 
     await this.#queue.run('write', async () => {
-      // Without-response is dramatically faster — several packets per connection
-      // event instead of one round trip each — and is what pairs with the credit
-      // window. With-response is the fallback when the firmware does not offer it.
-      if (this.#canWriteWithoutResponse) await characteristic.writeValueWithoutResponse(payload)
+      // Without-response where the dialect's link allows it and the firmware offers
+      // it; with-response otherwise, which resolves only once the printer has
+      // acknowledged the write.
+      if (this.#writeWithoutResponse) await characteristic.writeValueWithoutResponse(payload)
       else await characteristic.writeValueWithResponse(payload)
     })
     this.#emitter.emit('wire', { direction: 'out', bytes, at: Date.now() })
@@ -218,6 +230,7 @@ export class WebBluetoothTransport implements Transport {
   async disconnect(): Promise<void> {
     const device = this.#device
     this.#queue.close('disconnecting')
+    this.#server = null
     this.#write = null
     this.#notifiers.clear()
     if (device) {

@@ -1,9 +1,7 @@
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
 import { planStreamBytes, type Dialect } from '../dialect'
-import { x2 } from '../dialects/x2'
-import { DEFAULT_PROFILE } from '../profiles'
-import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
+import { DEFAULT_PROFILE, type DrivenProfile } from '../profiles'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -40,13 +38,23 @@ export class VirtualPrinterDriver implements PrinterDriver {
   #emitter = new Emitter<PrinterEvents>()
   #printouts: VirtualPrintout[] = []
   #dialect: Dialect
+  #profile: DrivenProfile
 
   /** Bytes per simulated second. Set to Infinity in tests to remove the delay. */
   readonly throughputBytesPerSecond: number
 
-  constructor(throughputBytesPerSecond = 4000, options: { dialect?: Dialect } = {}) {
+  /**
+   * `profile` is the printer it stands in for, and decides the dialect unless one
+   * is handed in: the P50 when none is given, or the Diagnostics override, so the
+   * bytes of a printer nobody has to hand can still be seen.
+   */
+  constructor(
+    throughputBytesPerSecond = 4000,
+    options: { dialect?: Dialect; profile?: DrivenProfile } = {},
+  ) {
     this.throughputBytesPerSecond = throughputBytesPerSecond
-    this.#dialect = options.dialect ?? x2
+    this.#profile = options.profile ?? DEFAULT_PROFILE
+    this.#dialect = options.dialect ?? this.#profile.dialect
   }
 
   get state(): PrinterState {
@@ -77,19 +85,20 @@ export class VirtualPrinterDriver implements PrinterDriver {
 
   async connect(): Promise<PrinterCapabilities> {
     this.#setState('connecting')
+    const profile = this.#profile
     this.#capabilities = {
-      model: 'P50 (virtual)',
+      model: profile === DEFAULT_PROFILE ? 'P50 (virtual)' : `${profile.label} (virtual)`,
       firmware: '0.0.0-virtual',
       serial: 'VIRTUAL',
       mac: '00:00:00:00:00:00',
-      headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
-      chunkSize: DEFAULT_CHUNK_SIZE,
+      headWidthDots: profile.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS,
+      chunkSize: profile.chunkSize ?? this.#dialect.link.chunkSize,
       probedAt: Date.now(),
-      // It pretends to be a P50 because it runs the P50 command sequence and the
-      // P50 encoder. Confirmed is the honest word: what it emits is checked
-      // against the same goldens as the real driver.
-      profileId: DEFAULT_PROFILE.id,
-      support: DEFAULT_PROFILE.support,
+      // It pretends to be the printer it stands in for, because it runs that
+      // printer's dialect. For the P50, confirmed is the honest word: what it emits
+      // is checked against the same goldens as the real driver.
+      profileId: profile.id,
+      support: profile.support,
       profileAssumed: false,
     }
     this.#setState('connected')
@@ -126,7 +135,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
       // stream, so its commands arrive glued to raster chunks. That is unreadable in
       // a log and means nothing to a printer that is not there, so this one keeps
       // each command on its own line.
-      const chunkSize = this.#capabilities?.chunkSize ?? DEFAULT_CHUNK_SIZE
+      const chunkSize = this.#capabilities?.chunkSize ?? this.#dialect.link.chunkSize
       let sent = 0
 
       this.#emitter.emit('progress', { phase: 'prepare', sent: 0, total, copy: 0, copies })

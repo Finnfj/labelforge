@@ -34,9 +34,7 @@ sits below the printer's read-ahead; the panel and the print plan judge fit by t
 one number. Print settings speak of stock, speed and density in the app's own terms;
 the dialect turns them into bytes.
 
-Not yet behind it, and still x2's: the connect handshake, status and reply
-decoding and the credit frame format (in the BLE driver); the credit pacing delays
-(in `CreditWindow`); the default chunk size (in the virtual printer and the printer
-profiles); the GATT service and characteristics (in the Bluetooth transport); and
-the Diagnostics panel, which builds x2 commands and probe jobs itself. They move
-when a second production dialect needs them to.
+What was left x2's here has since moved behind the dialect, once a second dialect
+needed it to: the connect handshake, status and reply decoding, the credit frame
+format and pacing, the default chunk size, and the GATT service and characteristics
+(ADR 0004). The Diagnostics panel still builds x2 commands and probe jobs itself.

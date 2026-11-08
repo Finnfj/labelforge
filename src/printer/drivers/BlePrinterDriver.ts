@@ -1,19 +1,22 @@
 import { concatBytes } from '../../lib/bytes'
 import { Emitter } from '../../lib/emitter'
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../../model/units'
-import * as cmd from '../dialects/x2/commands'
-import { DEFAULT_CHUNK_SIZE } from '../dialects/x2/constants'
-import { DEFAULT_PROFILE, matchProfile, type PrinterProfile } from '../profiles'
-import { CreditWindow } from './CreditWindow'
 import {
-  decodeBattery,
-  decodeLabelHeight,
-  decodeStatusFlags,
-  decodeText,
-  faultFromFlags,
-} from '../dialects/x2/responses'
-import { planStreamBytes, type Dialect, type NamedCommand, type PlannedJob } from '../dialect'
-import { x2 } from '../dialects/x2'
+  ALL_NAME_PREFIXES,
+  ALL_SERVICES,
+  DEFAULT_PROFILE,
+  matchProfile,
+  type PrinterProfile,
+} from '../profiles'
+import { CreditWindow } from './CreditWindow'
+import type {
+  Dialect,
+  GapCalibration,
+  GapCalibrationOptions,
+  NamedCommand,
+  PlannedJob,
+  Reply,
+} from '../dialect'
 import type {
   PrintJob,
   PrinterCapabilities,
@@ -27,21 +30,29 @@ import type { ConnectOptions, Transport } from '../transport/Transport'
 /** How long to wait for a reply before giving up on a query. */
 const QUERY_TIMEOUT_MS = 1200
 
-/**
- * ASCII "OK" — what the printer sends on the status channel when a job finishes.
- * Observed roughly 300 ms after `alignPaperEnd` in a capture of the vendor app.
- */
-const DONE_REPLY = 'OK'
-
 /** Long enough for the gap seek to finish; a quiet printer is not an error. */
 const DONE_TIMEOUT_MS = 5000
 
 /**
- * Raised when the printer is a model this app knows it cannot drive.
+ * Raised when the printer reports that it gave up on a job, with its reason.
+ *
+ * Distinct from silence, which is reported and carried past: the label may well be
+ * fine. A printer that says it failed has said the label is not.
+ */
+export class PrintFailedError extends Error {
+  constructor(reason: string) {
+    super(reason)
+    this.name = 'PrintFailedError'
+  }
+}
+
+/**
+ * Raised when the printer is a model this app refuses to drive: one that speaks a
+ * dialect it does not implement, or an experimental one while experimental
+ * support is off.
  *
  * Its own type so the UI can present it as a fact about the hardware rather
- * than as a failure — nothing went wrong, the printer simply speaks a different
- * protocol.
+ * than as a failure — nothing went wrong, and the reason says why it was refused.
  */
 export class IncompatiblePrinterError extends Error {
   readonly modelLabel: string
@@ -65,27 +76,35 @@ export interface BlePrinterOptions {
   profile?: PrinterProfile
   /** Skip detection and keep `profile` whatever the printer calls itself. */
   lockProfile?: boolean
+  /**
+   * Drive printers whose profile is `experimental`. Off, they are refused like an
+   * incompatible model, so nobody sends untested bytes by accident (ADR 0003).
+   */
+  allowExperimental?: boolean
   chunkSize?: number
   headWidthDots?: number
   /** Reply timeout. Shortened in tests so a silent printer is cheap to assert. */
   queryTimeoutMs?: number
   /**
-   * The shortest wait for an end-of-job "OK". A job's own wait is longer when
+   * The shortest wait for an end-of-job reply. A job's own wait is longer when
    * the print plan says so. Shortened in tests so a silent printer is cheap.
    */
   doneTimeoutMs?: number
-  /** What the bytes are. x2 until the printer registry chooses. */
+  /**
+   * What the bytes are, whatever the printer turns out to be. Left out, the
+   * dialect is the profile's: the assumed one's until the printer is recognised.
+   */
   dialect?: Dialect
 }
 
 /**
- * Drives a P50 over a {@link Transport}.
+ * Drives a Bluetooth label printer over a {@link Transport}.
  *
- * What a print puts on the wire comes from the dialect's print plan, the same
- * one the virtual printer records. This class adds how it gets there: chunking,
- * flow control, waiting for the printer, and disconnection. The connect handshake,
- * status queries and replies are still x2's, and live here until a second
- * dialect needs them to move.
+ * Every byte it sends and every reply it reads is the dialect's: the print plan,
+ * the same one the virtual printer records; the link's service, chunks and
+ * pacing; and the conversation's handshake, queries and replies (ADR 0004). This
+ * class adds the mechanics: writing, waiting for credits or for the printer,
+ * aborting, progress, and disconnection.
  */
 export class BlePrinterDriver implements PrinterDriver {
   readonly kind = 'ble' as const
@@ -94,9 +113,15 @@ export class BlePrinterDriver implements PrinterDriver {
   #state: PrinterState = 'disconnected'
   #capabilities: PrinterCapabilities | null = null
   #emitter = new Emitter<PrinterEvents>()
-  #credits = new CreditWindow()
+  /** Null for a link paced by acknowledged writes, which has no credits to wait for. */
+  #credits: CreditWindow | null = null
   #profile: PrinterProfile
   #lockProfile: boolean
+  /** The chunk size asked for, which wins over the profile's and the dialect's. */
+  #chunkSizeOption: number | undefined
+  #allowExperimental: boolean
+  /** Whether the dialect was handed in, rather than taken from the profile. */
+  #dialectFixed: boolean
   #profileAssumed = false
   #chunkSize: number
   #headWidthDots: number
@@ -106,30 +131,33 @@ export class BlePrinterDriver implements PrinterDriver {
   #unsubscribe: Array<() => void> = []
   /** Replies arrive as unsolicited notifications, so queries take the next one. */
   #pendingReply: ((bytes: Uint8Array) => void) | null = null
-  /** Resolved by an end-of-job "OK" on the status channel. */
-  #doneWaiter: (() => void) | null = null
+  /** Resolved by an end-of-job reply on the status channel. */
+  #doneWaiter: ((reply: JobReply) => void) | null = null
   /**
-   * An acknowledgement that arrived before anything was waiting for it.
+   * An end-of-job reply that arrived before anything was waiting for it.
    *
-   * `4F 4B` answers the stream, and there is no rule saying it cannot land in the
-   * gap between the last write and the driver settling down to wait — the inter-chunk
+   * It answers the stream, and there is no rule saying it cannot land in the gap
+   * between the last write and the driver settling down to wait — the inter-chunk
    * delay alone is a window it could fall into. Latching it means the wait returns
    * at once instead of running to a timeout that is now tens of seconds long, and
    * concluding from that the printer never finished.
    */
-  #donePending = false
+  #donePending: JobReply | null = null
   #lastStatusBytes: Uint8Array | null = null
 
   constructor(transport: Transport, options: BlePrinterOptions = {}) {
     this.#transport = transport
     this.#profile = options.profile ?? DEFAULT_PROFILE
     this.#lockProfile = options.lockProfile ?? false
-    this.#chunkSize = options.chunkSize ?? this.#profile.chunkSize ?? DEFAULT_CHUNK_SIZE
+    this.#allowExperimental = options.allowExperimental ?? false
+    this.#dialectFixed = options.dialect !== undefined
+    this.#dialect = options.dialect ?? profileDialect(this.#profile)
+    this.#chunkSizeOption = options.chunkSize
+    this.#chunkSize = this.#chunkSizeFor(this.#profile)
     this.#headWidthDots =
       options.headWidthDots ?? this.#profile.headWidthDots ?? DEFAULT_HEAD_WIDTH_DOTS
     this.#queryTimeoutMs = options.queryTimeoutMs ?? QUERY_TIMEOUT_MS
     this.#doneTimeoutMs = options.doneTimeoutMs ?? DONE_TIMEOUT_MS
-    this.#dialect = options.dialect ?? x2
 
     transport.on('wire', (event) =>
       this.#emitter.emit('wire', {
@@ -141,7 +169,7 @@ export class BlePrinterDriver implements PrinterDriver {
     )
     transport.on('disconnected', ({ reason }) => {
       this.#capabilities = null
-      this.#credits.reset()
+      this.#credits?.reset()
       this.#setState('disconnected')
       this.#emitter.emit('error', { message: reason })
     })
@@ -171,24 +199,35 @@ export class BlePrinterDriver implements PrinterDriver {
   async connect(options?: ConnectOptions): Promise<PrinterCapabilities> {
     this.#setState('connecting')
     try {
-      await this.#transport.connect(options)
+      await this.#transport.connect({
+        ...options,
+        devices: { namePrefixes: ALL_NAME_PREFIXES, services: ALL_SERVICES },
+      })
 
-      // Identify the printer before writing a single byte. An L11-family model
-      // cannot parse anything this app sends, so the useful thing to do is say
-      // which model it is and stop — not to send it a job it will ignore.
+      // Identify the printer before writing a single byte, or even opening its
+      // service, which depends on the dialect it speaks. An L11-family model cannot
+      // parse anything this app sends, so the useful thing to do is say which model
+      // it is and stop — not to send it a job it will ignore.
       this.#adoptProfile()
 
-      this.#unsubscribe.push(
-        await this.#transport.subscribe('credits', (bytes) => this.#credits.onNotify(bytes)),
-      )
+      const { link } = this.#dialect
+      await this.#transport.open(link.gatt)
+      const credits = link.pacing.kind === 'credits' ? new CreditWindow(link.pacing) : null
+      this.#credits = credits
+      if (credits) {
+        this.#unsubscribe.push(
+          await this.#transport.subscribe('credits', (bytes) => credits.onNotify(bytes)),
+        )
+      }
       this.#unsubscribe.push(
         await this.#transport.subscribe('status', (bytes) => {
           this.#lastStatusBytes = bytes
-          if (decodeText(bytes) === DONE_REPLY) {
+          const reply = this.#dialect.conversation.readReply(bytes)
+          if (reply.kind !== 'other') {
             const done = this.#doneWaiter
             this.#doneWaiter = null
-            if (done) done()
-            else this.#donePending = true
+            if (done) done(reply)
+            else this.#donePending = reply
           }
           const pending = this.#pendingReply
           this.#pendingReply = null
@@ -196,10 +235,9 @@ export class BlePrinterDriver implements PrinterDriver {
         }),
       )
 
-      // The vendor SDK sends this immediately after connecting. Its effect is
-      // undocumented, so it is sent on the same assumption: match what the
-      // shipping app does.
-      await this.#transport.write(cmd.setBluetoothType())
+      for (const { bytes } of this.#dialect.conversation.handshake) {
+        await this.#transport.write(bytes)
+      }
 
       this.#capabilities = await this.probe()
       this.#setState('connected')
@@ -211,11 +249,12 @@ export class BlePrinterDriver implements PrinterDriver {
   }
 
   /**
-   * Decide which printer we are talking to, from its advertised name.
+   * Decide which printer we are talking to, from its advertised name, and so
+   * which dialect it speaks.
    *
-   * Runs after the GATT connection is open but before any write. Detection is
-   * possible this late only because every documented model in the family shares
-   * the same service and characteristics — see the note in `profiles.ts`.
+   * Runs once the GATT server is connected but before its service is opened:
+   * which service to open is the dialect's to say. The chooser asked for every
+   * known service up front, which is what makes detecting this late possible.
    */
   #adoptProfile(): void {
     if (!this.#lockProfile) {
@@ -223,7 +262,10 @@ export class BlePrinterDriver implements PrinterDriver {
       this.#profileAssumed = matched === null
       const profile = matched ?? DEFAULT_PROFILE
       this.#profile = profile
-      this.#chunkSize = profile.chunkSize ?? this.#chunkSize
+      if (!this.#dialectFixed && profile.support !== 'incompatible') {
+        this.#dialect = profile.dialect
+      }
+      this.#chunkSize = this.#chunkSizeFor(profile)
       this.#headWidthDots = profile.headWidthDots ?? this.#headWidthDots
     }
 
@@ -231,11 +273,26 @@ export class BlePrinterDriver implements PrinterDriver {
     // printer is *misidentified* can get past detection; it is not a way to
     // drive a printer we know ignores everything we send, because there is no
     // experiment there to run.
-    if (this.#profile.support === 'incompatible') {
-      // Disconnect first, so a refusal does not leave a live GATT link behind.
-      void this.#transport.disconnect().catch(() => {})
-      throw new IncompatiblePrinterError(this.#profile.label, this.#profile.note ?? '')
+    const { support, label, note } = this.#profile
+    if (support === 'incompatible') this.#refuse(label, note ?? '')
+    if (support === 'experimental' && !this.#allowExperimental) {
+      this.#refuse(
+        label,
+        'Support for it is experimental: it has not been printed with on our own hardware. ' +
+          'Turn on "Drive experimental printers" under Diagnostics to try it.',
+      )
     }
+  }
+
+  /** The chunk size asked for, else the profile's, else the dialect's link's. */
+  #chunkSizeFor(profile: PrinterProfile): number {
+    return this.#chunkSizeOption ?? profile.chunkSize ?? this.#dialect.link.chunkSize
+  }
+
+  #refuse(label: string, reason: string): never {
+    // Disconnect first, so a refusal does not leave a live GATT link behind.
+    void this.#transport.disconnect().catch(() => {})
+    throw new IncompatiblePrinterError(label, reason)
   }
 
   /** The profile in force, for the UI to report. */
@@ -244,28 +301,19 @@ export class BlePrinterDriver implements PrinterDriver {
   }
 
   /**
-   * Read identity off the printer.
+   * Read identity off the printer, as its dialect asks for it.
    *
-   * Every field is optional: the reply formats are inferred rather than
-   * documented, so a printer that answers differently should still connect and
-   * print. Head width is not asked for at all — nothing reports it, and it has
-   * to be measured with the diagnostics ruler strip.
+   * Every field is optional: a printer that answers differently should still
+   * connect and print.
    */
   async probe(): Promise<PrinterCapabilities> {
-    const model = await this.#query(cmd.getPrinterModel(), decodeText)
-    const firmware = await this.#query(cmd.getPrinterVersion(), decodeText)
-    const serial = await this.#query(cmd.getPrinterSerial(), decodeText)
-    const mac = await this.#query(cmd.getPrinterMac(), decodeText)
-
-    // A real P50S answers firmware and serial but stays silent on model. The
-    // advertised BLE name carries it anyway. Observed forms use either separator
-    // — `P50S-F871-BLE` and `P50_2950_BLE` — so split on both; splitting on the
-    // underscore alone left the whole string as the "model".
-    const advertised = this.#transport.device?.name
-    const modelFromName = advertised ? advertised.split(/[-_]/)[0] : null
+    const { model, firmware, serial, mac } = await this.#dialect.conversation.identify(
+      (command) => this.#request(command),
+      this.#transport.device?.name ?? null,
+    )
 
     return {
-      model: model ?? modelFromName ?? 'Unknown',
+      model: model ?? 'Unknown',
       firmware: firmware ?? 'Unknown',
       serial: serial ?? 'Unknown',
       mac: mac ?? 'Unknown',
@@ -279,57 +327,36 @@ export class BlePrinterDriver implements PrinterDriver {
   }
 
   async getStatus(): Promise<PrinterStatus> {
-    const battery = await this.#query(cmd.getPrinterBattery(), decodeBattery)
-    // `10 FF 40`, from the vendor SDK's archived original. The tidied facade's
-    // `1F 20 00` does not exist in the vendor code and never answers.
-    const flags = await this.#query(cmd.getStatusFlags(), decodeStatusFlags)
-    const labelHeight = await this.#query(cmd.getLabelHeight(), decodeLabelHeight)
-
-    return {
-      online: this.#state !== 'disconnected',
-      batteryPercent: battery,
-      labelHeightDots: labelHeight,
-      fault: faultFromFlags(flags),
-    }
+    const status = await this.#dialect.conversation.status((command) => this.#request(command))
+    return { online: this.#state !== 'disconnected', ...status }
   }
 
-  /**
-   * Locate the label gap, then read back the measured label height.
-   *
-   * The sequence is the vendor SDK's own: issue the locate command several times,
-   * waiting for an acknowledgement each time, and only then ask for the height —
-   * its comment is explicit that asking earlier returns an inaccurate value.
-   */
-  async calibrateLabelGap(
-    options: { passes?: number; onPass?: (pass: number, reply: Uint8Array | null) => void } = {},
-  ): Promise<{ labelHeightDots: number | null; passes: Array<Uint8Array | null> }> {
+  /** Locate the label gap, then read back the measured label height, as the dialect does it. */
+  async calibrateLabelGap(options: GapCalibrationOptions = {}): Promise<GapCalibration> {
     if (this.#state === 'disconnected') throw new Error('Not connected to a printer.')
-    const passes: Array<Uint8Array | null> = []
-    const total = options.passes ?? 3
-
-    for (let pass = 1; pass <= total; pass++) {
-      const reply = await this.#request(cmd.locateLabel())
-      passes.push(reply)
-      options.onPass?.(pass, reply)
+    const { conversation } = this.#dialect
+    if (!conversation.calibrateLabelGap) {
+      throw new Error('This printer has no label gap to calibrate.')
     }
-
-    return {
-      labelHeightDots: await this.#query(cmd.getLabelHeight(), decodeLabelHeight),
-      passes,
-    }
+    return conversation.calibrateLabelGap((command) => this.#request(command), options)
   }
 
   async print(job: PrintJob, opts: { signal?: AbortSignal } = {}): Promise<void> {
     if (this.#state === 'disconnected') throw new Error('Not connected to a printer.')
     this.#setState('printing')
     // Anything latched before this print belongs to the last one.
-    this.#donePending = false
+    this.#donePending = null
 
     try {
-      // What goes on the wire is the dialect's to decide. This driver decides how:
-      // each job as one credited stream, waits where the plan asks for them.
+      // What goes on the wire is the dialect's to decide, and how its link chunks
+      // it. This driver writes the chunks, paced as the link says, and waits where
+      // the plan asks it to. Chunked up front, so progress counts what is written.
+      const { link } = this.#dialect
       const plan = this.#dialect.planPrint(job.bitmap, job.settings)
-      const total = planStreamBytes(plan)
+      const chunked = plan.copies.map((copy) =>
+        copy.jobs.map((plannedJob) => link.chunk(joinParts(plannedJob), this.#chunkSize)),
+      )
+      const total = chunked.flat(2).reduce((n, chunk) => n + chunk.length, 0)
       let sent = 0
 
       const progress = (phase: PrintProgressPhase, copy: number) =>
@@ -348,10 +375,10 @@ export class BlePrinterDriver implements PrinterDriver {
         opts.signal?.throwIfAborted()
         progress('handshake', copy)
 
-        for (const plannedJob of plannedCopy.jobs) {
+        for (const [jobIndex, plannedJob] of plannedCopy.jobs.entries()) {
           opts.signal?.throwIfAborted()
           await this.#sendJob(
-            joinParts(plannedJob),
+            chunked[index][jobIndex],
             plannedJob.epilogue,
             opts.signal,
             (written) => {
@@ -361,7 +388,7 @@ export class BlePrinterDriver implements PrinterDriver {
           )
           if (plannedJob.waitMs === null) continue
           progress('feed', copy)
-          if (await this.#waitForDone(opts.signal, plannedJob.waitMs)) continue
+          if (this.#takeReply(await this.#waitForDone(opts.signal, plannedJob.waitMs))) continue
           this.#warnSilent('stopped')
           break
         }
@@ -372,9 +399,8 @@ export class BlePrinterDriver implements PrinterDriver {
         // so the printer has stopped moving paper before anything else is sent.
         if (plannedCopy.finishWaitMs !== null) {
           progress('feed', copy)
-          if (!(await this.#waitForDone(opts.signal, plannedCopy.finishWaitMs))) {
-            this.#warnSilent('unfinished')
-          }
+          const reply = await this.#waitForDone(opts.signal, plannedCopy.finishWaitMs)
+          if (!this.#takeReply(reply)) this.#warnSilent('unfinished')
         }
       }
 
@@ -385,6 +411,19 @@ export class BlePrinterDriver implements PrinterDriver {
       this.#setState('connected')
       throw error
     }
+  }
+
+  /**
+   * Act on an end-of-job reply: false for silence, true once the job is done.
+   *
+   * A failure ends the print, since the printer has said the label is not fine.
+   * A warning that came with a finished job is passed on.
+   */
+  #takeReply(reply: JobReply | null): boolean {
+    if (!reply) return false
+    if (reply.kind === 'failed') throw new PrintFailedError(reply.reason)
+    if (reply.warning) this.#emitter.emit('log', { level: 'warn', message: reply.warning })
+    return true
   }
 
   /** Say what a printer's silence means, in words that hold for any dialect. */
@@ -407,34 +446,35 @@ export class BlePrinterDriver implements PrinterDriver {
   }
 
   /**
-   * Write one whole job: the stream in credited chunks, then the epilogue.
+   * Write one whole job: its chunks, paced as the link says, then the epilogue.
    *
    * Every job of a print goes through here, so there is exactly one place where
    * bytes reach the transport during a print and exactly one definition of what
-   * "under flow control" means.
+   * "under flow control" means. On a link paced by credits, no chunk goes without
+   * one (ADR 0002). On one paced by acknowledged writes, each write resolves only
+   * once the printer has acknowledged it, and that is the whole of the pacing.
    */
   async #sendJob(
-    stream: Uint8Array,
+    chunks: readonly Uint8Array[],
     epilogue: readonly NamedCommand[],
     signal?: AbortSignal,
     onWritten?: (bytes: number) => void,
   ): Promise<void> {
-    for (let offset = 0; offset < stream.length; offset += this.#chunkSize) {
+    const credits = this.#credits
+    for (const chunk of chunks) {
       signal?.throwIfAborted()
-      const chunk = stream.subarray(offset, Math.min(offset + this.#chunkSize, stream.length))
-
       // Wait for room before writing, not after: the buffer we would overrun is
       // on the far side of the link.
-      await this.#credits.acquire({ signal })
+      await credits?.acquire({ signal })
       await this.#transport.write(chunk)
       onWritten?.(chunk.length)
-      await delay(this.#credits.delayMs, signal)
+      if (credits) await delay(credits.delayMs, signal)
     }
 
     // Not part of the job stream — the capture shows it as its own transfer,
-    // after the rest has gone. Credited like everything else all the same.
+    // after the rest has gone. Paced like everything else all the same.
     for (const { bytes } of epilogue) {
-      await this.#credits.acquire({ signal })
+      await credits?.acquire({ signal })
       await this.#transport.write(bytes)
     }
   }
@@ -454,7 +494,7 @@ export class BlePrinterDriver implements PrinterDriver {
   async disconnect(): Promise<void> {
     for (const off of this.#unsubscribe) off()
     this.#unsubscribe = []
-    this.#credits.reset()
+    this.#credits?.reset()
     this.#capabilities = null
     await this.#transport.disconnect()
     this.#setState('disconnected')
@@ -466,29 +506,30 @@ export class BlePrinterDriver implements PrinterDriver {
   }
 
   /**
-   * Wait for the end-of-job acknowledgement.
+   * Wait for the end-of-job reply.
    *
-   * Resolves `false` on timeout rather than throwing: not every unit need send it,
+   * Resolves null on timeout rather than throwing: not every unit need send it,
    * and refusing to print a second copy because an undocumented notification did
    * not arrive would be worse than pressing on.
    */
-  async #waitForDone(signal?: AbortSignal, timeoutMs?: number): Promise<boolean> {
+  async #waitForDone(signal?: AbortSignal, timeoutMs?: number): Promise<JobReply | null> {
     signal?.throwIfAborted()
-    if (this.#donePending) {
-      this.#donePending = false
-      return true
+    const latched = this.#donePending
+    if (latched) {
+      this.#donePending = null
+      return latched
     }
-    return new Promise<boolean>((resolve) => {
+    return new Promise<JobReply | null>((resolve) => {
       const timer = setTimeout(
         () => {
           if (this.#doneWaiter === finish) this.#doneWaiter = null
-          resolve(false)
+          resolve(null)
         },
         Math.max(this.#doneTimeoutMs, timeoutMs ?? 0),
       )
-      const finish = () => {
+      const finish = (reply: JobReply) => {
         clearTimeout(timer)
-        resolve(true)
+        resolve(reply)
       }
       this.#doneWaiter = finish
     })
@@ -512,11 +553,6 @@ export class BlePrinterDriver implements PrinterDriver {
     return reply
   }
 
-  async #query<T>(command: Uint8Array, decode: (bytes: Uint8Array) => T | null): Promise<T | null> {
-    const bytes = await this.#request(command)
-    return bytes ? decode(bytes) : null
-  }
-
   #setState(state: PrinterState): void {
     this.#state = state
     this.#emitter.emit('state', state)
@@ -525,13 +561,24 @@ export class BlePrinterDriver implements PrinterDriver {
 
 type PrintProgressPhase = PrinterEvents['progress']['phase']
 
+/** A reply that ends a job, one way or the other. */
+type JobReply = Exclude<Reply, { kind: 'other' }>
+
+/**
+ * The dialect a profile's printers speak. An incompatible profile names none, and
+ * is refused before a byte is sent, so its stand-in is never spoken.
+ */
+function profileDialect(profile: PrinterProfile): Dialect {
+  return profile.support === 'incompatible' ? DEFAULT_PROFILE.dialect : profile.dialect
+}
+
 /**
  * A job's parts as the one byte stream the printer parses.
  *
- * The printer reads a byte stream off a UART; write boundaries mean nothing to
- * it, and everything written outside the credited chunk loop is written blind. So
- * the whole job is chunked as one stream, commands and raster together, and every
- * byte waits for a credit (ADR 0002). It is also what the vendor app does.
+ * The printer reads a byte stream; write boundaries mean nothing to it, and
+ * everything written outside the paced chunk loop is written blind. So the whole
+ * job is chunked as one stream, commands and raster together, and every byte is
+ * paced (ADR 0002). It is also what the vendor app does.
  */
 function joinParts(job: PlannedJob): Uint8Array {
   return concatBytes(job.parts.map((part) => part.bytes))

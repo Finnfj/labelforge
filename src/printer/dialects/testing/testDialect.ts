@@ -1,3 +1,4 @@
+import { sliceBytes } from '../../../lib/bytes'
 import { sliceRows, type PackedBitmap } from '../../../model/bitmap'
 import type { Dialect, PlannedJob } from '../../dialect'
 import type { MockTransport } from '../../transport/MockTransport'
@@ -11,26 +12,88 @@ import type { MockTransport } from '../../transport/MockTransport'
  * Never imported by app code.
  *
  * A job is `AA <length, big-endian u16> <rows, uncompressed> BB`. The last band of
- * each copy is followed by `EE` as a write of its own.
+ * each copy is followed by `EE` as a write of its own. The printer reports a job
+ * done with `DD`, and failed with `FA`. Credits come as `01 <count>`, every one an
+ * increment.
  */
 
 export const START = 0xaa
 export const STOP = 0xbb
 export const END = 0xee
+export const DONE = 0xdd
+export const FAILED = 0xfa
+/** Done, with a warning: the job printed, but the printer has something to say. */
+export const DONE_WITH_WARNING = 0xd1
+/** Leads every chunk when the link frames its chunks. */
+export const FRAME = 0xf0
+
+/** What the test conversation says a failure was. */
+export const FAILED_REASON = 'The test printer gave up.'
+/** What the test conversation passes on with a job done with a warning. */
+export const WARNING = 'The test printer is running low.'
 
 export interface TestDialectOptions {
   /** Rows per band, so a few rows already make a multi-band print. */
   bandRows?: number
   /** Every wait, between jobs and at the end of a copy, in milliseconds. */
   waitMs?: number
+  /**
+   * Pace by acknowledged writes rather than credits, and frame each chunk with a
+   * leading `F0`: a link unlike x2's in both respects.
+   */
+  acknowledged?: boolean
 }
 
 export function testDialect(options: TestDialectOptions = {}): Dialect {
   const bandRows = options.bandRows ?? 4
   const waitMs = options.waitMs ?? 10
+  const acknowledged = options.acknowledged ?? false
   return {
     // A range unlike x2's, so nothing can lean on 1 to 15.
     density: { min: 0, max: 4, default: 2 },
+    takesSpeed: false,
+    link: {
+      gatt: {
+        service: 'test-service',
+        write: 'test-write',
+        status: 'test-status',
+        credits: acknowledged ? undefined : 'test-credits',
+        writeMode: acknowledged ? 'with-response' : 'fastest-offered',
+      },
+      // Unlike x2's 90, so a driver that still assumed it would show.
+      chunkSize: 64,
+      chunk: (stream, chunkSize) =>
+        sliceBytes(stream, chunkSize).map((slice) =>
+          acknowledged ? Uint8Array.of(FRAME, ...slice) : slice,
+        ),
+      pacing: acknowledged
+        ? { kind: 'acknowledged' }
+        : {
+            kind: 'credits',
+            readGrant: (bytes) =>
+              bytes.length >= 2 && bytes[0] === 0x01 ? { add: bytes[1] } : null,
+            delayWithCreditsMs: 0,
+            delayWithoutCreditsMs: 1,
+          },
+    },
+    conversation: {
+      handshake: [],
+      identify: async (_ask, advertisedName) => ({
+        model: advertisedName,
+        firmware: null,
+        serial: null,
+        mac: null,
+      }),
+      status: async () => ({ batteryPercent: null, labelHeightDots: null, fault: 'unknown' }),
+      readReply: (bytes) =>
+        bytes[0] === DONE
+          ? { kind: 'done' }
+          : bytes[0] === DONE_WITH_WARNING
+            ? { kind: 'done', warning: WARNING }
+            : bytes[0] === FAILED
+              ? { kind: 'failed', reason: FAILED_REASON }
+              : { kind: 'other' },
+    },
     // Uncompressed, and banded by rows rather than bytes: every job fits, and the
     // picture never changes the size.
     assessJob: (bitmap) => ({ bytes: bitmap.data.length, fits: true, compressed: false }),
@@ -66,11 +129,14 @@ export function testDialect(options: TestDialectOptions = {}): Dialect {
 /**
  * A printer that speaks the test dialect, for the BLE driver's tests.
  *
- * It reads the stream the way a printer would, whatever the write boundaries, and
- * reports each job done once it has read the job's stop byte. "Done" is `4F 4B`,
- * because recognising that is still the BLE driver's own x2 knowledge.
+ * It reads the stream the way a printer would, whatever the write boundaries and
+ * any `F0` framing, and reports each job done with `DD` once it has read the job's
+ * stop byte; or with whatever `reply` says instead.
  */
-export function testPrinter(transport: MockTransport, options: { silent?: boolean } = {}) {
+export function testPrinter(
+  transport: MockTransport,
+  options: { silent?: boolean; reply?: number; framed?: boolean } = {},
+) {
   let state: 'idle' | 'length-hi' | 'length-lo' | 'rows' | 'stop' = 'idle'
   let remaining = 0
   const printer = { jobsRead: 0 }
@@ -95,12 +161,13 @@ export function testPrinter(transport: MockTransport, options: { silent?: boolea
         printer.jobsRead++
         state = 'idle'
         if (!options.silent) {
-          setTimeout(() => transport.emit('status', Uint8Array.of(0x4f, 0x4b)), 1)
+          const reply = options.reply ?? DONE
+          setTimeout(() => transport.emit('status', Uint8Array.of(reply)), 1)
         }
     }
   }
   transport.autoRespond = (bytes) => {
-    for (const byte of bytes) read(byte)
+    for (const byte of options.framed ? bytes.subarray(1) : bytes) read(byte)
     return undefined
   }
   return printer

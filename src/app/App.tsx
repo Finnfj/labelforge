@@ -48,8 +48,10 @@ const ZOOM_KEY_STEP = 1.25
 
 export default function App() {
   const editor = useLabelEditor()
-  const connection = usePrinter()
   const diagnostics = useDiagnosticFlags()
+  const connection = usePrinter({
+    allowExperimental: diagnostics.flags.experimentalPrinters,
+  })
   const [zoom, setZoom] = useState<EditZoom>('fit')
   /**
    * Whether the editing canvas is shown a quarter turn round.

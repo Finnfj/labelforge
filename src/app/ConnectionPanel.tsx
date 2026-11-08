@@ -102,8 +102,8 @@ export function ConnectionPanel({
             <span>Show all Bluetooth devices</span>
           </label>
           <p className="hint">
-            The chooser normally lists only devices whose name starts with P50. Tick the box above
-            if yours does not appear — the name prefixes come from reverse engineering, not from a
+            The chooser normally lists only devices whose name this app knows. Tick the box above if
+            yours does not appear — the name prefixes come from reverse engineering, not from a
             specification, so an unexpected one is quite possible.
           </p>
         </>
@@ -158,6 +158,19 @@ export function ConnectionPanel({
             say so
           </a>
           : that is the only way this stops being a guess.
+        </p>
+      )}
+
+      {connected && connection.capabilities?.support === 'experimental' && (
+        <p className="warn">
+          <strong>Support for this printer is experimental.</strong> It speaks a print protocol
+          worked out from captures and third-party notes, and nobody working on LabelForge has
+          printed with one yet. Expect a wasted label or two. If it prints, or if it does not,
+          please{' '}
+          <a href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">
+            say so
+          </a>
+          .
         </p>
       )}
 

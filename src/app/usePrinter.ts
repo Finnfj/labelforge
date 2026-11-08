@@ -146,7 +146,13 @@ export interface PrinterConnection {
   clearWireLog(): void
 }
 
-export function usePrinter(): PrinterConnection {
+export function usePrinter(
+  options: {
+    /** Drive printers whose dialect is experimental, rather than refuse them. */
+    allowExperimental?: boolean
+  } = {},
+): PrinterConnection {
+  const allowExperimental = options.allowExperimental ?? false
   // Bluetooth by default. The virtual printer used to hold this spot, which meant
   // the app opened already "connected" to something that cannot print — a fine
   // demo and a poor default. It is now revealed from Diagnostics; see
@@ -179,7 +185,7 @@ export function usePrinter(): PrinterConnection {
   // is deferred to `connect()` or the static `isSupported()`, so this is safe
   // even in a browser with no Web Bluetooth at all.
   const driverRef = useRef<PrinterDriver | null>(null)
-  if (!driverRef.current) driverRef.current = makeBleDriver(null)
+  if (!driverRef.current) driverRef.current = makeBleDriver(null, allowExperimental)
   const driver = driverRef.current
 
   // Subscribe to whichever driver is current. Re-runs when the kind changes,
@@ -211,7 +217,9 @@ export function usePrinter(): PrinterConnection {
       // nothing is listening to any more.
       void previous?.disconnect().catch(() => {})
       driverRef.current =
-        next === 'ble' ? makeBleDriver(profileOverride) : new VirtualPrinterDriver()
+        next === 'ble'
+          ? makeBleDriver(profileOverride, allowExperimental)
+          : makeVirtualDriver(profileOverride)
       setKindState(next)
       setCapabilities(null)
       setStatus(null)
@@ -219,7 +227,7 @@ export function usePrinter(): PrinterConnection {
       setWireLog([])
       setState('disconnected')
     },
-    [kind, profileOverride],
+    [kind, profileOverride, allowExperimental],
   )
 
   const connect = useCallback(async (options?: { acceptAllDevices?: boolean }) => {
@@ -268,21 +276,37 @@ export function usePrinter(): PrinterConnection {
   const clearWireLog = useCallback(() => setWireLog([]), [])
 
   // Changing the override has to rebuild the driver: the profile decides the
-  // chunk size and head width the driver is constructed with, and detection
-  // runs inside connect().
+  // dialect, chunk size and head width the driver is constructed with, and
+  // detection runs inside connect(). The virtual printer follows it too, so it
+  // shows the bytes of the printer the override names.
   const setProfileOverride = useCallback(
     (id: string | null) => {
       setProfileOverrideState(id)
-      if (kind !== 'ble') return
       void driverRef.current?.disconnect().catch(() => {})
-      driverRef.current = makeBleDriver(id)
+      driverRef.current =
+        kind === 'ble' ? makeBleDriver(id, allowExperimental) : makeVirtualDriver(id)
       setCapabilities(null)
       setStatus(null)
       setError(null)
       setState('disconnected')
     },
-    [kind],
+    [kind, allowExperimental],
   )
+
+  // Turning experimental support on or off rebuilds the BLE driver, the same way
+  // forcing a model does: whether to refuse is decided inside connect().
+  const builtWithExperimental = useRef(allowExperimental)
+  useEffect(() => {
+    if (builtWithExperimental.current === allowExperimental) return
+    builtWithExperimental.current = allowExperimental
+    if (kind !== 'ble') return
+    void driverRef.current?.disconnect().catch(() => {})
+    driverRef.current = makeBleDriver(profileOverride, allowExperimental)
+    setCapabilities(null)
+    setStatus(null)
+    setError(null)
+    setState('disconnected')
+  }, [allowExperimental, kind, profileOverride])
 
   return {
     kind,
@@ -307,11 +331,20 @@ export function usePrinter(): PrinterConnection {
 }
 
 /** A BLE driver, optionally pinned to a model rather than detecting one. */
-function makeBleDriver(overrideId: string | null): BlePrinterDriver {
+function makeBleDriver(overrideId: string | null, allowExperimental: boolean): BlePrinterDriver {
   const profile = overrideId ? findProfile(overrideId) : undefined
   return new BlePrinterDriver(
     new WebBluetoothTransport(),
-    profile ? { profile, lockProfile: true } : {},
+    profile ? { profile, lockProfile: true, allowExperimental } : { allowExperimental },
+  )
+}
+
+/** The virtual printer, standing in for the overridden model, or for a P50. */
+function makeVirtualDriver(overrideId: string | null): VirtualPrinterDriver {
+  const profile = overrideId ? findProfile(overrideId) : undefined
+  return new VirtualPrinterDriver(
+    undefined,
+    profile && profile.support !== 'incompatible' ? { profile } : {},
   )
 }
 

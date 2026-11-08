@@ -1,6 +1,8 @@
 import { concatBytes } from '../../lib/bytes'
 import { Emitter } from '../../lib/emitter'
+import type { GattLayout } from '../dialect'
 import type {
+  ConnectOptions,
   NotifyChannel,
   Transport,
   TransportDevice,
@@ -52,6 +54,12 @@ export class MockTransport implements Transport {
   /** Advertised name, which is what the driver identifies the model from. */
   deviceName: string
 
+  /** What the driver asked the chooser for, on the last connect. */
+  connectOptions: ConnectOptions | null = null
+
+  /** The service layout the driver opened, or null while none is open. */
+  layout: GattLayout | null = null
+
   constructor(options: { autoRespond?: MockTransport['autoRespond']; deviceName?: string } = {}) {
     this.autoRespond = options.autoRespond
     this.deviceName = options.deviceName ?? 'P50_TEST_BLE'
@@ -62,7 +70,7 @@ export class MockTransport implements Transport {
   }
 
   get device(): TransportDevice | null {
-    return this.#state === 'ready' ? { id: 'mock', name: this.deviceName } : null
+    return this.#state === 'disconnected' ? null : { id: 'mock', name: this.deviceName }
   }
 
   on = <E extends keyof TransportEvents>(
@@ -70,12 +78,20 @@ export class MockTransport implements Transport {
     handler: (payload: TransportEvents[E]) => void,
   ): (() => void) => this.#emitter.on(event, handler)
 
-  async connect(): Promise<void> {
+  async connect(options: ConnectOptions = {}): Promise<void> {
+    this.connectOptions = options
+    this.#state = 'connecting'
+    this.#emitter.emit('state', 'connecting')
+  }
+
+  async open(layout: GattLayout): Promise<void> {
+    this.layout = layout
     this.#state = 'ready'
     this.#emitter.emit('state', 'ready')
   }
 
   async disconnect(): Promise<void> {
+    this.layout = null
     this.#state = 'disconnected'
     this.#emitter.emit('state', 'disconnected')
   }

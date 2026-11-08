@@ -1,3 +1,5 @@
+import type { GattLayout } from '../dialect'
+
 /**
  * The boundary between "how bytes reach the printer" and everything above it.
  *
@@ -26,6 +28,12 @@ export interface TransportDevice {
 
 export interface ConnectOptions {
   /**
+   * Advertised-name prefixes the chooser lists, and every service the app may
+   * open once it knows which printer it has. Filled in by the driver from the
+   * printer profiles; a transport knows no printer of its own.
+   */
+  devices?: DeviceFilter
+  /**
    * List every nearby device instead of filtering by name.
    *
    * The name filter is what makes the chooser usable, but it also hides a
@@ -34,6 +42,15 @@ export interface ConnectOptions {
    * This is the escape hatch.
    */
   acceptAllDevices?: boolean
+}
+
+export interface DeviceFilter {
+  namePrefixes: readonly string[]
+  /**
+   * Requested up front because the browser grants access only to services named
+   * before the chooser opens, and which one the printer speaks is known only after.
+   */
+  services: readonly string[]
 }
 
 export interface Transport {
@@ -47,6 +64,11 @@ export interface Transport {
    * has already awaited something will be rejected by the browser.
    */
   connect(options?: ConnectOptions): Promise<void>
+  /**
+   * Open the printer's service, once the driver knows which dialect it speaks:
+   * the write characteristic, and the notify channels the layout names.
+   */
+  open(layout: GattLayout): Promise<void>
   disconnect(): Promise<void>
 
   /** Write one chunk. Chunking and pacing are the driver's job, not the transport's. */
