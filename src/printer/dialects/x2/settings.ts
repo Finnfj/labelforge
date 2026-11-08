@@ -1,4 +1,5 @@
 import type { PrintSettings, PrintSpeed, Stock } from '../../types'
+import type { X2FramingSettings } from './commands'
 import {
   MAX_DENSITY,
   MIN_DENSITY,
@@ -29,11 +30,7 @@ const SPEED: Record<PrintSpeed, SpeedValue> = {
 }
 
 /** The print settings as the bytes x2's job framing takes. */
-export function x2FramingSettings(settings: PrintSettings): {
-  paperType: PaperTypeValue
-  density: number
-  speed?: SpeedValue
-} {
+export function x2FramingSettings(settings: PrintSettings): X2FramingSettings {
   return {
     paperType: PAPER_TYPE[settings.stock],
     density: settings.density ?? X2_DENSITY.default,

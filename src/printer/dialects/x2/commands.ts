@@ -203,6 +203,13 @@ export interface PrintJobFraming {
   epilogue: FramedCommand[]
 }
 
+/** The print settings as the bytes x2's job framing takes; see `x2FramingSettings()`. */
+export interface X2FramingSettings {
+  paperType: PaperTypeValue
+  density: number
+  speed?: SpeedValue
+}
+
 /**
  * The vendor app's exact per-copy print sequence, from an HCI capture.
  *
@@ -221,22 +228,21 @@ export interface PrintJobFraming {
  * shows. One thing the vendor app notably never sends is any feed command at
  * all; {@link setSpeed} is discussed below.
  */
-export function printJobFraming(settings: {
-  paperType: PaperTypeValue
-  density: number
-  speed?: SpeedValue
-  seekGap?: boolean
-  /**
-   * Retract from the tear-off position before printing.
-   *
-   * On for a label, which is what the capture shows and what undoes the advance
-   * the job before it made. When one label is split across several jobs, the x2
-   * print plan decides per band: with the paper seam closed every band retracts,
-   * to undo the take-up its own job start costs; left open, only the first does,
-   * since only it has a tear-off advance behind it to undo.
-   */
-  alignStart?: boolean
-}): PrintJobFraming {
+export function printJobFraming(
+  settings: X2FramingSettings & {
+    seekGap?: boolean
+    /**
+     * Retract from the tear-off position before printing.
+     *
+     * On for a label, which is what the capture shows and what undoes the advance
+     * the job before it made. When one label is split across several jobs, the x2
+     * print plan decides per band: with the paper seam closed every band retracts,
+     * to undo the take-up its own job start costs; left open, only the first does,
+     * since only it has a tear-off advance behind it to undo.
+     */
+    alignStart?: boolean
+  },
+): PrintJobFraming {
   return {
     preamble: [
       { bytes: setPaperTypeSilent(settings.paperType), note: 'setPaperTypeSilent' },

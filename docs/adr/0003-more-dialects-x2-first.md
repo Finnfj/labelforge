@@ -27,10 +27,12 @@ adapters sit behind the interface: x2, and a small test dialect that keeps the
 drivers honest about knowing no x2 bytes.
 
 The app reaches the dialect through the driver (`PrinterDriver.dialect`), and asks it
-two things: the density levels it prints at, and whether a label's job fits the
-printer's read-ahead, which decides whether the print panel says the label goes out
-in bands and whether a simpler dither would avoid that. Print settings speak of
-stock, speed and density in the app's own terms; the dialect turns them into bytes.
+two things: the density levels it prints at, and whether a label's job fits its band
+budget, which decides whether the print panel says the label goes out in bands and
+whether a simpler dither would avoid that. The band budget is the dialect's own, and
+sits below the printer's read-ahead; the panel and the print plan judge fit by that
+one number. Print settings speak of stock, speed and density in the app's own terms;
+the dialect turns them into bytes.
 
 Not yet behind it, and still x2's: the connect handshake, status and reply
 decoding and the credit frame format (in the BLE driver); the credit pacing delays

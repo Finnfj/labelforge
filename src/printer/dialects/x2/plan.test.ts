@@ -7,7 +7,7 @@ import { printDurationMs, SEEK_SAFE_JOB_BYTES } from './constants'
 import { encodeImage } from './encodeImage'
 import { DEFAULT_PRINT_SETTINGS, type PrintSettings } from '../../types'
 import { planX2Print } from './plan'
-import { splitBudgetBytes } from './splitJob'
+import { bandBudgetBytes } from './splitJob'
 import { x2 } from '.'
 
 /*
@@ -155,11 +155,11 @@ describe('planX2Print', () => {
   })
 
   it('tells the printer each stock by its own byte', () => {
-    const paperType = (stock: PrintSettings['stock']) =>
+    const stockCommand = (stock: PrintSettings['stock']) =>
       commands(plan(checkerboard(64, 16), { stock })[0])[0]
-    expect(paperType('gap')).toBe('1f 80 02 20')
-    expect(paperType('continuous')).toBe('1f 80 02 10')
-    expect(paperType('black-mark')).toBe('1f 80 02 30')
+    expect(stockCommand('gap')).toBe('1f 80 02 20')
+    expect(stockCommand('continuous')).toBe('1f 80 02 10')
+    expect(stockCommand('black-mark')).toBe('1f 80 02 30')
   })
 
   it('sends a speed only when one is asked for, as the levels the SDK names', () => {
@@ -200,33 +200,36 @@ describe('planX2Print', () => {
 })
 
 describe('x2.assessJob', () => {
-  it('says a label fits when its raster is within the read-ahead', () => {
+  it('says a label fits when its raster is within the band budget', () => {
     // A checkerboard compresses to almost nothing, however large.
     const bitmap = checkerboard(384, 640)
-    const assessment = x2.assessJob(bitmap)
-    expect(assessment).toEqual({
+    expect(x2.assessJob(bitmap)).toEqual({
       bytes: encodeImage(bitmap).length,
-      readAheadBytes: splitBudgetBytes(),
       fits: true,
       compressed: true,
     })
   })
 
-  it('says a label does not fit when its raster is over the read-ahead', () => {
+  it('says a label over the read-ahead does not fit, and the budget it is over', () => {
     // Then its gap seek would be read too late, and the plan splits it into bands.
     const bitmap = noisyBitmap(384, 360)
     const assessment = x2.assessJob(bitmap)
+    expect(assessment).toEqual({
+      bytes: encodeImage(bitmap).length,
+      fits: false,
+      bandBudgetBytes: bandBudgetBytes(),
+      compressed: true,
+    })
     expect(assessment.bytes).toBeGreaterThan(SEEK_SAFE_JOB_BYTES)
-    expect(assessment.fits).toBe(false)
     expect(planOf(bitmap).copies[0].jobs.length).toBeGreaterThan(1)
   })
 
   it('says a label does not fit exactly when the plan splits it', () => {
-    // The planner keeps 15% headroom under the 16 KB limit. The panel's note once
-    // used the limit itself, so a label in between was split without a word.
+    // The band budget keeps 15% headroom under the 16 KB read-ahead. The panel's note
+    // once used the read-ahead itself, so a label in between was split without a word.
     const between = noisyBitmap(384, 300)
     const bytes = encodeImage(between).length
-    expect(bytes).toBeGreaterThan(splitBudgetBytes())
+    expect(bytes).toBeGreaterThan(bandBudgetBytes())
     expect(bytes).toBeLessThanOrEqual(SEEK_SAFE_JOB_BYTES)
     for (let rows = 240; rows <= 320; rows += 8) {
       const bitmap = noisyBitmap(384, rows)

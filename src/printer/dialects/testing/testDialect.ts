@@ -31,14 +31,9 @@ export function testDialect(options: TestDialectOptions = {}): Dialect {
   return {
     // A range unlike x2's, so nothing can lean on 1 to 15.
     density: { min: 0, max: 4, default: 2 },
-    // Uncompressed, and no read-ahead: every job fits, and the picture never
-    // changes the size.
-    assessJob: (bitmap) => ({
-      bytes: bitmap.data.length,
-      readAheadBytes: null,
-      fits: true,
-      compressed: false,
-    }),
+    // Uncompressed, and banded by rows rather than bytes: every job fits, and the
+    // picture never changes the size.
+    assessJob: (bitmap) => ({ bytes: bitmap.data.length, fits: true, compressed: false }),
     planPrint(bitmap, settings) {
       const bands: PackedBitmap[] = []
       for (let from = 0; from < bitmap.heightDots; from += bandRows) {

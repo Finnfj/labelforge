@@ -32,6 +32,11 @@ How much of a job the printer takes in before it starts printing. A job larger t
 this has its gap seek read too late to register the label.
 _Avoid_: buffer size, seek limit
 
+**Band budget**:
+The largest job a dialect sends whole. A label whose job is bigger goes out in bands.
+Set below the read-ahead, to leave headroom.
+_Avoid_: split budget, seek limit, read-ahead (the read-ahead is the printer's)
+
 ## Paper motion
 
 **Stock**:
