@@ -317,17 +317,19 @@ export function PrintPanel({
     <section className="panel">
       <h2>Print</h2>
       <div className="row">
-        <label className="field">
-          <span>Density</span>
-          <input
-            type="range"
-            min={dialect.density.min}
-            max={dialect.density.max}
-            value={density}
-            onChange={(e) => setSettings((s) => ({ ...s, density: Number(e.target.value) }))}
-          />
-          <em>{density}</em>
-        </label>
+        {dialect.density && (
+          <label className="field">
+            <span>Density</span>
+            <input
+              type="range"
+              min={dialect.density.min}
+              max={dialect.density.max}
+              value={density}
+              onChange={(e) => setSettings((s) => ({ ...s, density: Number(e.target.value) }))}
+            />
+            <em>{density}</em>
+          </label>
+        )}
         <label className="field">
           <span>Copies</span>
           <input
@@ -610,30 +612,33 @@ export function PrintPanel({
             <span className="advanced__hint">speed and test patterns</span>
           </summary>
           <div className="advanced__body">
-            <div className="row">
-              <label className="field">
-                <span>Speed</span>
-                <select
-                  value={settings.speed ?? 'off'}
-                  onChange={(e) =>
-                    setSettings((s) => ({
-                      ...s,
-                      speed: e.target.value === 'off' ? undefined : (e.target.value as PrintSpeed),
-                    }))
-                  }
-                >
-                  <option value="off">Don&rsquo;t send</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
-              </label>
-              <span className="hint">
-                &ldquo;Don&rsquo;t send&rdquo; is the default, and makes a print byte-for-byte the
-                captured vendor sequence. The vendor app issues no speed command at all, and this
-                one comes from a part of the SDK whose other commands turned out not to exist.
-              </span>
-            </div>
+            {dialect.takesSpeed && (
+              <div className="row">
+                <label className="field">
+                  <span>Speed</span>
+                  <select
+                    value={settings.speed ?? 'off'}
+                    onChange={(e) =>
+                      setSettings((s) => ({
+                        ...s,
+                        speed:
+                          e.target.value === 'off' ? undefined : (e.target.value as PrintSpeed),
+                      }))
+                    }
+                  >
+                    <option value="off">Don&rsquo;t send</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </label>
+                <span className="hint">
+                  &ldquo;Don&rsquo;t send&rdquo; is the default, and makes a print byte-for-byte the
+                  captured vendor sequence. The vendor app issues no speed command at all, and this
+                  one comes from a part of the SDK whose other commands turned out not to exist.
+                </span>
+              </div>
+            )}
 
             <div className="row" style={{ marginTop: '0.6rem' }}>
               <button

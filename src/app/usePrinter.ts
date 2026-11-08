@@ -211,7 +211,7 @@ export function usePrinter(): PrinterConnection {
       // nothing is listening to any more.
       void previous?.disconnect().catch(() => {})
       driverRef.current =
-        next === 'ble' ? makeBleDriver(profileOverride) : new VirtualPrinterDriver()
+        next === 'ble' ? makeBleDriver(profileOverride) : makeVirtualDriver(profileOverride)
       setKindState(next)
       setCapabilities(null)
       setStatus(null)
@@ -268,14 +268,14 @@ export function usePrinter(): PrinterConnection {
   const clearWireLog = useCallback(() => setWireLog([]), [])
 
   // Changing the override has to rebuild the driver: the profile decides the
-  // chunk size and head width the driver is constructed with, and detection
-  // runs inside connect().
+  // dialect, chunk size and head width the driver is constructed with, and
+  // detection runs inside connect(). The virtual printer follows it too, so it
+  // shows the bytes of the printer the override names.
   const setProfileOverride = useCallback(
     (id: string | null) => {
       setProfileOverrideState(id)
-      if (kind !== 'ble') return
       void driverRef.current?.disconnect().catch(() => {})
-      driverRef.current = makeBleDriver(id)
+      driverRef.current = kind === 'ble' ? makeBleDriver(id) : makeVirtualDriver(id)
       setCapabilities(null)
       setStatus(null)
       setError(null)
@@ -313,6 +313,12 @@ function makeBleDriver(overrideId: string | null): BlePrinterDriver {
     new WebBluetoothTransport(),
     profile ? { profile, lockProfile: true } : {},
   )
+}
+
+/** The virtual printer, standing in for the overridden model, or for a P50. */
+function makeVirtualDriver(overrideId: string | null): VirtualPrinterDriver {
+  const profile = overrideId ? findProfile(overrideId) : undefined
+  return new VirtualPrinterDriver(undefined, profile?.dialect ? { profile } : {})
 }
 
 function describe(error: unknown): string {

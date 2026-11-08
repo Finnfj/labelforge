@@ -1,7 +1,8 @@
 /**
- * Which MarkLife printers this app recognises, and what it can do with each.
+ * Which printers this app recognises, which dialect each speaks, and what it can
+ * do with each.
  *
- * The family does not speak one protocol. There are at least two dialects:
+ * The MarkLife family does not speak one protocol. There are at least two dialects:
  *
  * - **x2**, which is what this app implements — a zlib-compressed `1F 10` raster
  *   inside a `1F C0` job, confirmed on a P50S from an HCI capture of the vendor
@@ -21,13 +22,20 @@
  * the P50 is confirmed on hardware.
  */
 import { DEFAULT_HEAD_WIDTH_DOTS } from '../model/units'
+import type { Dialect } from './dialect'
+import { x2 } from './dialects/x2'
 import { DEFAULT_CHUNK_SIZE } from './dialects/x2/constants'
 
 export type ProfileSupport =
   /** Driven successfully against real hardware. */
   | 'confirmed'
-  /** Believed to speak the dialect we implement, but never run against one. */
+  /** Believed to speak a dialect confirmed on another model, but never run against one. */
   | 'unverified'
+  /**
+   * Speaks a dialect not yet confirmed on our own hardware. Driven only when the
+   * experimental opt-in under Diagnostics is on, and refused otherwise (ADR 0003).
+   */
+  | 'experimental'
   /** Known to speak a dialect this app does not implement. */
   | 'incompatible'
 
@@ -43,6 +51,11 @@ export interface PrinterProfile {
    */
   namePrefixes: readonly string[]
   support: ProfileSupport
+  /**
+   * What the printer speaks, and so which service is opened once it is
+   * recognised. Omitted only for an incompatible model, which is never driven.
+   */
+  dialect?: Dialect
   /** Omitted where it would be meaningless — an incompatible model is never driven. */
   chunkSize?: number
   headWidthDots?: number
@@ -50,16 +63,6 @@ export interface PrinterProfile {
   note?: string
 }
 
-/*
- * Deliberately absent: the GATT service and characteristic UUIDs.
- *
- * Every MarkLife model anyone has documented — ours, and all three profiles in
- * tomLadder/thermoprint — uses service ff00 with ff01 (status), ff02 (write) and
- * ff03 (credits). A field identical in every entry and read by nothing is
- * machinery for a case that does not exist; it belongs here if a model ever
- * differs. That they are shared is also what lets the model be detected *after*
- * connecting, which is what keeps the detection in BlePrinterDriver simple.
- */
 export const PROFILES: readonly PrinterProfile[] = [
   {
     id: 'p50',
@@ -68,6 +71,7 @@ export const PROFILES: readonly PrinterProfile[] = [
     // inferred, so an unexpected P50 variant is likelier than a foreign device.
     namePrefixes: ['P50', 'Marklife', 'Printer'],
     support: 'confirmed',
+    dialect: x2,
     chunkSize: DEFAULT_CHUNK_SIZE,
     headWidthDots: DEFAULT_HEAD_WIDTH_DOTS,
   },
@@ -76,6 +80,7 @@ export const PROFILES: readonly PrinterProfile[] = [
     label: 'MarkLife M60 / X2',
     namePrefixes: ['M60', 'X2'],
     support: 'unverified',
+    dialect: x2,
     // Both numbers are the P50's, because nothing reports either and nobody has
     // measured an M60. The head width in particular is a guess: it is the one
     // thing the diagnostics ruler strip exists to settle, and it has not been.
@@ -120,6 +125,17 @@ export const DEFAULT_PROFILE: PrinterProfile = PROFILES[0]
 
 /** Every prefix worth putting in the device chooser, including refusable ones. */
 export const ALL_NAME_PREFIXES: readonly string[] = PROFILES.flatMap((p) => p.namePrefixes)
+
+/**
+ * Every service a recognised printer may be opened on.
+ *
+ * The browser grants access only to services named before its chooser opens, and
+ * which one the printer speaks is known only once its advertised name is read, so
+ * the chooser asks for all of them.
+ */
+export const ALL_SERVICES: readonly string[] = [
+  ...new Set(PROFILES.flatMap((p) => (p.dialect ? [p.dialect.link.gatt.service] : []))),
+]
 
 /**
  * Identify a printer from its advertised name.

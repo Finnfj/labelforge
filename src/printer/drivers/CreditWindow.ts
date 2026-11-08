@@ -1,13 +1,10 @@
-import { DELAY_WITHOUT_CREDITS_MS, DELAY_WITH_CREDITS_MS } from '../dialects/x2/constants'
+import type { CreditPacing } from '../dialect'
 
 /**
- * Credit-based flow control over the `ff03` characteristic.
+ * Flow control by credits: no chunk goes without one in hand (ADR 0002).
  *
- * The printer's BLE module bridges to an internal UART with a small buffer and
- * no back-pressure of its own, so writes sent faster than it drains are dropped
- * silently — the label prints with bands missing rather than failing outright.
- * The firmware instead grants credits: each notification says how many more
- * chunks it is ready to take.
+ * What a grant looks like, and how long to pause between chunks, is the
+ * dialect's (`CreditPacing`); this class does the waiting.
  *
  * Two defences against hanging, because the exact semantics are inferred from
  * the vendor SDK rather than documented:
@@ -22,6 +19,11 @@ export class CreditWindow {
   #credits = 0
   #everSeen = false
   #waiters: Array<() => void> = []
+  #pacing: CreditPacing
+
+  constructor(pacing: CreditPacing) {
+    this.#pacing = pacing
+  }
 
   /** True once the printer has actually granted credits at least once. */
   get hasFlowControl(): boolean {
@@ -34,30 +36,16 @@ export class CreditWindow {
 
   /** Inter-chunk delay appropriate to whether flow control is active. */
   get delayMs(): number {
-    return this.#everSeen ? DELAY_WITH_CREDITS_MS : DELAY_WITHOUT_CREDITS_MS
+    return this.#everSeen ? this.#pacing.delayWithCreditsMs : this.#pacing.delayWithoutCreditsMs
   }
 
-  /**
-   * Handle a `ff03` notification.
-   *
-   * The channel is not credits-only. A real P50S was observed sending
-   * `02 dc 00` here amongst the `01 01` grants, so the first byte is a frame
-   * type and only `0x01` frames carry credits. The vendor SDK ignores that byte
-   * and would have read `0xdc` as a grant of 220, disabling flow control for
-   * the rest of the session — which is exactly the sort of thing that prints
-   * fine on a short label and drops bands on a long one.
-   *
-   * Within a credit frame, a value of exactly 4 sets the window rather than
-   * incrementing it. That asymmetry comes from the vendor SDK, and the observed
-   * opening frame of `01 04` is consistent with it.
-   */
+  /** Handle a notification on the credits channel. */
   onNotify(bytes: Uint8Array): void {
-    if (bytes.length < 2) return
-    if (bytes[0] !== 0x01) return
+    const grant = this.#pacing.readGrant(bytes)
+    if (!grant) return
     this.#everSeen = true
-    const value = bytes[1]
-    if (value === 0x04) this.#credits = 4
-    else this.#credits += value
+    if ('set' in grant) this.#credits = grant.set
+    else this.#credits += grant.add
     this.#release()
   }
 

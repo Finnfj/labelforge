@@ -197,8 +197,10 @@ sequenceDiagram
 
     rect rgb(240, 244, 250)
     Note over A,P: Connect — BlePrinterDriver.connect()
-    A->>P: requestDevice, filtered on the name prefix "P50"
-    A->>P: GATT connect, discover service ff00
+    A->>P: requestDevice, filtered on every known name prefix, asking for every known service
+    A->>P: GATT connect
+    Note right of A: The advertised name picks the profile,<br/>and so the dialect: x2, service ff00.
+    A->>P: discover service ff00
     A->>P: subscribe ff01 (status) and ff03 (credits)
     Note right of A: Both, before any print.<br/>Subscribing to one stalls the job.
     P-->>A: ff03: 01 04 — opening credit window, size 4

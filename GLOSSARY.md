@@ -1,7 +1,7 @@
 # LabelForge printing
 
-The language of getting a label design onto paper on a MarkLife thermal printer:
-what goes over the wire, and what the paper does.
+The language of getting a label design onto paper on a Bluetooth thermal label
+printer: what goes over the wire, and what the paper does.
 
 ## Sending a label
 
@@ -11,11 +11,13 @@ its stop command.
 _Avoid_: print, transfer
 
 **Chunk**:
-One Bluetooth write, a slice of a job's byte stream.
+One Bluetooth write carrying part of a job: a slice of its byte stream, or framing
+the dialect's link requires around it.
 _Avoid_: packet, band
 
 **Credit**:
-The printer's permission to send one more chunk.
+The printer's permission to send one more chunk. A link paced by acknowledged writes
+has none.
 _Avoid_: token, ack
 
 **Band**:
@@ -77,7 +79,8 @@ _Avoid_: gap, join (a gap is the stock's own space between labels)
 ## Printers
 
 **Dialect**:
-A command family shared by a group of printer models, such as x2 or L11.
+A command family shared by a group of printer models, such as MarkLife's x2 and L11,
+or DYMO's LetraTag.
 _Avoid_: protocol version, generation
 
 **Evidence tier**:

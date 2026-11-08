@@ -2,8 +2,8 @@
 //
 //   app/     -> may import anything, except a dialect's own code: only the
 //               Diagnostics panel, an x2 investigation tool, reaches into
-//               printer/dialects/x2/. Everything else asks the driver's dialect
-//               (ADR 0003).
+//               printer/dialects/x2/, and nothing in app/ reaches into any other
+//               dialect. Everything else asks the driver's dialect (ADR 0003).
 //   editor/  -> may not import printer/
 //   render/  -> may not import printer/ or react
 //   printer/ -> may not import fabric, react, or editor/
@@ -59,8 +59,14 @@ for (const file of walk(SRC)) {
         violations.push(`${rel}: imports banned package "${spec}"`)
       }
     }
-    if (layer === 'app' && spec.includes('printer/dialects/x2') && !X2_IN_APP.has(rel)) {
-      violations.push(`${rel}: only the Diagnostics panel may import "${spec}"; ask the dialect`)
+    if (layer === 'app' && spec.includes('printer/dialects/')) {
+      const x2Allowed = spec.includes('printer/dialects/x2') && X2_IN_APP.has(rel)
+      if (!x2Allowed) {
+        violations.push(
+          `${rel}: app code may not import "${spec}"; ask the driver's dialect` +
+            (spec.includes('printer/dialects/x2') ? ' (only the Diagnostics panel may)' : ''),
+        )
+      }
     }
     for (const forbidden of RULES[layer] ?? []) {
       // "react" must match the package, not e.g. "react-dom" inside app/
