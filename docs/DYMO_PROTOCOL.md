@@ -104,7 +104,9 @@ FF F0  MAGIC[2]  LENGTH[4, LE]  CHECKSUM[1]
 **Confirmed against all four of our captured jobs independently of their repo**: for
 header bytes `FF F0 12 34` + `LENGTH`, `sum(first 8 bytes) & 0xFF` reproduces the
 captured 9th byte exactly in every case (checksums `0x3d`, `0x59`, `0x44`, `0x3f` for
-jobs of 1300, 2350, 3096 and 4114 bytes respectively) — this is what our earlier notes
+directive streams of 1283, 2331, 3075 and 4091 bytes — the `LENGTH` each header
+carried — in jobs of 1300, 2350, 3096 and 4114 bytes on the wire, framing and probe
+included) — this is what our earlier notes
 called "byte 11, varies, does not track job size," now resolved.
 
 ## Job framing (directive stream)
@@ -175,12 +177,14 @@ not a separate directive.
 
 ## Raster encoding
 
-`IMAGE_DATA` is `4 × WIDTH` bytes, one 4-byte (32-bit) group per column, **big-endian
-within each group**. Per ysfchn/dymo-bluetooth: bit 0 of the first byte (i.e. the
-highest bit of the last of the 4 bytes, since 4-byte groups are big-endian but pixel 0
-is the _least_-significant bit of the _last_ byte) is the top-left pixel, and the
-printable height is 30 of the 32 addressable rows — "the actual printable area is 30
-pixels, so the first row will be missed on the label."
+`IMAGE_DATA` is `4 × WIDTH` bytes, one 4-byte (32-bit) group per column. Per
+ysfchn/dymo-bluetooth, the printable height is 30 of the 32 addressable rows — "the
+actual printable area is 30 pixels, so the first row will be missed on the label."
+Their write-up of the bit order within a group contradicts itself, so the layout
+LabelForge sends is the one their code prints with: pixel _y_ of a column is bit
+_y_ + 1 counted from the most significant bit of the group's **last** byte, then on
+through the bytes before it — pixel 0 is `0x40` of byte 3, pixel 29 is `0x02` of
+byte 0. See "Open questions".
 
 **This also resolves our earlier "every 4-byte group is duplicated" observation.**
 Every column in every one of our captured jobs does appear twice in a row — but that
@@ -188,7 +192,7 @@ is not a wire-level framing duplication. ysfchn/dymo-bluetooth's own README: _"I
 needs to be stretched by at least 2 times like how its mobile app does, otherwise
 printer will render the labels too narrow."_ The stock app bakes a 2× horizontal
 stretch directly into the pixel data it sends — `WIDTH` already counts the stretched
-columns — rather than the printer or protocol doing any doubling itself. A driver
+columns — rather than the printer or protocol doing any doubling itself. An encoder
 built from scratch needs to replicate the stretch in the image encoder, the same way
 their `Canvas.stretch(2)` does, not as a framing detail.
 
@@ -210,7 +214,7 @@ The first LabelForge print on hardware came out **mirrored** and **far too small
 
 ## Result notifications
 
-The printer notifies on the write-response characteristic with 3 bytes:
+The printer notifies on the notify characteristic (`be3dd652-…`) with 3 bytes:
 `1b 52 <status>` (`ESC R` + a status code).
 
 **Our captures show three per connection, and only one per job**: one when
@@ -219,13 +223,14 @@ job's last write, once it has printed. An earlier version of these notes read th
 "two per job" and, following ysfchn/dymo-bluetooth's `reply_get`, discarded the first
 after the job — which was the only one, so every LabelForge print timed out waiting
 for a second. ysfchn/dymo-bluetooth (which sends no probe) does see two after a job,
-the first a provisional "printing"; LabelForge reads status `1` as that and keeps
-waiting, and takes anything else as the result.
+the first a provisional "printing". Which code that one carries their code does not
+say; `1` is the likeliest reading, so LabelForge treats status `1` as no result yet,
+keeps waiting, and takes anything else as the result.
 
 | Status | Printed? | Meaning                                                                                                 |
 | :----: | :------: | ------------------------------------------------------------------------------------------------------- |
 |  `0`   |  maybe   | completed (their note: can report success even with an open lid or missing cassette)                    |
-|  `1`   |   yes    | completed, or still printing: seen before the real result by ysfchn/dymo-bluetooth, so not a result     |
+|  `1`   |    —     | not a result: likely the provisional "printing" ysfchn/dymo-bluetooth sees first (our reading)          |
 |  `2`   |    no    | failed, unknown reason                                                                                  |
 |  `3`   |   yes    | completed, battery low                                                                                  |
 |  `4`   |    no    | cancelled                                                                                               |

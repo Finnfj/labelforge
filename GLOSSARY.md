@@ -39,6 +39,17 @@ The ordered jobs a dialect produces to put one label on paper, every band of eve
 copy.
 _Avoid_: job list, schedule
 
+**Probe**:
+A command sent outside any job for the printer to answer, such as the LetraTag's
+readiness check before each label. Not a job: it carries no start or stop command.
+The x2 probe job in Diagnostics, a job built to try out an unknown command, is not one.
+_Avoid_: ping, handshake
+
+**Result**:
+What a printer reports once it has finished a job or given up on it: done, done with
+a warning, or failed with a reason.
+_Avoid_: ack, status (status is what the printer reports about itself)
+
 **Read-ahead**:
 How much of a job the printer takes in before it starts printing. A job larger than
 this has its gap seek read too late to register the label.

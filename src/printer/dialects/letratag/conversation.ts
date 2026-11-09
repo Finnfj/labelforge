@@ -4,8 +4,9 @@ import { ADVERTISED_NAME_PREFIX, RESULT_PREFIX, Result } from './constants'
 /**
  * What the LetraTag says, and what its replies mean.
  *
- * No query outside a print is known for this printer: the only status it is known to
- * give is the `ESC R` result after a job. So it is asked nothing on connect, and its
+ * No status query is known for this printer. It sends an `ESC R` result when its
+ * notifications are turned on, after the probe, and after a job, and none of them is
+ * known to report battery or paper. So it is asked nothing on connect, and its
  * status is reported unknown rather than guessed at.
  */
 export const letratagConversation: Conversation = {
@@ -36,10 +37,10 @@ export const letratagConversation: Conversation = {
 /**
  * What each `ESC R` code means for a print, per docs/DYMO_PROTOCOL.md's table.
  *
- * `1` is read as no result yet. ysfchn/dymo-bluetooth sees it first after a job, as a
- * provisional "printing" before the real result; ending the wait on it would lose a
- * failure reported after it. Our captures show one result per job, so if `1` is ever
- * final, the cost is a wait that runs out and a label reported unconfirmed.
+ * `1` is read as no result yet: likely the provisional "printing" ysfchn/dymo-bluetooth
+ * sees before the real result (see `Result.Printing`). Ending the wait on it would
+ * lose a failure reported after it; if it is ever final instead, the cost is a wait
+ * that runs out and a label reported unconfirmed.
  */
 const RESULTS: Record<number, Reply> = {
   // Can be reported with the lid open or no cassette in (ysfchn/dymo-bluetooth).
@@ -53,7 +54,7 @@ const RESULTS: Record<number, Reply> = {
       'another on the same batteries.',
   },
   [Result.Cancelled]: failed('The printer cancelled the label.'),
-  [Result.FailedAlt]: failed('The printer reported that the label failed.'),
+  [Result.AlsoFailed]: failed('The printer reported that the label failed.'),
   [Result.FailedLowBattery]: failed(
     'The printer reported a battery too low to print. Replace the batteries.',
   ),

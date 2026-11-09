@@ -24,7 +24,7 @@
  * See docs/PROTOCOL.md and docs/DYMO_PROTOCOL.md for the evidence behind each
  * entry, and note that only the P50 is confirmed on hardware.
  */
-import { DEFAULT_HEAD_WIDTH_DOTS, LETRATAG_HEAD_WIDTH_DOTS, dotsToMm } from '../model/units'
+import { DEFAULT_HEAD_WIDTH_DOTS, LETRATAG_HEAD_WIDTH_DOTS } from '../model/units'
 import type { Dialect } from './dialect'
 import { letratag } from './dialects/letratag'
 import { ADVERTISED_NAME_PREFIX as LETRATAG_PREFIX } from './dialects/letratag/constants'
@@ -142,8 +142,7 @@ export const PROFILES: readonly PrinterProfile[] = [
     headWidthDots: LETRATAG_HEAD_WIDTH_DOTS,
     note:
       'Its print protocol was worked out from captures of the DYMO app and a third ' +
-      `party's notes. It prints only the middle ${dotsToMm(LETRATAG_HEAD_WIDTH_DOTS)} mm of ` +
-      'its 12 mm tape.',
+      "party's notes. Its head prints only a narrow strip of its tape.",
   },
 ]
 

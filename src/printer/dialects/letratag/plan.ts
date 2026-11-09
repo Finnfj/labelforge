@@ -10,8 +10,9 @@ import { PRINT_MM_PER_SECOND, PROBE, PROBE_WAIT_MS, RESULT_BASE_WAIT_MS } from '
  *
  * - **Probe.** The vendor app writes `1B 41 00` on its own before every job and waits
  *   for its reply, so each copy does too. It streams nothing and goes as a write of
- *   its own. Silence there stops the copy: the printer said nothing when asked
- *   whether it is ready.
+ *   its own. Silence there is no reason to give up the label: the probe moves no
+ *   paper, and what it asks is unknown. So the label goes regardless, as it did in
+ *   the contributor's driver, which printed with it.
  * - **Label.** One job, however long: the LetraTag has no gap to seek, so nothing
  *   is ever banded. Its result is waited for once the label has had time to print.
  *
@@ -23,9 +24,11 @@ export function planLetraTagPrint(bitmap: PackedBitmap, settings: PrintSettings)
     parts: [],
     epilogue: [{ bytes: PROBE, note: 'probe' }],
     waitMs: PROBE_WAIT_MS,
+    goOnIfSilent: true,
   }
-  const label: PlannedJob = { parts: labelJobParts(bitmap), epilogue: [], waitMs: null }
-  // Twice the time the label takes at its rated speed, on top of the allowance.
+  const label = labelJob(bitmap)
+  // Twice the time the label takes at its rated speed, on top of the allowance: the
+  // contributor's margin, since the rated speed is a "max", not a measured one.
   const printMs = (dotsToMm(bitmap.heightDots) / PRINT_MM_PER_SECOND) * 1000
   const finishWaitMs = RESULT_BASE_WAIT_MS + 2 * printMs
   return {
@@ -38,6 +41,10 @@ export function planLetraTagPrint(bitmap: PackedBitmap, settings: PrintSettings)
 
 /** Every LetraTag label goes out as one job, uncompressed: only its length counts. */
 export function assessLetraTagJob(bitmap: PackedBitmap): JobAssessment {
-  const bytes = jobStreamBytes({ parts: labelJobParts(bitmap), epilogue: [], waitMs: null })
-  return { bytes, compressed: false, fits: true }
+  return { bytes: jobStreamBytes(labelJob(bitmap)), compressed: false, fits: true }
+}
+
+/** The label as one job, whose result the copy's finish wait takes. */
+function labelJob(bitmap: PackedBitmap): PlannedJob {
+  return { parts: labelJobParts(bitmap), epilogue: [], waitMs: null }
 }

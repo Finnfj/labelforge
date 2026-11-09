@@ -1,13 +1,13 @@
-import { sliceBytes } from '../../../lib/bytes'
+import { concatBytes, sliceBytes } from '../../../lib/bytes'
 import type { Link } from '../../dialect'
 import { CHAR_NOTIFY_STATUS, CHAR_WRITE, CHUNK_SIZE, MAGIC, SERVICE_UUID } from './constants'
 
 /**
  * The 9-byte header that goes before a job's stream as a write of its own: `FF F0`,
  * the magic, the stream's length as a little-endian u32, and a checksum, the low byte
- * of the sum of the first eight. Matches all four captured jobs.
+ * of the sum of the first eight. Matches all four jobs in our captures.
  */
-export function jobHeader(streamLength: number): Uint8Array {
+function jobHeader(streamLength: number): Uint8Array {
   const header = new Uint8Array(9)
   header.set([0xff, 0xf0, ...MAGIC])
   new DataView(header.buffer).setUint32(4, streamLength, true)
@@ -16,8 +16,9 @@ export function jobHeader(streamLength: number): Uint8Array {
 }
 
 /**
- * A chunk's index byte. The vendor app's numbering skips 27 outright (both sources);
- * the reason is unknown, so it is reproduced rather than second-guessed.
+ * A chunk's index byte. ysfchn/dymo-bluetooth's numbering skips 27 outright, as the
+ * vendor app's does by their account; our captures never run to 27 chunks to show
+ * it. The reason is unknown, so it is reproduced rather than second-guessed.
  */
 function chunkIndex(n: number): number {
   return n >= 27 ? n + 1 : n
@@ -42,16 +43,14 @@ export const letratagLink: Link = {
   },
   chunkSize: CHUNK_SIZE,
   chunk(stream, chunkSize) {
-    // A job that streams nothing — the probe, which is a write of its own — has
-    // nothing to frame.
+    // A probe streams nothing and goes as a write of its own: there is nothing to frame.
     if (stream.length === 0) return []
     const slices = sliceBytes(stream, chunkSize)
+    const last = slices.length - 1
     return [
       jobHeader(stream.length),
       ...slices.map((slice, n) =>
-        n === slices.length - 1
-          ? Uint8Array.of(chunkIndex(n), ...slice, ...MAGIC)
-          : Uint8Array.of(chunkIndex(n), ...slice),
+        concatBytes([Uint8Array.of(chunkIndex(n)), slice, n === last ? MAGIC : new Uint8Array()]),
       ),
     ]
   },

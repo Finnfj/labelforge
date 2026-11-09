@@ -81,6 +81,18 @@ export const DEFAULT_GEOMETRY: HeadGeometry = {
  */
 const GEOMETRY_VERSION = 3
 
+/** The profile of the last printer that connected, whose geometry is in force between connections. */
+const LAST_PRINTER_KEY = 'labelforge.lastPrinter.v1'
+
+function loadLastPrinter(): string | null {
+  try {
+    const id = localStorage.getItem(LAST_PRINTER_KEY)
+    return id && findProfile(id) ? id : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Where a profile's geometry is stored. Printers of the default profile's dialect
  * keep the key there has always been, so a calibrated P50 keeps its calibration.
@@ -188,32 +200,50 @@ export function usePrinter(
   const [wireLog, setWireLog] = useState<WireEntry[]>([])
   const [profileOverride, setProfileOverrideState] = useState<string | null>(null)
   const [geometries, setGeometries] = useState<Record<string, HeadGeometry>>({})
+  const [lastPrinterId, setLastPrinterId] = useState<string | null>(loadLastPrinter)
+
+  // Remember the last printer that connected, so its geometry stays in force across a
+  // disconnect and a reload: someone with a LetraTag designs for its 30 dots, not for
+  // a P50's 384, whether or not it is connected right now.
+  const connectedProfileId = capabilities?.profileId ?? null
+  useEffect(() => {
+    if (!connectedProfileId) return
+    setLastPrinterId(connectedProfileId)
+    try {
+      localStorage.setItem(LAST_PRINTER_KEY, connectedProfileId)
+    } catch {
+      // Private-mode storage refusal: the default profile's geometry after a reload.
+    }
+  }, [connectedProfileId])
 
   // The geometry in force is the connected printer's, else the forced model's, else
-  // the default profile's: what the preview is drawn for before anything connects.
-  const geometryProfileId = capabilities?.profileId ?? profileOverride ?? DEFAULT_PROFILE.id
+  // the last printer's, else the default profile's.
+  const geometryProfileId =
+    connectedProfileId ?? profileOverride ?? lastPrinterId ?? DEFAULT_PROFILE.id
   const geometry = useMemo(
     () => geometries[geometryProfileId] ?? loadGeometry(geometryProfileId),
     [geometries, geometryProfileId],
   )
 
-  const setGeometry = useCallback(
-    (patch: Partial<HeadGeometry>) => {
-      setGeometries((all) => {
-        const next = { ...(all[geometryProfileId] ?? loadGeometry(geometryProfileId)), ...patch }
-        try {
-          localStorage.setItem(
-            geometryKey(geometryProfileId),
-            JSON.stringify({ ...next, version: GEOMETRY_VERSION }),
-          )
-        } catch {
-          // Private-mode storage refusal must not break printing.
-        }
-        return { ...all, [geometryProfileId]: next }
-      })
-    },
-    [geometryProfileId],
-  )
+  // Read through a ref, so a handler held across a connect still edits the geometry
+  // in force rather than the one that was when it was made.
+  const geometryProfileRef = useRef(geometryProfileId)
+  geometryProfileRef.current = geometryProfileId
+  const setGeometry = useCallback((patch: Partial<HeadGeometry>) => {
+    const profileId = geometryProfileRef.current
+    setGeometries((all) => {
+      const next = { ...(all[profileId] ?? loadGeometry(profileId)), ...patch }
+      try {
+        localStorage.setItem(
+          geometryKey(profileId),
+          JSON.stringify({ ...next, version: GEOMETRY_VERSION }),
+        )
+      } catch {
+        // Private-mode storage refusal must not break printing.
+      }
+      return { ...all, [profileId]: next }
+    })
+  }, [])
 
   const bluetoothSupported = useMemo(() => WebBluetoothTransport.isSupported(), [])
 

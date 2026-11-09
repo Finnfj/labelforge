@@ -16,9 +16,10 @@
  * `EditorCanvas.tsx`), so the tape reads like that view.
  */
 import { getDot, type PackedBitmap } from '../../../model/bitmap'
-import { HEAD_WIDTH_DOTS, RASTER_STRETCH_FACTOR } from './constants'
+import { LETRATAG_HEAD_WIDTH_DOTS } from '../../../model/units'
+import { RASTER_STRETCH_FACTOR } from './constants'
 
-/** Bytes per column: 32 addressable dots, of which {@link HEAD_WIDTH_DOTS} print. */
+/** Bytes per column: 32 addressable dots, of which {@link LETRATAG_HEAD_WIDTH_DOTS} print. */
 const BYTES_PER_COLUMN = 4
 
 export interface LetraTagRaster {
@@ -31,14 +32,15 @@ export interface LetraTagRaster {
 /**
  * Packs one row into one column.
  *
- * Dot 0 lands one bit in from the column's least-significant end, not at it, which
- * is the layout ysfchn/dymo-bluetooth describes and prints with. Our captures agree
- * with it as far as they go, but nobody has yet printed a known pattern to check the
- * bit order directly — see docs/DYMO_PROTOCOL.md, "Open questions".
+ * Dot x goes to bit x + 1 counted from the most significant bit of the column's last
+ * byte, then on through the bytes before it: dot 0 is `0x40` of byte 3, dot 29 is
+ * `0x02` of byte 0. That is the layout of ysfchn/dymo-bluetooth, whose example prints
+ * correctly on hardware, and of the contributor's first print. Nobody has yet printed
+ * a known pattern to check it bit by bit — see docs/DYMO_PROTOCOL.md, "Open questions".
  */
 function packColumn(bitmap: PackedBitmap, row: number): Uint8Array {
   const column = new Uint8Array(BYTES_PER_COLUMN)
-  const dots = Math.min(bitmap.widthDots, HEAD_WIDTH_DOTS)
+  const dots = Math.min(bitmap.widthDots, LETRATAG_HEAD_WIDTH_DOTS)
   for (let x = 0; x < dots; x++) {
     if (!getDot(bitmap, x, row)) continue
     const bit = x + 1
@@ -50,7 +52,7 @@ function packColumn(bitmap: PackedBitmap, row: number): Uint8Array {
 
 /**
  * Encodes a bitmap for `PRINT_DATA`, every column {@link RASTER_STRETCH_FACTOR} times,
- * as the vendor app does. Dots beyond {@link HEAD_WIDTH_DOTS} are off the head and
+ * as the vendor app does. Dots beyond {@link LETRATAG_HEAD_WIDTH_DOTS} are off the head and
  * dropped, as the printer itself would drop them.
  */
 export function encodeLetraTagRaster(bitmap: PackedBitmap): LetraTagRaster {

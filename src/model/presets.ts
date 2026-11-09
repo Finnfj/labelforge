@@ -32,10 +32,10 @@ export const STOCK_PRESETS: StockPreset[] = [
   { id: 'cont-40', label: '40 mm continuous', widthMm: 40, heightMm: 25, paper: 'continuous' },
   { id: 'cont-50', label: '50 mm continuous', widthMm: 50, heightMm: 25, paper: 'continuous' },
   {
-    // The canvas is the band the head prints, not the tape: a design that fits it
+    // The canvas is the strip the head prints, not the tape: a design that fits it
     // fits the head. The length is only a starting point on continuous tape.
     id: 'letratag-12',
-    label: `LetraTag 12 mm tape (${LETRATAG_PRINTED_MM} mm printed)`,
+    label: `LetraTag tape (${LETRATAG_PRINTED_MM} mm printed)`,
     widthMm: LETRATAG_PRINTED_MM,
     heightMm: 40,
     paper: 'continuous',

@@ -194,6 +194,14 @@ async function letratagWrites(bitmap: PackedBitmap, settings: PrintSettings) {
 }
 
 describe('what the BLE driver writes to a LetraTag for', () => {
+  it('connecting without experimental support: nothing, and no service opened', async () => {
+    const transport = new MockTransport({ deviceName: 'Letratag10b41d81fa5a' })
+    const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20 })
+    await expect(driver.connect()).rejects.toThrow(/Drive experimental printers/)
+    expect(transport.layout).toBeNull()
+    expect(transport.writes).toEqual([])
+  })
+
   it('connecting', async () => {
     const transport = new MockTransport({ deviceName: 'Letratag10b41d81fa5a' })
     const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20, allowExperimental: true })

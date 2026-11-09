@@ -164,9 +164,8 @@ export function ConnectionPanel({
       {connected && connection.capabilities?.support === 'experimental' && (
         <p className="warn">
           <strong>Support for this printer is experimental.</strong> It speaks a print protocol
-          worked out from captures and third-party notes, and not yet confirmed on our own
-          hardware. Expect a wasted label or two. If it prints, or if it does not,
-          please{' '}
+          worked out from captures and third-party notes, and not yet confirmed on our own hardware.
+          Expect a wasted label or two. If it prints, or if it does not, please{' '}
           <a href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">
             say so
           </a>

@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { BlePrinterDriver, IncompatiblePrinterError, PrintFailedError } from './BlePrinterDriver'
 import { MockTransport } from '../transport/MockTransport'
 import { checkerboard } from '../diagnostics/testPatterns'
-import { DEFAULT_PRINT_SETTINGS, type PrintProgress } from '../types'
+import { DEFAULT_PRINT_SETTINGS, type PrintProgress, type PrintSettings } from '../types'
+import type { PackedBitmap } from '../../model/bitmap'
 import { CreditWindow } from './CreditWindow'
 import { ALL_NAME_PREFIXES, ALL_SERVICES, findProfile, type DrivenProfile } from '../profiles'
 import { planStreamBytes } from '../dialect'
@@ -420,6 +421,64 @@ describe('BlePrinterDriver printing a plan', () => {
     ).rejects.toThrow(new PrintFailedError(FAILED_REASON))
     expect(printer.jobsRead).toBe(1)
     expect(driver.state).toBe('connected')
+  })
+
+  it('takes no "done" for a job while its stream is still going out', async () => {
+    // A late answer to something earlier, such as a probe, can land mid-stream. Taken
+    // as this job's, it would end the wait before the printer had read the job.
+    const { transport, driver, printer } = await printing({
+      doneTimeoutMs: 5000,
+      waitMs: 5000,
+    })
+    const read = transport.autoRespond!
+    let first = true
+    transport.autoRespond = (bytes) => {
+      if (first) {
+        first = false
+        transport.emit('status', Uint8Array.of(DONE))
+      }
+      return read(bytes)
+    }
+    const order: string[] = []
+    driver.on('wire', (w) => {
+      if (w.dir === 'out' && w.bytes[0] === START) order.push('job')
+      if (w.dir === 'in' && w.bytes[0] === DONE) order.push('done')
+    })
+    await driver.print({ bitmap: checkerboard(64, 12), settings: DEFAULT_PRINT_SETTINGS })
+    // The stray "done" landed while the first job was going out, and was dropped: the
+    // second job waited for the first's own. Taken, it would have gone straight away.
+    expect(printer.jobsRead).toBe(3)
+    expect(order).toEqual(['job', 'done', 'done', 'job', 'done', 'job', 'done'])
+  })
+
+  it('goes on past a silent step the plan says is not worth stopping for', async () => {
+    const transport = new MockTransport()
+    transport.creditsPerWrite = 1
+    const base = testDialect()
+    const dialect = {
+      ...base,
+      planPrint: (bitmap: PackedBitmap, settings: PrintSettings) => {
+        const plan = base.planPrint(bitmap, settings)
+        const probe = {
+          parts: [],
+          epilogue: [{ bytes: Uint8Array.of(0x77), note: 'probe' }],
+          waitMs: 1,
+          goOnIfSilent: true,
+        }
+        return { copies: plan.copies.map((c) => ({ ...c, jobs: [probe, ...c.jobs] })) }
+      },
+    }
+    const driver = new BlePrinterDriver(transport, {
+      dialect,
+      queryTimeoutMs: 20,
+      doneTimeoutMs: 1,
+    })
+    await driver.connect()
+    const printer = testPrinter(transport)
+    const warnings = warningsOf(driver)
+    await driver.print({ bitmap: checkerboard(64, 4), settings: DEFAULT_PRINT_SETTINGS })
+    expect(printer.jobsRead).toBe(1)
+    expect(warnings).toEqual([])
   })
 
   it('passes on a warning the printer adds to a job it finished', async () => {
