@@ -228,6 +228,10 @@ export type JobPart = ({ kind: 'command' } & NamedCommand) | { kind: 'raster'; b
  * 0002), and the virtual driver logs each command on its own line.
  */
 export interface PlannedJob {
+  /**
+   * May be empty, for a planned step that is no job at all but its epilogue alone:
+   * a probe, such as the LetraTag's, sent on its own and answered by the printer.
+   */
   parts: JobPart[]
   /** Sent after the job's stream has gone, each as a write of its own. */
   epilogue: NamedCommand[]
@@ -235,12 +239,17 @@ export interface PlannedJob {
    * How long to wait for the printer to report this job done before sending the
    * next one, or null to go straight on.
    *
-   * Silence stops the rest of the copy: the next job would go to a printer still
-   * moving paper. A driver may wait longer than this, never shorter; the BLE
-   * driver has a minimum of its own. A driver with nothing to wait for, such as
-   * the virtual printer, ignores it.
+   * Silence stops the rest of the copy, unless `goOnIfSilent` says otherwise: the
+   * next job would go to a printer still moving paper. A driver may wait longer
+   * than this, never shorter; the BLE driver has a minimum of its own. A driver
+   * with nothing to wait for, such as the virtual printer, ignores it.
    */
   waitMs: number | null
+  /**
+   * Go on to the next job when the wait ends in silence. For a step that moves no
+   * paper, whose answer is worth waiting for but not worth giving up the label over.
+   */
+  goOnIfSilent?: boolean
 }
 
 /** Bytes of a job's stream, which is what a driver's progress counts. */

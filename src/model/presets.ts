@@ -1,4 +1,4 @@
-import { DEFAULT_HEAD_WIDTH_DOTS, dotsToMm } from './units'
+import { DEFAULT_HEAD_WIDTH_DOTS, LETRATAG_HEAD_WIDTH_DOTS, dotsToMm } from './units'
 
 export interface StockPreset {
   id: string
@@ -8,8 +8,12 @@ export interface StockPreset {
   paper: 'gap' | 'continuous'
 }
 
+/** What a LetraTag inks across its 12 mm tape. */
+const LETRATAG_PRINTED_MM = dotsToMm(LETRATAG_HEAD_WIDTH_DOTS)
+
 /**
- * Common die-cut sizes for the P50 family, plus continuous tape.
+ * Common die-cut sizes for the P50 family, plus continuous tape, and the LetraTag's
+ * tape at the width its head prints.
  *
  * "Width" is across the paper path — the direction the head is fixed in — and
  * "height" runs with the feed. For gap stock the printer detects the height
@@ -27,6 +31,15 @@ export const STOCK_PRESETS: StockPreset[] = [
   { id: '50x80', label: '50 × 80 mm', widthMm: 50, heightMm: 80, paper: 'gap' },
   { id: 'cont-40', label: '40 mm continuous', widthMm: 40, heightMm: 25, paper: 'continuous' },
   { id: 'cont-50', label: '50 mm continuous', widthMm: 50, heightMm: 25, paper: 'continuous' },
+  {
+    // The canvas is the strip the head prints, not the tape: a design that fits it
+    // fits the head. The length is only a starting point on continuous tape.
+    id: 'letratag-12',
+    label: `LetraTag tape (${LETRATAG_PRINTED_MM} mm printed)`,
+    widthMm: LETRATAG_PRINTED_MM,
+    heightMm: 40,
+    paper: 'continuous',
+  },
 ]
 
 export const DEFAULT_PRESET_ID = '40x30'

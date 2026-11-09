@@ -7,6 +7,7 @@ import type { PackedBitmap } from '../../model/bitmap'
 import { concatBytes } from '../../lib/bytes'
 import { noisyBitmap } from '../../test/bitmaps'
 import { DEFAULT_PRINT_SETTINGS, type PrintSettings } from '../types'
+import { letratag } from '../dialects/letratag'
 
 /*
  * What each driver puts on the wire, write by write, pinned absolutely.
@@ -164,4 +165,62 @@ describe('what the virtual printer writes for', () => {
       expect(await virtualWrites(bitmap(), settings)).toMatchSnapshot()
     })
   }
+})
+
+/**
+ * A LetraTag, as far as our captures show it: `ESC R 00` answering the probe, and
+ * again once the job's last chunk, the one ending in the magic, has gone.
+ */
+function letratagResponder(transport: MockTransport) {
+  const ok = Uint8Array.of(0x1b, 0x52, 0x00)
+  return (bytes: Uint8Array) => {
+    if (hex(bytes) === '1b 41 00') return ok
+    if (bytes.length > 2 && hex(bytes.subarray(-2)) === '12 34' && bytes[0] !== 0xff) {
+      setTimeout(() => transport.emit('status', ok), 5)
+    }
+    return undefined
+  }
+}
+
+async function letratagWrites(bitmap: PackedBitmap, settings: PrintSettings) {
+  const transport = new MockTransport({ deviceName: 'Letratag10b41d81fa5a' })
+  transport.autoRespond = letratagResponder(transport)
+  const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20, allowExperimental: true })
+  await driver.connect()
+  expect(driver.dialect).toBe(letratag)
+  transport.reset()
+  await driver.print({ bitmap, settings })
+  return describeWrites(transport.writes.map((bytes) => ({ bytes })))
+}
+
+describe('what the BLE driver writes to a LetraTag for', () => {
+  it('connecting without experimental support: nothing, and no service opened', async () => {
+    const transport = new MockTransport({ deviceName: 'Letratag10b41d81fa5a' })
+    const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20 })
+    await expect(driver.connect()).rejects.toThrow(/Drive experimental printers/)
+    expect(transport.layout).toBeNull()
+    expect(transport.writes).toEqual([])
+  })
+
+  it('connecting', async () => {
+    const transport = new MockTransport({ deviceName: 'Letratag10b41d81fa5a' })
+    const driver = new BlePrinterDriver(transport, { queryTimeoutMs: 20, allowExperimental: true })
+    await driver.connect()
+    expect(transport.layout).toBe(letratag.link.gatt)
+    expect(await describeWrites(transport.writes.map((bytes) => ({ bytes })))).toMatchSnapshot()
+  })
+
+  it('a small label', async () => {
+    expect(await letratagWrites(checkerboard(30, 24), DEFAULT_PRINT_SETTINGS)).toMatchSnapshot()
+  })
+
+  it('a label long enough for several chunks', async () => {
+    expect(await letratagWrites(noisyBitmap(30, 400), DEFAULT_PRINT_SETTINGS)).toMatchSnapshot()
+  })
+
+  it('two copies of a small label', async () => {
+    expect(
+      await letratagWrites(checkerboard(30, 24), { ...DEFAULT_PRINT_SETTINGS, copies: 2 }),
+    ).toMatchSnapshot()
+  })
 })

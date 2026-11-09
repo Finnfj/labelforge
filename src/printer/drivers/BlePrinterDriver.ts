@@ -143,6 +143,13 @@ export class BlePrinterDriver implements PrinterDriver {
    * concluding from that the printer never finished.
    */
   #donePending: JobReply | null = null
+  /**
+   * True while a job's stream is going out. A "done" arriving then cannot answer
+   * the job, which the printer has not finished reading: it is a late answer to
+   * something earlier, such as a probe, and is dropped rather than taken as this
+   * job's. A failure is taken whenever it comes.
+   */
+  #streaming = false
   #lastStatusBytes: Uint8Array | null = null
 
   constructor(transport: Transport, options: BlePrinterOptions = {}) {
@@ -223,7 +230,8 @@ export class BlePrinterDriver implements PrinterDriver {
         await this.#transport.subscribe('status', (bytes) => {
           this.#lastStatusBytes = bytes
           const reply = this.#dialect.conversation.readReply(bytes)
-          if (reply.kind !== 'other') {
+          const stray = reply.kind === 'done' && this.#streaming
+          if (reply.kind !== 'other' && !stray) {
             const done = this.#doneWaiter
             this.#doneWaiter = null
             if (done) done(reply)
@@ -389,6 +397,7 @@ export class BlePrinterDriver implements PrinterDriver {
           if (plannedJob.waitMs === null) continue
           progress('feed', copy)
           if (this.#takeReply(await this.#waitForDone(opts.signal, plannedJob.waitMs))) continue
+          if (plannedJob.goOnIfSilent) continue
           this.#warnSilent('stopped')
           break
         }
@@ -435,8 +444,7 @@ export class BlePrinterDriver implements PrinterDriver {
           ? // Carrying on regardless would send the next job into a printer still
             // moving paper, which is what lost the label last time.
             'The printer did not acknowledge part of this label, so the rest of it was not ' +
-            'sent. The label is incomplete — check the battery, and try it without ' +
-            'splitting.'
+            'sent. The label is incomplete — check the battery, and try it again.'
           : // Reported rather than thrown, because the label may well be fine and
             // refusing would be worse than saying so.
             'The printer never confirmed it finished this label. It may have stopped part-way ' +
@@ -461,14 +469,21 @@ export class BlePrinterDriver implements PrinterDriver {
     onWritten?: (bytes: number) => void,
   ): Promise<void> {
     const credits = this.#credits
-    for (const chunk of chunks) {
-      signal?.throwIfAborted()
-      // Wait for room before writing, not after: the buffer we would overrun is
-      // on the far side of the link.
-      await credits?.acquire({ signal })
-      await this.#transport.write(chunk)
-      onWritten?.(chunk.length)
-      if (credits) await delay(credits.delayMs, signal)
+    this.#streaming = chunks.length > 0
+    try {
+      for (const [n, chunk] of chunks.entries()) {
+        signal?.throwIfAborted()
+        // Wait for room before writing, not after: the buffer we would overrun is
+        // on the far side of the link.
+        await credits?.acquire({ signal })
+        await this.#transport.write(chunk)
+        // From the last chunk on, the printer has the whole job and may answer it.
+        if (n === chunks.length - 1) this.#streaming = false
+        onWritten?.(chunk.length)
+        if (credits) await delay(credits.delayMs, signal)
+      }
+    } finally {
+      this.#streaming = false
     }
 
     // Not part of the job stream — the capture shows it as its own transfer,

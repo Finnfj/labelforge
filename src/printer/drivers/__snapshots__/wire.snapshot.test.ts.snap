@@ -87,6 +87,37 @@ exports[`what the BLE driver writes for > two copies of a split label 1`] = `
 }
 `;
 
+exports[`what the BLE driver writes to a LetraTag for > a label long enough for several chunks 1`] = `
+{
+  "bytes": 3248,
+  "lengths": "3, 9, 501×6, 230",
+  "notes": undefined,
+  "sha256": "d67b0477dbc5ea84c6c416155ea915e5a36f382625131faffacb10c7a3ad39e3",
+  "writes": 9,
+}
+`;
+
+exports[`what the BLE driver writes to a LetraTag for > a small label 1`] = `
+[
+  "1b 41 00",
+  "ff f0 12 34 db 00 00 00 10",
+  "00 1b 73 9a 02 00 00 1b 23 01 1b 44 81 02 30 00 00 00 20 00 00 00 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 1b 45 1b 41 1b 51 12 34",
+]
+`;
+
+exports[`what the BLE driver writes to a LetraTag for > connecting 1`] = `[]`;
+
+exports[`what the BLE driver writes to a LetraTag for > two copies of a small label 1`] = `
+[
+  "1b 41 00",
+  "ff f0 12 34 db 00 00 00 10",
+  "00 1b 73 9a 02 00 00 1b 23 01 1b 44 81 02 30 00 00 00 20 00 00 00 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 1b 45 1b 41 1b 51 12 34",
+  "1b 41 00",
+  "ff f0 12 34 db 00 00 00 10",
+  "00 1b 73 9a 02 00 00 1b 23 01 1b 44 81 02 30 00 00 00 20 00 00 00 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 7e 80 7f 00 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 80 7f 1b 45 1b 41 1b 51 12 34",
+]
+`;
+
 exports[`what the virtual printer writes for > a label asked for with a speed 1`] = `
 [
   "1f 80 02 20  # setPaperTypeSilent",
