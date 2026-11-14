@@ -35,9 +35,8 @@ the tests).
 
 - Copy claims only what the code knows. A number shown comes from the same source the
   behaviour uses, and "could" stays "could" where the code cannot say "will".
-- Copy that applies to any printer names no printer model, and no feature only some
-  printers have: bands, a gap seek, a density setting. `check:copy` catches a model's
-  name; the feature is for review.
+- Copy that applies to any printer names no printer model or brand, and no feature only
+  some printers have: bands, a gap seek, a density setting.
 
 ## Moved and ported code
 

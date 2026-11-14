@@ -5,24 +5,23 @@
 // others, in the connection panel, the print panel and the transport's chooser error,
 // and only review noticed.
 //
-// Checked: string literals, template text and JSX text in app/, printer/drivers/ and
-// printer/transport/, tests excluded, against every word of every printer profile's
-// label in src/printer/profiles.ts, so a new profile is covered by adding it.
+// Checked: string literals, template text and JSX text — read with the TypeScript
+// parser, so identifiers, comments and import paths are never mistaken for copy — in
+// app/, printer/drivers/ and printer/transport/, tests excluded. Matched, ignoring
+// case, against every word of every printer profile's label in
+// src/printer/profiles.ts, so a new profile is covered by adding it.
 //
-// Allowed: the Diagnostics panel, whose tools are x2's own; and any line marked with a
-// `check-copy:` comment, on the line itself or the one above, saying why it may name
-// the model, as copy shown only for that model may.
-//
-// Not checked: copy elsewhere (the dialect folders and profiles name their printers by
-// design), and comments, which are stripped first. The stripping is line-based and
-// approximate: a `//` inside a string is taken for a comment only when nothing but
-// whitespace precedes it.
+// Allowed: the Diagnostics panel, whose tools are x2's own; and copy with a
+// `check-copy:` comment on the line the copy starts on, or the line above, saying why
+// it may name the model, as copy shown only for that model may. The rest of src/printer/ — the
+// profiles and the dialects — names its printers by design and is not scanned.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { join, relative } from 'node:path'
+import ts from 'typescript'
 
 const ROOTS = ['src/app', 'src/printer/drivers', 'src/printer/transport']
-const ALLOWED_FILES = new Set([join('src', 'app', 'DiagnosticsPanel.tsx')])
+const ALLOWED_FILES = new Set(['src/app/DiagnosticsPanel.tsx'])
 const MARKER = 'check-copy:'
 
 /** Every word of every profile label: the models and brands copy may not name. */
@@ -44,29 +43,53 @@ function* walk(dir) {
   }
 }
 
-/** The file's lines with comments blanked out, line numbers kept. */
-function withoutComments(source) {
-  const blanked = source.replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, ' '))
-  return blanked.split('\n').map((line) => line.replace(/(^|\s)\/\/.*$/, '$1'))
+const COPY_KINDS = new Set([
+  ts.SyntaxKind.StringLiteral,
+  ts.SyntaxKind.NoSubstitutionTemplateLiteral,
+  ts.SyntaxKind.TemplateHead,
+  ts.SyntaxKind.TemplateMiddle,
+  ts.SyntaxKind.TemplateTail,
+  ts.SyntaxKind.JsxText,
+])
+
+/** A module path, not copy: `import … from '…'`, `export … from '…'`, `import('…')`. */
+function isModulePath(node) {
+  const parent = node.parent
+  if (ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) return true
+  return ts.isCallExpression(parent) && parent.expression.kind === ts.SyntaxKind.ImportKeyword
+}
+
+/** Every piece of copy in a file, with the line it starts on (0-based). */
+function copyIn(file, text) {
+  const kind = file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind)
+  const copy = []
+  const visit = (node) => {
+    if (COPY_KINDS.has(node.kind) && !isModulePath(node)) {
+      const { line } = source.getLineAndCharacterOfPosition(node.getStart(source))
+      copy.push({ line, text: node.text })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return copy
 }
 
 const escape = (word) => word.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
-const words = modelWords()
-const pattern = new RegExp(`(?<![\\w/.-])(${words.map(escape).join('|')})(?![\\w-])`)
+const pattern = new RegExp(`(?<![\\w/.-])(${modelWords().map(escape).join('|')})(?![\\w-])`, 'i')
 
 const violations = []
 for (const root of ROOTS) {
   for (const file of walk(root)) {
-    const rel = relative('.', file).split(sep).join(sep)
+    const rel = relative('.', file).replaceAll('\\', '/')
     if (ALLOWED_FILES.has(rel)) continue
-    const raw = readFileSync(file, 'utf8').split('\n')
-    const code = withoutComments(readFileSync(file, 'utf8'))
-    for (const [i, line] of code.entries()) {
-      if (/^\s*(import|export)\b.*\bfrom\b/.test(line)) continue
-      const hit = line.match(pattern)
+    const text = readFileSync(file, 'utf8')
+    const lines = text.split('\n')
+    for (const copy of copyIn(file, text)) {
+      const hit = copy.text.match(pattern)
       if (!hit) continue
-      if (raw[i].includes(MARKER) || (i > 0 && raw[i - 1].includes(MARKER))) continue
-      violations.push(`${rel.split(sep).join('/')}:${i + 1}: names "${hit[1]}"`)
+      const marked = [copy.line, copy.line - 1].some((n) => lines[n]?.includes(MARKER))
+      if (!marked) violations.push(`${rel}:${copy.line + 1}: names "${hit[1]}"`)
     }
   }
 }

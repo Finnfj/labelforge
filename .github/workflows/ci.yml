@@ -25,5 +25,4 @@ jobs:
       # covers the shared libraries the runner image does not ship.
       - run: npx playwright install --with-deps chromium
       # The rest of `npm run check`, split from it only by the browser install above.
-      - run: npx vitest run
-      - run: npm run build
+      - run: npm run check:slow
