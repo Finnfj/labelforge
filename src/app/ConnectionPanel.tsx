@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { DOTS_PER_MM, dotsToMm } from '../model/units'
 import { REPO_URL } from './links'
+import { DEFAULT_PROFILE } from '../printer/profiles'
 import type { DiagnosticFlags } from './useDiagnosticFlags'
 import type { PrinterConnection } from './usePrinter'
 
@@ -151,9 +152,10 @@ export function ConnectionPanel({
       {connected && connection.capabilities?.support === 'unverified' && (
         <p className="warn">
           <strong>This model has never been tested against real hardware.</strong> It is believed to
-          use the same print protocol as the P50, from a third party&rsquo;s reverse engineering of
-          the vendor app rather than from anything observed here — so the head width and the command
-          sequence are the P50&rsquo;s, not measured values. If it prints, or if it does not, please{' '}
+          use the same print protocol as a model that has, from a third party&rsquo;s reverse
+          engineering of the vendor app rather than from anything observed here — so its head width
+          and command sequence are that model&rsquo;s, not measured values. If it prints, or if it
+          does not, please{' '}
           <a href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">
             say so
           </a>
@@ -175,20 +177,25 @@ export function ConnectionPanel({
 
       {connected && connection.capabilities?.profileAssumed && (
         <p className="hint">
-          This printer&rsquo;s advertised name matched no model we know, so it is being driven as a
-          P50. That is the right guess more often than not — the name prefixes come from reverse
-          engineering rather than a specification.
+          This printer&rsquo;s advertised name matched no model we know, so it is being driven as a{' '}
+          {DEFAULT_PROFILE.label}. That is the right guess more often than not — the name prefixes
+          come from reverse engineering rather than a specification.
         </p>
       )}
 
-      {connected && connection.kind === 'ble' && (
-        <p className="warn">
-          Model, firmware and battery are decoded from reply formats that were inferred rather than
-          documented — no vendor code parses replies. Firmware, serial and battery have since been
-          confirmed against a P50S; model is taken from the advertised Bluetooth name because the
-          printer does not answer that query at all.
-        </p>
-      )}
+      {/* Only for printers speaking the default profile's dialect: the replies it describes are that dialect's. */}
+      {connected &&
+        connection.kind === 'ble' &&
+        connection.driver.dialect === DEFAULT_PROFILE.dialect && (
+          <p className="warn">
+            Model, firmware and battery are decoded from reply formats that were inferred rather
+            than documented — no vendor code parses replies. Firmware, serial and battery have since
+            been
+            {/* check-copy: shown only for the dialect it was confirmed on, and names where. */}
+            confirmed against a P50S; model is taken from the advertised Bluetooth name because the
+            printer does not answer that query at all.
+          </p>
+        )}
 
       {connected && (
         <div className="row" style={{ marginTop: '0.6rem' }}>

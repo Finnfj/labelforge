@@ -87,6 +87,7 @@ export class VirtualPrinterDriver implements PrinterDriver {
     this.#setState('connecting')
     const profile = this.#profile
     this.#capabilities = {
+      // check-copy: the stand-in for the default profile, named as it always has been.
       model: profile === DEFAULT_PROFILE ? 'P50 (virtual)' : `${profile.label} (virtual)`,
       firmware: '0.0.0-virtual',
       serial: 'VIRTUAL',

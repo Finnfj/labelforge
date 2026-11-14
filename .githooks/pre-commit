@@ -1,0 +1,5 @@
+#!/bin/sh
+# The quick checks CI runs first (npm run check:static): lint, formatting, layering,
+# doc paths and copy. Seconds, so a slip fails here rather than on the pull request.
+# The tests and the build stay in CI and `npm run check`.
+exec npm run --silent check:static

@@ -211,7 +211,7 @@ export default function App() {
       <header className="app__header">
         <h1>LabelForge</h1>
         <p className="app__sub">
-          Design and print labels on a MarkLife P50 straight from the browser.
+          Design and print labels on a Bluetooth label printer, straight from the browser.
         </p>
       </header>
 
