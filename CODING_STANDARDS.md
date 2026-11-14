@@ -1,7 +1,8 @@
 # Coding standards
 
 Read during review. These are the judgement calls; mechanical rules live in the
-checks CI runs (`lint`, `format:check`, `check:layering`, `check:paths`, the tests).
+checks CI runs (`lint`, `format:check`, `check:layering`, `check:paths`, `check:copy`,
+the tests).
 
 ## Domain language
 
@@ -34,4 +35,11 @@ checks CI runs (`lint`, `format:check`, `check:layering`, `check:paths`, the tes
 
 - Copy claims only what the code knows. A number shown comes from the same source the
   behaviour uses, and "could" stays "could" where the code cannot say "will".
-- Copy that applies to any printer names no printer model.
+- Copy that applies to any printer names no printer model or brand, and no feature only
+  some printers have: bands, a gap seek, a density setting.
+
+## Moved and ported code
+
+- A change that moves, ports or rewrites code compares it with the original, and
+  accounts for every behaviour the original had: kept, or dropped with the reason. A
+  guard that does not survive the move is the defect to look for.
